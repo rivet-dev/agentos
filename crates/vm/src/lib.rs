@@ -122,11 +122,16 @@ pub mod extension_services;
 #[doc(hidden)]
 pub mod ownership_coordinator;
 #[cfg(feature = "runtime")]
+pub(crate) mod pending_process_events;
+#[cfg(feature = "runtime")]
 #[doc(hidden)]
 pub mod process_event_broker;
 #[cfg(feature = "runtime")]
 #[doc(hidden)]
 pub mod request_operations;
+#[cfg(feature = "runtime")]
+#[doc(hidden)]
+pub mod temp_reclaim;
 
 #[cfg(feature = "test-support")]
 #[doc(hidden)]

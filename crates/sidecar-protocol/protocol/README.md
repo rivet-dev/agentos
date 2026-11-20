@@ -19,8 +19,8 @@ US-083 and US-084 should replace only the payload codec first. They should not r
 
 The migration keeps the current semantic invariants unchanged across codecs:
 
-- `ProtocolSchema.name` is `agentos-native-sidecar`
-- `ProtocolSchema.version` is `10`
+- `ProtocolSchema.name` is `agentos-sidecar`
+- `ProtocolSchema.version` is `12`
 - host-originated `request_id` values stay positive
 - sidecar-originated `request_id` values stay negative
 - ownership scope rules and response-correlation rules stay exactly the same

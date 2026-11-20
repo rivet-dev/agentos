@@ -195,6 +195,7 @@ fn python_contexts_preserve_vm_and_pyodide_configuration() {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dist_path.clone(),
+        pyodide_cache_path: None,
     });
 
     assert_eq!(context.context_id, "python-ctx-1");
@@ -228,6 +229,7 @@ export async function loadPyodide(options) {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir.clone(),
+        pyodide_cache_path: None,
     });
 
     let (stdout, stderr, exit_code) = run_python_execution(
@@ -271,6 +273,7 @@ export async function loadPyodide(options) {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let result = engine
@@ -329,6 +332,7 @@ export async function loadPyodide(options) {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let mut execution = engine
@@ -411,6 +415,7 @@ export async function loadPyodide() {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir.clone(),
+        pyodide_cache_path: None,
     });
     let debug_env = BTreeMap::from([(
         String::from("AGENTOS_PYTHON_WARMUP_DEBUG"),
@@ -506,6 +511,7 @@ export async function loadPyodide(options) {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let mut execution = engine
@@ -640,6 +646,7 @@ export async function loadPyodide(options) {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let mut execution = engine
@@ -818,6 +825,7 @@ export async function loadPyodide() {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let execution = engine
@@ -874,6 +882,7 @@ export async function loadPyodide() {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let execution = engine
@@ -939,6 +948,7 @@ export async function loadPyodide() {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let mut execution = engine
@@ -1041,6 +1051,7 @@ export async function loadPyodide() {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let result = engine
@@ -1099,6 +1110,7 @@ export async function loadPyodide(options) {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let mut execution = engine
@@ -1232,6 +1244,7 @@ export async function loadPyodide() {
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
         pyodide_dist_path: pyodide_dir,
+        pyodide_cache_path: None,
     });
 
     let (stdout, stderr, exit_code) = run_python_execution(

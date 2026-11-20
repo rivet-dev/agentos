@@ -145,9 +145,7 @@ fn deferred_current_envelope_retries_before_later_channel_envelopes() {
             assert!(sidecar
                 .drain_runtime_process_event_channel_nowait()
                 .expect("retry staged and later envelopes"));
-            let bytes = sidecar
-                .pending_process_events
-                .drain(..)
+            let bytes = std::iter::from_fn(|| sidecar.pending_process_events.take_next(|_| true))
                 .map(|envelope| match envelope.event {
                     ActiveExecutionEvent::Stdout(bytes) => bytes[0],
                     other => panic!("expected stdout, received {other:?}"),
@@ -192,7 +190,12 @@ fn temporary_rejection_stays_open_and_rearms_only_after_capacity_release() {
                 event: ActiveExecutionEvent::Stdout(vec![byte]),
             };
             sidecar.pending_process_events.push_back(envelope(8));
-            sidecar.pending_process_events.push_back(envelope(9));
+            // Occupy the reserved terminal slot without bypassing the new
+            // output-only pool. The staged output still waits for a release.
+            sidecar.pending_process_events.push_back(ProcessEventEnvelope {
+                event: ActiveExecutionEvent::Exited(9),
+                ..envelope(9)
+            });
             sidecar.deferred_process_event_envelope = Some(envelope(1));
             sidecar
                 .process_event_sender
@@ -220,7 +223,7 @@ fn temporary_rejection_stays_open_and_rearms_only_after_capacity_release() {
                 Poll::Pending
             ));
 
-            sidecar.pending_process_events.pop_front();
+            sidecar.pending_process_events.take_next(|_| true);
             sidecar.observe_pending_process_event_depth();
             sidecar.rearm_deferred_process_event_after_capacity_release();
             assert!(matches!(
@@ -237,7 +240,8 @@ fn temporary_rejection_stays_open_and_rearms_only_after_capacity_release() {
                 .iter()
                 .map(|envelope| match &envelope.event {
                     ActiveExecutionEvent::Stdout(bytes) => bytes[0],
-                    other => panic!("expected stdout, received {other:?}"),
+                    ActiveExecutionEvent::Exited(code) => u8::try_from(*code).expect("fixture exit code"),
+                    other => panic!("expected stdout or exit, received {other:?}"),
                 })
                 .collect::<Vec<_>>();
             assert_eq!(queued, vec![9, 1]);
@@ -260,7 +264,7 @@ fn temporary_rejection_stays_open_and_rearms_only_after_capacity_release() {
                 matches!(blocked.as_mut().poll(&mut context), Poll::Pending),
                 "a reorder without free capacity must not consume the release waiter"
             );
-            sidecar.pending_process_events.pop_front();
+            sidecar.pending_process_events.take_next(|_| true);
             sidecar.observe_pending_process_event_depth();
             sidecar.rearm_deferred_process_event_after_capacity_release();
             assert!(matches!(

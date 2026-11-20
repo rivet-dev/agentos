@@ -717,10 +717,40 @@ pub struct JsRuntimeConfig {
     )]
     #[ts(optional)]
     pub high_resolution_time: Option<bool>,
+    /// Absolute guest paths of ES module entrypoints whose static imports are
+    /// evaluated once into a V8 startup snapshot. A guest `node <entry>`
+    /// process for one of them starts with those modules already evaluated.
+    /// Every imported module must be an ES module on a read-only host mount.
+    #[serde(
+        default,
+        rename = "snapshotEntrypoints",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional)]
+    pub snapshot_entrypoints: Option<Vec<String>>,
 }
+
+/// Bound on `jsRuntime.snapshotEntrypoints`.
+pub const MAX_VM_SNAPSHOT_ENTRYPOINTS: usize = 8;
 
 impl JsRuntimeConfig {
     fn validate(&self) -> Result<(), VmConfigError> {
+        if let Some(entrypoints) = &self.snapshot_entrypoints {
+            if entrypoints.len() > MAX_VM_SNAPSHOT_ENTRYPOINTS {
+                return Err(VmConfigError::new(format!(
+                    "limit_exceeded: jsRuntime.snapshotEntrypoints has {} entries; maximum is {MAX_VM_SNAPSHOT_ENTRYPOINTS}",
+                    entrypoints.len()
+                )));
+            }
+            if self.platform != JsRuntimePlatform::Node {
+                return Err(VmConfigError::new(
+                    "jsRuntime.snapshotEntrypoints is only valid when jsRuntime.platform is \"node\"",
+                ));
+            }
+            for entrypoint in entrypoints {
+                validate_guest_path("jsRuntime.snapshotEntrypoints entry", entrypoint)?;
+            }
+        }
         if let Some(allowed) = &self.allowed_builtins {
             validate_allowed_node_builtins(allowed, "jsRuntime.allowedBuiltins")?;
             if self.platform != JsRuntimePlatform::Node {

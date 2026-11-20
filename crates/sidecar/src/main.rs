@@ -13,6 +13,7 @@ fn parse_runtime_config(
     mut args: impl Iterator<Item = String>,
 ) -> Result<agentos_driver_tokio::DriverConfig, String> {
     let mut config = agentos_driver_tokio::DriverConfig::default();
+    let mut explicit_control_frames = false;
     while let Some(argument) = args.next() {
         let (name, inline) = argument
             .split_once('=')
@@ -44,10 +45,39 @@ fn parse_runtime_config(
             "--max-in-flight-requests" => config.protocol.max_in_flight_requests = maximum,
             "--max-terminal-frames" => config.protocol.max_terminal_frames = maximum,
             "--max-terminal-bytes" => config.protocol.max_terminal_bytes = maximum,
-            "--max-control-frames" => config.protocol.max_control_frames = maximum,
+            "--max-control-frames" => {
+                config.protocol.max_control_frames = maximum;
+                explicit_control_frames = true;
+            }
             "--max-control-bytes" => config.protocol.max_control_bytes = maximum,
             _ => unreachable!("runtime option was validated above"),
         }
+    }
+    // The CLI and SDK expose ordinary admission without exposing ingress or
+    // queue sizing. Accommodate the selected ordinary lane plus the default
+    // queue while keeping the byte cap independent.
+    let protocol = &mut config.protocol;
+    let required_ingress = protocol
+        .max_in_flight_requests
+        .checked_add(protocol.request_queue_limit)
+        .ok_or("runtime.protocol.maxInFlightRequests + runtime.protocol.requestQueueLimit overflows usize")?;
+    protocol.max_ingress_frames = protocol.max_ingress_frames.max(required_ingress);
+
+    // Expanded CLI profiles used to have spare control room for heartbeat
+    // frames. If the operator left control capacity at its default, account
+    // for the new priority lane and retain headroom equal to its default count.
+    if !explicit_control_frames
+        && protocol.max_in_flight_requests
+            > agentos_driver_tokio::DEFAULT_PROTOCOL_MAX_IN_FLIGHT_REQUESTS
+    {
+        let required_control = protocol
+            .max_terminal_frames
+            .checked_add(protocol.max_in_flight_priority_requests)
+            .and_then(|value| value.checked_add(protocol.max_progress_frames))
+            .and_then(|value| value.checked_add(protocol.max_rejection_frames))
+            .and_then(|value| value.checked_add(protocol.max_in_flight_priority_requests))
+            .ok_or("runtime.protocol logical control frame capacities overflow usize")?;
+        protocol.max_control_frames = protocol.max_control_frames.max(required_control);
     }
     config.validate().map_err(|error| error.to_string())?;
     Ok(config)
@@ -205,7 +235,9 @@ fn validate_cache_directory(
         .as_ref()
         .is_some_and(|path| path.as_os_str().is_empty())
     {
-        return Err(String::from("AGENTOS_PACKAGE_CACHE_DIR or --package-cache-dir must not be empty; unset it to use an isolated temporary cache"));
+        return Err(String::from(
+            "AGENTOS_PACKAGE_CACHE_DIR or --package-cache-dir must not be empty; unset it to use an isolated temporary cache",
+        ));
     }
     Ok(())
 }
@@ -319,6 +351,7 @@ mod tests {
     fn protocol_capacity_preserves_terminal_response_reservations() {
         let default = parse_runtime_config(std::iter::empty()).expect("default config");
         assert_eq!(default.protocol.max_in_flight_requests, 128);
+        assert_eq!(default.protocol.max_ingress_frames, 512);
         let error = parse_runtime_config(["--max-in-flight-requests=512".to_owned()].into_iter())
             .expect_err("response credits remain enforced");
         assert!(error.contains("maxTerminalFrames"));
@@ -334,14 +367,47 @@ mod tests {
         .expect("explicit complete budget");
         assert_eq!(configured.protocol.max_in_flight_requests, 512);
         assert_eq!(configured.protocol.max_terminal_frames, 512);
+        assert_eq!(configured.protocol.max_ingress_frames, 768);
+        assert_eq!(configured.protocol.max_control_frames, 1152);
+        let logical_control_frames = configured.protocol.max_terminal_frames
+            + configured.protocol.max_in_flight_priority_requests
+            + configured.protocol.max_progress_frames
+            + configured.protocol.max_rejection_frames;
+        assert!(configured.protocol.max_control_frames > logical_control_frames);
         assert!(cache.is_none());
-        let expanded = parse_runtime_config([
-            "--max-in-flight-requests=1024", "--max-terminal-frames=1024",
-            "--max-terminal-bytes=16777216", "--max-control-frames=2048",
-            "--max-control-bytes=67108864",
-        ].map(str::to_owned).into_iter()).expect("explicit physical control budget");
+        let expanded = parse_runtime_config(
+            [
+                "--max-in-flight-requests=1024",
+                "--max-terminal-frames=1024",
+                "--max-terminal-bytes=16777216",
+                "--max-control-frames=2048",
+                "--max-control-bytes=67108864",
+            ]
+            .map(str::to_owned)
+            .into_iter(),
+        )
+        .expect("explicit physical control budget");
         assert_eq!(expanded.protocol.max_control_frames, 2048);
         assert_eq!(expanded.protocol.max_in_flight_requests, 1024);
+        assert_eq!(expanded.protocol.max_ingress_frames, 1280);
+        let error = parse_runtime_config(
+            [
+                "--max-in-flight-requests=512",
+                "--max-terminal-frames=512",
+                "--max-terminal-bytes=8388608",
+                "--max-control-frames=1023",
+            ]
+            .map(str::to_owned)
+            .into_iter(),
+        )
+        .expect_err("an explicit physical control budget must not expand");
+        assert!(error.contains("maxControlFrames"));
+        let overflow = parse_runtime_config(std::iter::once(format!(
+            "--max-in-flight-requests={}",
+            usize::MAX,
+        )))
+        .expect_err("derived ingress must not wrap");
+        assert!(overflow.contains("maxInFlightRequests") && overflow.contains("overflows"));
         assert!(
             parse_runtime_config(["--max-in-flight-requests=0".to_owned()].into_iter()).is_err()
         );
@@ -351,9 +417,15 @@ mod tests {
     fn blocking_byte_budget_is_explicit_and_enforced() {
         let default = parse_runtime_config(std::iter::empty()).unwrap();
         assert_eq!(default.max_blocking_job_bytes, 64 * 1024 * 1024);
-        let (configured, cache) = parse_sidecar_options([
-            "--max-blocking-bytes=268435456", "--package-cache-max-entries=4",
-        ].map(str::to_owned).into_iter()).unwrap();
+        let (configured, cache) = parse_sidecar_options(
+            [
+                "--max-blocking-bytes=268435456",
+                "--package-cache-max-entries=4",
+            ]
+            .map(str::to_owned)
+            .into_iter(),
+        )
+        .unwrap();
         assert_eq!(configured.max_blocking_job_bytes, 256 * 1024 * 1024);
         assert_eq!(cache.unwrap().max_entries, 4);
         assert!(parse_runtime_config(["--max-blocking-bytes=0".into()].into_iter()).is_err());

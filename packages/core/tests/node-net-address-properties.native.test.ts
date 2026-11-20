@@ -13,14 +13,47 @@ try{await once(client,'connect');const result={clientOwn:own(client),acceptedOwn
 finally{client.destroy();accepted?.destroy();await new Promise(resolve=>server.close(resolve));if(path)await rm(path,{force:true});}}
 console.log(JSON.stringify({initial,tcp:await connected(),unix:await connected('/tmp/net-address-properties-'+process.pid+'.sock')}));`;
 const absent = Array(6).fill(false);
-const expected = { initial: { own: absent, unset: true }, tcp: { clientOwn: absent, acceptedOwn: absent, addresses: true }, unix: { clientOwn: absent, acceptedOwn: absent, addresses: true } };
+const expected = {
+	initial: { own: absent, unset: true },
+	tcp: { clientOwn: absent, acceptedOwn: absent, addresses: true },
+	unix: { clientOwn: absent, acceptedOwn: absent, addresses: true },
+};
 
 test("TCP and Unix socket address accessors match Node without own address properties", async () => {
- const host=spawnSync(process.execPath,["--input-type=module","-e",source],{encoding:"utf8",timeout:6000});
- expect(host.status,host.stderr).toBe(0);expect(JSON.parse(host.stdout)).toEqual(expected);
- const sidecar=await AgentOs.createSidecar();let vm:AgentOs|undefined;
- try{vm=await AgentOs.create({sidecar:{kind:"explicit",handle:sidecar},defaultSoftware:false,permissions:{network:"deny"}});
- let stdout="",stderr="";const child=await vm.process.spawn("node",["--input-type=module","-e",source],{timeoutMs:6000,onStdout:b=>{stdout+=Buffer.from(b).toString();},onStderr:b=>{stderr+=Buffer.from(b).toString();}});
- expect((await vm.process.wait(child.pid)).exitCode,stderr).toBe(0);expect(JSON.parse(stdout)).toEqual(expected);
- }finally{await vm?.dispose();await sidecar.dispose();}
-},15000);
+	const host = spawnSync(
+		process.execPath,
+		["--input-type=module", "-e", source],
+		{ encoding: "utf8", timeout: 6000 },
+	);
+	expect(host.status, host.stderr).toBe(0);
+	expect(JSON.parse(host.stdout)).toEqual(expected);
+	const sidecar = await AgentOs.createSidecar();
+	let vm: AgentOs | undefined;
+	try {
+		vm = await AgentOs.create({
+			sidecar: { kind: "explicit", handle: sidecar },
+			defaultSoftware: false,
+			permissions: { network: "deny" },
+		});
+		let stdout = "",
+			stderr = "";
+		const child = await vm.process.spawn(
+			"node",
+			["--input-type=module", "-e", source],
+			{
+				timeoutMs: 6000,
+				onStdout: (b) => {
+					stdout += Buffer.from(b).toString();
+				},
+				onStderr: (b) => {
+					stderr += Buffer.from(b).toString();
+				},
+			},
+		);
+		expect((await vm.process.wait(child.pid)).exitCode, stderr).toBe(0);
+		expect(JSON.parse(stdout)).toEqual(expected);
+	} finally {
+		await vm?.dispose();
+		await sidecar.dispose();
+	}
+}, 15000);

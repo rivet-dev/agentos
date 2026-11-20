@@ -68,8 +68,21 @@ An embedded process wait completes only after agentOS observes a guest exit. A r
 of inventing an exit code. An observation failure does not prove the guest has
 stopped; inspect the VM or restart it before assuming it is safe to retry work.
 
+## Stdin and completion
+
+Embedded `process.spawn` keeps stdin open; pass `streamStdin: false` for EOF.
+`process.exec` and `process.execFile` write their optional `stdin` and then
+close it. Writes after stdin closes fail with `EBADF`; writes after the process
+exits fail with `EPIPE`. Closing stdin after exit succeeds.
+
+Waits settle from exit events, typed failures, or confirmed VM disposal, without
+polling process snapshots. Successful disposal reports `SIGKILL` for a language
+process that was still running; pending TypeScript execution results reject with
+`ERR_AGENTOS_VM_DISPOSED`.
+
 ## Embedded API
 
 Embedded Core retains its language-specific convenience methods in addition to
 structured process operations. Read more in the
 [embedded API quickstart](/agentos/docs/quickstart-embedded).
+

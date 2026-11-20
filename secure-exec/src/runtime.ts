@@ -29,6 +29,7 @@ const VM_OPTION_KEYS = Object.keys({
 	loopbackExemptPorts: true,
 	allowedNodeBuiltins: true,
 	highResolutionTime: true,
+	snapshotEntrypoints: true,
 	database: true,
 	rootFilesystem: true,
 	mounts: true,

@@ -1,8 +1,8 @@
 import {
-	URL as UpstreamURL,
-	URLSearchParams as UpstreamURLSearchParams,
 	basicURLParse,
 	serializeHost,
+	URL as UpstreamURL,
+	URLSearchParams as UpstreamURLSearchParams,
 } from "whatwg-url";
 
 const kBlobUrlStore = /* @__PURE__ */ Symbol.for("agentOs.blobUrlStore");

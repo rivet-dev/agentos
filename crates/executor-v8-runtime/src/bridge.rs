@@ -67,22 +67,30 @@ fn configured_cbor_codec_enabled() -> bool {
 /// Must be identical at snapshot creation and restore time.
 pub fn external_refs() -> &'static v8::ExternalReferences {
     static REFS: OnceLock<v8::ExternalReferences> = OnceLock::new();
-    REFS.get_or_init(|| {
-        v8::ExternalReferences::new(&[
-            v8::ExternalReference {
-                function: sync_bridge_callback.map_fn_to(),
-            },
-            v8::ExternalReference {
-                function: async_bridge_callback.map_fn_to(),
-            },
-            v8::ExternalReference {
-                function: crate::terminal_callback::report_terminal_callback.map_fn_to(),
-            },
-            v8::ExternalReference {
-                function: crate::terminal_callback::request_process_exit.map_fn_to(),
-            },
-        ])
-    })
+    REFS.get_or_init(|| v8::ExternalReferences::new(&base_external_references()))
+}
+
+/// Native callbacks a snapshot heap can reference. Snapshots with shared
+/// sources append their source constants after these.
+pub(crate) fn base_external_references() -> Vec<v8::ExternalReference<'static>> {
+    vec![
+        v8::ExternalReference {
+            function: sync_bridge_callback.map_fn_to(),
+        },
+        v8::ExternalReference {
+            function: async_bridge_callback.map_fn_to(),
+        },
+        v8::ExternalReference {
+            function: crate::terminal_callback::report_terminal_callback.map_fn_to(),
+        },
+        v8::ExternalReference {
+            function: crate::terminal_callback::request_process_exit.map_fn_to(),
+        },
+        // `import.meta.resolve` of a module evaluated into a snapshot.
+        v8::ExternalReference {
+            function: crate::execution::import_meta_resolve_callback.map_fn_to(),
+        },
+    ]
 }
 
 // Minimal delegate for V8 ValueSerializer — throws DataCloneError as a V8 exception
@@ -794,6 +802,7 @@ pub(crate) fn install_session_bridge_fns(
     crate::next_ticks::capture(scope)?;
     let context = scope.get_current_context();
     let global = context.global(scope);
+    let apply_wrapper_factory = bridge_apply_wrapper_factory(scope);
     for (methods, is_async) in [(sync_methods, false), (async_methods, true)] {
         for &method in methods {
             let name = v8::String::new(scope, method).expect("bridge method allocation");
@@ -814,7 +823,7 @@ pub(crate) fn install_session_bridge_fns(
             } else {
                 &["applySync", "applySyncPromise"]
             };
-            attach_bridge_function_aliases(scope, function, aliases);
+            attach_bridge_function_aliases(scope, apply_wrapper_factory, function, aliases);
             if global.set(scope, name.into(), function.into()) != Some(true) {
                 return Err(format!("cannot install bridge function {method}"));
             }
@@ -1521,7 +1530,10 @@ pub struct VmContextRegistryGuard {
 impl VmContextRegistryGuard {
     pub fn new(isolate: &mut v8::Isolate) -> Self {
         reset_vm_context_registry(isolate);
-        Self { contexts: Rc::downgrade(&vm_context_registry(isolate).0), _readers: crate::node_v8_deserializer::RegistryGuard::new(isolate) }
+        Self {
+            contexts: Rc::downgrade(&vm_context_registry(isolate).0),
+            _readers: crate::node_v8_deserializer::RegistryGuard::new(isolate),
+        }
     }
 }
 
@@ -2506,10 +2518,27 @@ fn handle_local_bridge_call<'s>(
         | "v8.deserializer.getWireFormatVersion"
         | "v8.deserializer.transferArrayBuffer"
         | "v8.deserializer.readHostObject" => {
-            let runtime = bridge_ctx.runtime_context().ok_or("V8 Deserializer requires the session runtime")?;
-            let limit = runtime.resources().usage(agentos_driver_tokio::accounting::ResourceClass::BridgeResponseBytes).limit.ok_or("V8 Deserializer requires a response byte limit")?;
-            let (limit, path) = bridge_ctx.serialization_limit().map(|bytes| (bytes, "limits.jsRuntime.v8SerializationLimitBytes")).unwrap_or((limit, "limits.reactor.maxBridgeResponseBytes"));
-            crate::node_v8_deserializer::call(scope, args, method, limit, path, runtime.resources().clone()).map(Some)
+            let runtime = bridge_ctx
+                .runtime_context()
+                .ok_or("V8 Deserializer requires the session runtime")?;
+            let limit = runtime
+                .resources()
+                .usage(agentos_driver_tokio::accounting::ResourceClass::BridgeResponseBytes)
+                .limit
+                .ok_or("V8 Deserializer requires a response byte limit")?;
+            let (limit, path) = bridge_ctx
+                .serialization_limit()
+                .map(|bytes| (bytes, "limits.jsRuntime.v8SerializationLimitBytes"))
+                .unwrap_or((limit, "limits.reactor.maxBridgeResponseBytes"));
+            crate::node_v8_deserializer::call(
+                scope,
+                args,
+                method,
+                limit,
+                path,
+                runtime.resources().clone(),
+            )
+            .map(Some)
         }
         "uint8array.encode" => crate::uint8array_encoding::encode(scope, args).map(Some),
         "v8.serialize" | "v8.deserialize" => {
@@ -2607,6 +2636,7 @@ pub fn register_sync_bridge_fns(
     let context = scope.get_current_context();
     let global = context.global(scope);
     let mut data = Vec::with_capacity(methods.len());
+    let apply_wrapper_factory = bridge_apply_wrapper_factory(scope);
 
     for &method_name in methods {
         let boxed = Box::new(SyncBridgeFnData {
@@ -2622,7 +2652,12 @@ pub fn register_sync_bridge_fns(
             .data(external.into())
             .build(scope);
         let func = template.get_function(scope).unwrap();
-        attach_bridge_function_aliases(scope, func, &["applySync", "applySyncPromise"]);
+        attach_bridge_function_aliases(
+            scope,
+            apply_wrapper_factory,
+            func,
+            &["applySync", "applySyncPromise"],
+        );
 
         let key = v8::String::new(scope, method_name).unwrap();
         global.set(scope, key.into(), func.into());
@@ -2736,6 +2771,7 @@ pub fn register_async_bridge_fns(
     let context = scope.get_current_context();
     let global = context.global(scope);
     let mut data = Vec::with_capacity(methods.len());
+    let apply_wrapper_factory = bridge_apply_wrapper_factory(scope);
 
     for &method_name in methods {
         let boxed = Box::new(AsyncBridgeFnData {
@@ -2752,7 +2788,7 @@ pub fn register_async_bridge_fns(
             .data(external.into())
             .build(scope);
         let func = template.get_function(scope).unwrap();
-        attach_bridge_function_aliases(scope, func, &["apply"]);
+        attach_bridge_function_aliases(scope, apply_wrapper_factory, func, &["apply"]);
 
         let key = v8::String::new(scope, method_name).unwrap();
         global.set(scope, key.into(), func.into());
@@ -2763,22 +2799,27 @@ pub fn register_async_bridge_fns(
 
 fn attach_bridge_function_aliases<'s>(
     scope: &mut v8::HandleScope<'s>,
+    factory: Option<v8::Local<'s, v8::Function>>,
     func: v8::Local<'s, v8::Function>,
     aliases: &[&str],
 ) {
+    let Some(factory) = factory else {
+        return;
+    };
     let func_object = func.to_object(scope).unwrap();
     for alias in aliases {
         let key = v8::String::new(scope, alias).unwrap();
-        let Some(wrapper) = build_bridge_apply_wrapper(scope, func) else {
+        let Some(wrapper) = build_bridge_apply_wrapper(scope, factory, func) else {
             continue;
         };
         let _ = func_object.set(scope, key.into(), wrapper.into());
     }
 }
 
-fn build_bridge_apply_wrapper<'s>(
+/// Compile the `apply`-style alias factory once per bridge installation; every
+/// bridge function's aliases are closures from this one factory.
+fn bridge_apply_wrapper_factory<'s>(
     scope: &mut v8::HandleScope<'s>,
-    func: v8::Local<'s, v8::Function>,
 ) -> Option<v8::Local<'s, v8::Function>> {
     let source = v8::String::new(
         scope,
@@ -2786,7 +2827,14 @@ fn build_bridge_apply_wrapper<'s>(
     )?;
     let script = v8::Script::compile(scope, source, None)?;
     let factory = script.run(scope)?;
-    let factory = v8::Local::<v8::Function>::try_from(factory).ok()?;
+    v8::Local::<v8::Function>::try_from(factory).ok()
+}
+
+fn build_bridge_apply_wrapper<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    factory: v8::Local<'s, v8::Function>,
+    func: v8::Local<'s, v8::Function>,
+) -> Option<v8::Local<'s, v8::Function>> {
     let argv = [func.into()];
     let receiver = v8::undefined(scope).into();
     factory

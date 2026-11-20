@@ -1206,33 +1206,34 @@ impl MemoryFileSystem {
         if components.is_empty() {
             return Ok(String::from("/"));
         }
-        let mut current = String::from("/");
+        let mut candidate = String::with_capacity(path.len().max(1));
+        candidate.push('/');
 
         for (index, component) in components.iter().enumerate() {
             if matches!(*component, "." | "..") {
                 let current_inode = self
                     .path_index
-                    .get(&current)
+                    .get(&candidate)
                     .and_then(|ino| self.inodes.get(ino))
-                    .ok_or_else(|| VfsError::not_found("stat", &current))?;
+                    .ok_or_else(|| VfsError::not_found("stat", &candidate))?;
                 if !matches!(current_inode.kind, InodeKind::Directory) {
-                    return Err(VfsError::not_directory("stat", &current));
+                    return Err(VfsError::not_directory("stat", &candidate));
                 }
                 if *component == ".." {
-                    current = dirname(&current);
+                    candidate = dirname(&candidate);
                 }
                 continue;
             }
-            let candidate = if current == "/" {
-                format!("/{}", component)
-            } else {
-                format!("{current}/{}", component)
-            };
+            let parent_len = candidate.len();
+            if candidate != "/" {
+                candidate.push('/');
+            }
+            candidate.push_str(component);
             let is_final = index + 1 == components.len();
             let requires_directory = is_final && path.ends_with('/');
             let should_follow = !is_final || follow_final_symlink || requires_directory;
 
-            if let Some(ino) = self.path_index.get(&candidate) {
+            if let Some(ino) = self.path_index.get(candidate.as_str()) {
                 let inode = self
                     .inodes
                     .get(ino)
@@ -1243,7 +1244,7 @@ impl MemoryFileSystem {
                         let target_path = if target.starts_with('/') {
                             target.clone()
                         } else {
-                            format!("{}/{}", dirname(&candidate), target)
+                            format!("{}/{}", &candidate[..parent_len], target)
                         };
                         let remainder = components[index + 1..].join("/");
                         let mut next_path = if remainder.is_empty() {
@@ -1267,11 +1268,9 @@ impl MemoryFileSystem {
                     return Err(VfsError::not_directory("stat", &candidate));
                 }
             }
-
-            current = candidate;
         }
 
-        Ok(current)
+        Ok(candidate)
     }
 
     fn resolve_path(&self, path: &str, depth: usize) -> VfsResult<String> {
@@ -1681,7 +1680,7 @@ impl VirtualFileSystem for MemoryFileSystem {
                     return Err(VfsError::new(
                         "ENXIO",
                         format!("device write requires kernel dispatch: {path}"),
-                    ))
+                    ));
                 }
             }
         }
@@ -2525,6 +2524,11 @@ pub fn validate_path(path: &str) -> VfsResult<()> {
     if path.as_bytes().contains(&0) {
         return Err(VfsError::invalid_input("path contains NUL byte"));
     }
+    // Normalizing never grows a path by more than its leading `/`, so short
+    // paths pass without building the normalized form.
+    if path.len() < MAX_PATH_LENGTH {
+        return Ok(());
+    }
     let normalized = normalize_path(path);
     if path.len() > MAX_PATH_LENGTH || normalized.len() > MAX_PATH_LENGTH {
         return Err(VfsError::path_too_long(path));
@@ -2618,9 +2622,20 @@ pub(super) fn resolve_path_for_creation_with(
     Ok(current)
 }
 
+pub(crate) fn is_normalized_path(path: &str) -> bool {
+    path == "/"
+        || (path.starts_with('/')
+            && path[1..]
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != ".."))
+}
+
 pub fn normalize_path(path: &str) -> String {
     if path.is_empty() {
         return String::from("/");
+    }
+    if is_normalized_path(path) {
+        return path.to_owned();
     }
 
     let candidate = if path.starts_with('/') {

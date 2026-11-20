@@ -170,6 +170,7 @@ test("HTTP Agent actual method preserves listener failures and process exit", ()
 		const agent = {
 			totalSocketCount: 0,
 			_activateSocket() {},
+			_trackSocketLifecycle() {},
 			_processPendingRequests() {},
 			createSocket(
 				_request: unknown,

@@ -10,8 +10,8 @@ import { _stderr, _stdout } from "./console.js";
 import { _fdClose, _fdGetPath, encodeBridgeBytes, fs } from "./fs.js";
 import { normalizeChildProcessSignal } from "./os.js";
 import { routeAsyncCallbackError } from "./process.js";
+import { ipcInfo, openIpcChannel } from "./process-ipc.js";
 import { setImmediate } from "./timers.js";
-import {ipcInfo,openIpcChannel} from "./process-ipc.js";
 
 var child_process_exports = {};
 __export(child_process_exports, {
@@ -380,8 +380,17 @@ function encodeChildProcessIpcFrame(message, serialization) {
 		mode === "advanced"
 			? encodeAdvancedIpcMessage(message)
 			: JSON.stringify(message);
-    const jsonBytes=typeof Buffer!=="undefined"?Buffer.byteLength(json,"utf8"):new TextEncoder().encode(json).byteLength;
-    if(CHILD_PROCESS_IPC_FRAME_PREFIX.length+4*Math.ceil(jsonBytes/3)+1>8*1024*1024)throw Object.assign(new Error("IPC encoded frame exceeds 8388608 bytes"),{code:"ERR_RESOURCE_BUDGET_EXCEEDED"});
+	const jsonBytes =
+		typeof Buffer !== "undefined"
+			? Buffer.byteLength(json, "utf8")
+			: new TextEncoder().encode(json).byteLength;
+	if (
+		CHILD_PROCESS_IPC_FRAME_PREFIX.length + 4 * Math.ceil(jsonBytes / 3) + 1 >
+		8 * 1024 * 1024
+	)
+		throw Object.assign(new Error("IPC encoded frame exceeds 8388608 bytes"), {
+			code: "ERR_RESOURCE_BUDGET_EXCEEDED",
+		});
 	const encoded =
 		typeof Buffer !== "undefined"
 			? Buffer.from(json, "utf8").toString("base64")
@@ -538,11 +547,17 @@ function deliverChildProcessEventInner(child, sessionId, type, data) {
 			return;
 		child.stderr.emit("data", buf);
 	} else if (type === "exit") {
-        if (child._ipcChannel && !child._ipcChannel.closed && !child._ipcExitDrained) {
-            child._ipcExitDrained=true;
-            void child._ipcChannel.afterPeerExit().then(()=>routeChildProcessEvent(sessionId,type,data));
-            return;
-        }
+		if (
+			child._ipcChannel &&
+			!child._ipcChannel.closed &&
+			!child._ipcExitDrained
+		) {
+			child._ipcExitDrained = true;
+			void child._ipcChannel
+				.afterPeerExit()
+				.then(() => routeChildProcessEvent(sessionId, type, data));
+			return;
+		}
 		const signalCode =
 			data && typeof data === "object" ? (data.signal ?? null) : null;
 		const exitCode = data && typeof data === "object" ? data.code : data;
@@ -576,7 +591,10 @@ function deliverChildProcessEventInner(child, sessionId, type, data) {
 			child._pendingSignalCode = null;
 			child.signalCode = signalCode;
 			child.exitCode = signalCode == null ? exitCode : null;
-			if (child.stdin) {child.stdin.writable = false;child.stdin.destroyed = true;}
+			if (child.stdin) {
+				child.stdin.writable = false;
+				child.stdin.destroyed = true;
+			}
 			if (wasConnected) child.emit("disconnect");
 			if (Array.isArray(child._inheritedFds)) {
 				for (const fd of child._inheritedFds) releaseChildInheritedFd(fd);
@@ -1029,7 +1047,7 @@ var ChildProcess = class {
 	_ipcSerialization = "json";
 	_ipcReady = false;
 	_ipcQueuedMessages = [];
-    _ipcQueuedBytes = 0;
+	_ipcQueuedBytes = 0;
 	spawnfile = "";
 	spawnargs = [];
 	stdin;
@@ -1382,10 +1400,20 @@ var ChildProcess = class {
 			(this._onceListeners.message?.length ?? 0) > 0
 		);
 	}
-	_emitOrQueueIpcMessage(message,bytes=0) {
+	_emitOrQueueIpcMessage(message, bytes = 0) {
 		if (!this._hasIpcMessageListeners()) {
-            if(this._ipcQueuedMessages.length>=1024||this._ipcQueuedBytes+bytes>8*1024*1024) throw Object.assign(new Error("IPC pre-listener queue exceeded its encoded byte/message limit"),{code:"ERR_RESOURCE_BUDGET_EXCEEDED"});
-            this._ipcQueuedMessages.push({message,bytes});this._ipcQueuedBytes+=bytes;
+			if (
+				this._ipcQueuedMessages.length >= 1024 ||
+				this._ipcQueuedBytes + bytes > 8 * 1024 * 1024
+			)
+				throw Object.assign(
+					new Error(
+						"IPC pre-listener queue exceeded its encoded byte/message limit",
+					),
+					{ code: "ERR_RESOURCE_BUDGET_EXCEEDED" },
+				);
+			this._ipcQueuedMessages.push({ message, bytes });
+			this._ipcQueuedBytes += bytes;
 			return false;
 		}
 		return this.emit("message", message, void 0);
@@ -1399,7 +1427,9 @@ var ChildProcess = class {
 				this._ipcQueuedMessages.length > 0 &&
 				this._hasIpcMessageListeners()
 			) {
-				const queued=this._ipcQueuedMessages.shift();this._ipcQueuedBytes-=queued.bytes;this.emit("message", queued.message, void 0);
+				const queued = this._ipcQueuedMessages.shift();
+				this._ipcQueuedBytes -= queued.bytes;
+				this.emit("message", queued.message, void 0);
 			}
 		});
 	}
@@ -1451,11 +1481,11 @@ var ChildProcess = class {
 		}
 		return this;
 	}
-    disconnect() {
-        if(!this.connected)return;
-        this.connected=false;
-        this._ipcChannel?.disconnect();
-    }
+	disconnect() {
+		if (!this.connected) return;
+		this.connected = false;
+		this._ipcChannel?.disconnect();
+	}
 
 	send(message, sendHandleOrOptions, optionsOrCallback, maybeCallback) {
 		const callback =
@@ -1464,11 +1494,32 @@ var ChildProcess = class {
 				: typeof optionsOrCallback === "function"
 					? optionsOrCallback
 					: maybeCallback;
-        const frame=getAsyncContextFrame();
-        const done=typeof callback==="function"?(...args)=>runInAsyncContextFrame(frame,callback,undefined,args):undefined;
-        if(!this.connected||!this._ipcChannel){const error=Object.assign(new Error("IPC channel is closed"),{code:"ERR_IPC_CHANNEL_CLOSED"});if(done)queueMicrotask(()=>done(error));else queueMicrotask(()=>{if(!this.emit("error",error))throw error;});return false;}
-        try { return this._ipcChannel.send(encodeChildProcessIpcFrame(message,this._ipcSerialization),done); }
-        catch(error) {if(done)queueMicrotask(()=>done(error));else throw error;return false;}
+		const frame = getAsyncContextFrame();
+		const done =
+			typeof callback === "function"
+				? (...args) => runInAsyncContextFrame(frame, callback, undefined, args)
+				: undefined;
+		if (!this.connected || !this._ipcChannel) {
+			const error = Object.assign(new Error("IPC channel is closed"), {
+				code: "ERR_IPC_CHANNEL_CLOSED",
+			});
+			if (done) queueMicrotask(() => done(error));
+			else
+				queueMicrotask(() => {
+					if (!this.emit("error", error)) throw error;
+				});
+			return false;
+		}
+		try {
+			return this._ipcChannel.send(
+				encodeChildProcessIpcFrame(message, this._ipcSerialization),
+				done,
+			);
+		} catch (error) {
+			if (done) queueMicrotask(() => done(error));
+			else throw error;
+			return false;
+		}
 	}
 	_complete(stdout, stderr, code) {
 		const signalCode = this.signalCode;
@@ -1573,8 +1624,13 @@ function exec(command, options, callback) {
 	return child;
 }
 function normalizedChildProcessEnvironment(environment) {
-	const selected = environment ?? (typeof process !== "undefined" ? process.env : {});
-	return Object.fromEntries(Object.entries(selected).filter(([,value]) => value !== undefined).map(([name,value]) => [name,String(value)]));
+	const selected =
+		environment ?? (typeof process !== "undefined" ? process.env : {});
+	return Object.fromEntries(
+		Object.entries(selected)
+			.filter(([, value]) => value !== undefined)
+			.map(([name, value]) => [name, String(value)]),
+	);
 }
 function validateChildProcessCredentials(options) {
 	for (const name of ["uid", "gid"]) {
@@ -1714,9 +1770,15 @@ function spawn(command, args, options) {
 	child.spawnargs = [command, ...argsArray];
 	child.detached = opts.detached === true;
 	const stdio = normalizeChildProcessStdio(opts.stdio);
-    const ipcCount=stdio.filter(mode=>mode==="ipc").length;
-    if(ipcCount>1)throw Object.assign(new Error("multiple IPC channels are not allowed"),{code:"ERR_IPC_ONE_PIPE"});
-    if(ipcCount===1){child._ipcEnabled=true;child.connected=true;}
+	const ipcCount = stdio.filter((mode) => mode === "ipc").length;
+	if (ipcCount > 1)
+		throw Object.assign(new Error("multiple IPC channels are not allowed"), {
+			code: "ERR_IPC_ONE_PIPE",
+		});
+	if (ipcCount === 1) {
+		child._ipcEnabled = true;
+		child.connected = true;
+	}
 	// Node fd inheritance: when stdio[1]/stdio[2] is a numeric fd the child's
 	// stdout/stderr is wired to that (host/VFS) descriptor, so the bytes are
 	// written there instead of being delivered on child.stdout/child.stderr
@@ -1770,7 +1832,8 @@ function spawn(command, args, options) {
 						// ownership. The sidecar must return output to this bridge even
 						// though the Linux kernel process inherits fd 1/2 internally.
 						stdio: childProcessBridgeStdio(stdio),
-                        ipcSerialization: opts.serialization === "advanced" ? "advanced" : "json",
+						ipcSerialization:
+							opts.serialization === "advanced" ? "advanced" : "json",
 					}),
 				]),
 			);
@@ -1801,20 +1864,40 @@ function spawn(command, args, options) {
 				: spawnResult;
 		childProcessInstances.set(sessionId, child);
 		child._sessionId = sessionId;
-        if(child._ipcEnabled) {
-            const info=ipcInfo(sessionId);
-            if(!info)throw new Error("kernel did not publish the requested IPC endpoint");
-            child._ipcSerialization=info.serialization;child._ipcReady=true;
-            child._ipcChannel=openIpcChannel(sessionId,info,{
-                drainMs:CHILD_PROCESS_EXIT_DRAIN_MAX_MS,
-                message:bindAsyncContextFrame(child[kAsyncContextFrame],(payload,bytes)=>{
-                    try {child._emitOrQueueIpcMessage(decodeChildProcessIpcFramePayload(payload),bytes);}
-                    catch(error){const outcome=routeAsyncCallbackError(error);if(!outcome.handled)throw outcome.rethrow;}
-                }),
-                error:bindAsyncContextFrame(child[kAsyncContextFrame],error=>{if(!child.emit("error",error))throw error;}),
-                close:bindAsyncContextFrame(child[kAsyncContextFrame],()=>{if(!child._ipcDisconnectEmitted){child.connected=false;child._ipcDisconnectEmitted=true;child.emit("disconnect");}}),
-            });
-        }
+		if (child._ipcEnabled) {
+			const info = ipcInfo(sessionId);
+			if (!info)
+				throw new Error("kernel did not publish the requested IPC endpoint");
+			child._ipcSerialization = info.serialization;
+			child._ipcReady = true;
+			child._ipcChannel = openIpcChannel(sessionId, info, {
+				drainMs: CHILD_PROCESS_EXIT_DRAIN_MAX_MS,
+				message: bindAsyncContextFrame(
+					child[kAsyncContextFrame],
+					(payload, bytes) => {
+						try {
+							child._emitOrQueueIpcMessage(
+								decodeChildProcessIpcFramePayload(payload),
+								bytes,
+							);
+						} catch (error) {
+							const outcome = routeAsyncCallbackError(error);
+							if (!outcome.handled) throw outcome.rethrow;
+						}
+					},
+				),
+				error: bindAsyncContextFrame(child[kAsyncContextFrame], (error) => {
+					if (!child.emit("error", error)) throw error;
+				}),
+				close: bindAsyncContextFrame(child[kAsyncContextFrame], () => {
+					if (!child._ipcDisconnectEmitted) {
+						child.connected = false;
+						child._ipcDisconnectEmitted = true;
+						child.emit("disconnect");
+					}
+				}),
+			});
+		}
 		if (typeof _registerHandle === "function") {
 			child._handleId = `child:${sessionId}`;
 			child._handleDescription = `child_process: ${command} ${argsArray.join(" ")}`;
@@ -1919,7 +2002,10 @@ function spawn(command, args, options) {
 			_childProcessPtyResize.applySync(void 0, [sessionId, cols, rows]);
 			return child;
 		};
-        if(stdio[0]!=null&&stdio[0]!=="pipe"){child.stdin=null;child.stdio[0]=null;}
+		if (stdio[0] != null && stdio[0] !== "pipe") {
+			child.stdin = null;
+			child.stdio[0] = null;
+		}
 		child.pid =
 			typeof spawnResult === "object" && spawnResult !== null
 				? Number(spawnResult.pid) || -1
@@ -2235,8 +2321,19 @@ function fork(modulePath, args, options) {
 			preloadModules.push(argument.slice("--require=".length));
 		}
 	}
-    const stdio=opts.stdio==null?(opts.silent?["pipe","pipe","pipe","ipc"]:["inherit","inherit","inherit","ipc"]):typeof opts.stdio==="string"?[opts.stdio,opts.stdio,opts.stdio,"ipc"]:opts.stdio;
-    if(stdio.filter(mode=>mode==="ipc").length!==1)throw Object.assign(new Error("fork requires exactly one IPC stdio entry"),{code:"ERR_CHILD_PROCESS_IPC_REQUIRED"});
+	const stdio =
+		opts.stdio == null
+			? opts.silent
+				? ["pipe", "pipe", "pipe", "ipc"]
+				: ["inherit", "inherit", "inherit", "ipc"]
+			: typeof opts.stdio === "string"
+				? [opts.stdio, opts.stdio, opts.stdio, "ipc"]
+				: opts.stdio;
+	if (stdio.filter((mode) => mode === "ipc").length !== 1)
+		throw Object.assign(
+			new Error("fork requires exactly one IPC stdio entry"),
+			{ code: "ERR_CHILD_PROCESS_IPC_REQUIRED" },
+		);
 	const env = {
 		...normalizedChildProcessEnvironment(opts.env),
 		AGENTOS_NODE_EXEC_ARGV: JSON.stringify(execArgv.map(String)),
@@ -2249,7 +2346,7 @@ function fork(modulePath, args, options) {
 		{
 			...opts,
 			__agentOSForkIpc: true,
-            stdio,
+			stdio,
 			cwd: effectiveCwd,
 			env,
 			shell: false,
@@ -2277,8 +2374,8 @@ var child_process_default = childProcess;
 export {
 	_childInheritedFds,
 	_nextChildPid,
+	CHILD_PROCESS_EXIT_DRAIN_MAX_MS,
 	CHILD_PROCESS_IPC_FRAME_PREFIX,
-    CHILD_PROCESS_EXIT_DRAIN_MAX_MS,
 	ChildProcess,
 	checkStreamMaxListeners,
 	child_process_default,

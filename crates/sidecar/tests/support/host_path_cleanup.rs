@@ -222,6 +222,8 @@ async fn host_path_cleanup_keeps_router_live_and_blocks_success_until_removed() 
                         .expect("release cleanup worker");
                 });
 
+                let mut request_queue =
+                    RequestQueue::new(&agentos_driver_tokio::DriverProtocolConfig::default());
                 macro_rules! route {
                     ($request:expr) => {
                         route_protocol_frame(
@@ -243,6 +245,7 @@ async fn host_path_cleanup_keeps_router_live_and_blocks_success_until_removed() 
                             1,
                             &mut active_sessions,
                             &mut active_connections,
+                            &mut request_queue,
                         )
                         .unwrap()
                     };

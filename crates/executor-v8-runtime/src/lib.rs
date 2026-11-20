@@ -18,19 +18,23 @@ pub mod ipc_binary;
 pub mod isolate;
 #[allow(dead_code, unused_imports)]
 pub mod javascript;
+pub mod module_code_cache;
+pub mod module_snapshot;
 pub mod native_heap;
-mod node_v8_deserializer;
-mod node_v8_serialization;
-mod uint8array_encoding;
 mod next_ticks;
 mod node_brotli;
+mod node_v8_deserializer;
+mod node_v8_serialization;
 pub(crate) mod owned_microtasks;
 pub mod runtime_protocol;
 pub mod session;
+pub mod shared_source;
 pub mod snapshot;
+pub mod snapshot_disk_cache;
 pub mod stream;
 pub(crate) mod terminal_callback;
 pub mod timeout;
+mod uint8array_encoding;
 
 pub mod backend {
     pub use agentos_executor_contract::backend::*;

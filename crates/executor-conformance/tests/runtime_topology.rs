@@ -2,12 +2,11 @@ mod support;
 
 use agentos_driver_tokio::metrics::BufferMetricClass;
 use agentos_executor_conformance::{
-    GuestRuntimeConfig, JavascriptExecutionEngine, PythonExecutionEngine,
-    StartWasmExecutionRequest, WasmExecutionEngine, WasmExecutionLimits, WasmPermissionTier,
+    GuestRuntimeConfig, PythonExecutionEngine, StartWasmExecutionRequest, WasmExecutionEngine,
+    WasmExecutionLimits, WasmPermissionTier,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use tempfile::tempdir;
 
 #[test]
 fn execution_subsystems_do_not_lookup_or_build_runtime_topology() {
@@ -71,26 +70,19 @@ fn supplied_vm_runtime_is_forwarded_to_per_execution_paths() {
     assert!(javascript.contains("pub fn start_execution_with_module_reader_and_runtime("));
     assert!(javascript.contains("spawn_v8_event_bridge(\n            &runtime,"));
     assert!(javascript.contains(
-        "create_session_from_command_with_runtime(\n                    command,\n                    &runtime,\n                    reactor_work_quantum,"
-    ));
-    assert!(javascript.contains(
-        ".ensure_materialized_with_timeout_and_runtime(\n                &process_runtime,"
+        "create_session_from_command_with_runtime_and_serialization_limit(\n                    command,\n                    &runtime,\n                    reactor_work_quantum,"
     ));
 
     let python = include_str!("../../executor-python-v8-pyodide/src/lib.rs");
     assert!(python.contains("pub fn start_execution_with_runtime("));
     assert!(python.contains("pub async fn start_execution_with_runtime_async("));
-    assert!(python.contains("pub async fn bundled_pyodide_dist_path_for_vm_async("));
+    assert!(python.contains("pub async fn bundled_pyodide_paths_for_vm_async("));
     assert!(python.contains(
         "start_python_javascript_execution(\n            &mut self.javascript_engine,\n            &runtime,"
     ));
     assert!(python.contains(
-        "prewarm_python_path(\n                import_cache,\n                &mut self.javascript_engine,"
-    ));
-    assert!(python.contains(
         ".ensure_materialized_with_timeout_and_runtime_async(\n                    &runtime,"
     ));
-    assert!(python.contains("prewarm_python_path_async("));
     assert!(!python.contains("let process_runtime = self.runtime_context()?.clone();"));
 
     let wasm = include_str!("../../executor-wasm-v8/src/lib.rs");
@@ -105,21 +97,9 @@ fn supplied_vm_runtime_is_forwarded_to_per_execution_paths() {
 
 #[test]
 fn default_engine_does_not_silently_select_process_topology() {
-    let mut javascript = JavascriptExecutionEngine::default();
-    let error = javascript
-        .materialize_import_cache_for_vm("vm-unbound")
-        .expect_err("an unbound engine must reject runtime-dependent work");
-
-    assert!(
-        error
-            .to_string()
-            .contains("ERR_AGENTOS_RUNTIME_NOT_INJECTED"),
-        "unexpected error: {error}"
-    );
-
     let mut python = PythonExecutionEngine::default();
     let error = python
-        .bundled_pyodide_dist_path_for_vm("vm-unbound")
+        .bundled_pyodide_paths_for_vm("vm-unbound")
         .expect_err("an unbound Python engine must reject runtime-dependent work");
     assert!(
         error
@@ -153,16 +133,14 @@ fn default_engine_does_not_silently_select_process_topology() {
 #[test]
 fn injected_runtime_admits_materialization_to_shared_blocking_executor() {
     let runtime = support::runtime_context();
-    let cache_root = tempdir().expect("create cache root");
-    let mut engine = JavascriptExecutionEngine::new(runtime.clone());
-    engine.set_import_cache_base_dir("vm-injected", cache_root.path().to_path_buf());
+    let mut engine = PythonExecutionEngine::new(runtime.clone());
 
-    let cache_path = engine
-        .materialize_import_cache_for_vm("vm-injected")
+    let paths = engine
+        .bundled_pyodide_paths_for_vm("vm-injected")
         .expect("materialize import cache on injected runtime");
     assert!(
-        cache_path.parent().is_some_and(std::path::Path::is_dir),
-        "materialization must create the cache root"
+        paths.dist.is_dir() && paths.cache.is_dir(),
+        "materialization must create the shared distribution and the VM cache"
     );
 
     let metrics = runtime.metrics().snapshot();

@@ -18,12 +18,11 @@ async fn positional_file_reads_retain_byte_bounds_and_path_guards() {
         vm.read_file_range("/tmp/range", 3, 5).await.expect("range"),
         b"34567"
     );
-    assert!(
-        vm.read_file_range("/tmp/range", 16, 8)
-            .await
-            .expect("EOF")
-            .is_empty()
-    );
+    assert!(vm
+        .read_file_range("/tmp/range", 16, 8)
+        .await
+        .expect("EOF")
+        .is_empty());
     assert!(vm.read_file_range("relative", 0, 1).await.is_err());
     assert!(vm.read_file_range("/tmp/range", u64::MAX, 1).await.is_err());
     vm.shutdown().await.expect("shutdown VM");

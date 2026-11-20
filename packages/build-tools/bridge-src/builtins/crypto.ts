@@ -1,13 +1,18 @@
 import { import_buffer2 } from "./buffer-runtime.js";
-import { builtinConstantsStdlibModule } from "./builtin-modules.js";
 import { intrinsicArrayBufferViewBytes } from "./buffer-source.js";
+import { builtinConstantsStdlibModule } from "./builtin-modules.js";
 
 // DataView validates genuine AB/SAB internal slots across realms. The SAB
 // global can be a temporary bootstrap stub (then absent) while this module is
 // snapshotted, so its getter cannot be captured as the permanent brand check.
 const cryptoBufferView = globalThis.DataView;
 function isCryptoArrayBuffer(value) {
-	try { new cryptoBufferView(value); return true; } catch { return false; }
+	try {
+		new cryptoBufferView(value);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 function createUnsupportedCryptoApiError(subject) {
@@ -64,20 +69,35 @@ const DOM_EXCEPTION_LEGACY = [
 	["DataCloneError", "DATA_CLONE_ERR", 25],
 ];
 // Obsolete codes remain constants without corresponding modern exception names.
-const DOM_EXCEPTION_CODES = new Map(DOM_EXCEPTION_LEGACY.filter(([, , code]) => ![2, 6, 16].includes(code)).map(([name, , code]) => [name, code]));
+const DOM_EXCEPTION_CODES = new Map(
+	DOM_EXCEPTION_LEGACY.filter(([, , code]) => ![2, 6, 16].includes(code)).map(
+		([name, , code]) => [name, code],
+	),
+);
 
 class SandboxDOMException extends Error {
 	constructor(message = "", name = "Error") {
 		super(message);
 		this.name = String(name);
 	}
-	get code() { return DOM_EXCEPTION_CODES.get(this.name) ?? 0; }
+	get code() {
+		return DOM_EXCEPTION_CODES.get(this.name) ?? 0;
+	}
 }
 for (const [, name, code] of DOM_EXCEPTION_LEGACY) {
-	Object.defineProperty(SandboxDOMException, name, { value: code, enumerable: true });
-	Object.defineProperty(SandboxDOMException.prototype, name, { value: code, enumerable: true });
+	Object.defineProperty(SandboxDOMException, name, {
+		value: code,
+		enumerable: true,
+	});
+	Object.defineProperty(SandboxDOMException.prototype, name, {
+		value: code,
+		enumerable: true,
+	});
 }
-Object.defineProperty(SandboxDOMException.prototype, Symbol.toStringTag, { value: "DOMException", configurable: true });
+Object.defineProperty(SandboxDOMException.prototype, Symbol.toStringTag, {
+	value: "DOMException",
+	configurable: true,
+});
 
 function createDomLikeError(name, code, message) {
 	const error = new Error(message);
@@ -252,7 +272,14 @@ Object.defineProperty(SandboxCryptoKey, Symbol.hasInstance, {
 });
 
 function createCryptoKey(keyData) {
-	if (Array.isArray(keyData.algorithm?.publicExponent)) keyData = { ...keyData, algorithm: { ...keyData.algorithm, publicExponent: Uint8Array.from(keyData.algorithm.publicExponent) } };
+	if (Array.isArray(keyData.algorithm?.publicExponent))
+		keyData = {
+			...keyData,
+			algorithm: {
+				...keyData.algorithm,
+				publicExponent: Uint8Array.from(keyData.algorithm.publicExponent),
+			},
+		};
 	const globalCryptoKey = globalThis.CryptoKey;
 	if (
 		typeof globalCryptoKey === "function" &&
@@ -278,9 +305,18 @@ function subtleCall(request) {
 	if (typeof _cryptoSubtle === "undefined") {
 		throw new Error("crypto.subtle is not supported in sandbox");
 	}
-	try { return _cryptoSubtle.applySync(void 0, [JSON.stringify(request)]); }
-	catch (error) {
-		if (["DataError", "SyntaxError", "NotSupportedError", "InvalidAccessError"].includes(error?.code)) throw new SandboxDOMException(error.message, error.code);
+	try {
+		return _cryptoSubtle.applySync(void 0, [JSON.stringify(request)]);
+	} catch (error) {
+		if (
+			[
+				"DataError",
+				"SyntaxError",
+				"NotSupportedError",
+				"InvalidAccessError",
+			].includes(error?.code)
+		)
+			throw new SandboxDOMException(error.message, error.code);
 		throw error;
 	}
 }
@@ -587,10 +623,15 @@ function createBuiltinHash(algorithm, initialChunks = []) {
 			const length = options?.outputLength;
 			if (length !== undefined) {
 				if (typeof length !== "number") {
-					throw createNodeTypeError2('The "options.outputLength" property must be of type number', "ERR_INVALID_ARG_TYPE");
+					throw createNodeTypeError2(
+						'The "options.outputLength" property must be of type number',
+						"ERR_INVALID_ARG_TYPE",
+					);
 				}
 				if (!Number.isInteger(length) || length < 0 || length > 0xffffffff) {
-					const error = new RangeError('The "options.outputLength" property must be an unsigned 32-bit integer');
+					const error = new RangeError(
+						'The "options.outputLength" property must be an unsigned 32-bit integer',
+					);
 					error.code = "ERR_OUT_OF_RANGE";
 					throw error;
 				}
@@ -927,7 +968,11 @@ function decodeGeneratedCryptoValue(value) {
 
 class BuiltinKeyObject {
 	static from(key) {
-		if (!(key instanceof SandboxCryptoKey)) throw createNodeTypeError2('The "key" argument must be a CryptoKey', "ERR_INVALID_ARG_TYPE");
+		if (!(key instanceof SandboxCryptoKey))
+			throw createNodeTypeError2(
+				'The "key" argument must be a CryptoKey',
+				"ERR_INVALID_ARG_TYPE",
+			);
 		return createBuiltinKeyObject(key._keyData);
 	}
 
@@ -1717,16 +1762,24 @@ var builtinCryptoModule = {
 			}
 			const view = intrinsicArrayBufferViewBytes(value);
 			if (view) return view;
-			throw createNodeTypeError2(`The "${name}" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.`, "ERR_INVALID_ARG_TYPE");
+			throw createNodeTypeError2(
+				`The "${name}" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.`,
+				"ERR_INVALID_ARG_TYPE",
+			);
 		};
 		const left = bytes(a, "buf1");
 		const right = bytes(b, "buf2");
 		if (left.byteLength !== right.byteLength) {
-			const error = new RangeError("Input buffers must have the same byte length");
+			const error = new RangeError(
+				"Input buffers must have the same byte length",
+			);
 			error.code = "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH";
 			throw error;
 		}
-		return _cryptoTimingSafeEqual.applySync(void 0, [toBase64(left), toBase64(right)]);
+		return _cryptoTimingSafeEqual.applySync(void 0, [
+			toBase64(left),
+			toBase64(right),
+		]);
 	},
 	randomBytes(size) {
 		const length = Math.max(0, Number(size) || 0);
@@ -1739,29 +1792,47 @@ var builtinCryptoModule = {
 			callback = max;
 			max = undefined;
 		}
-		if (max === undefined) { max = min; min = 0; }
-		if (callback !== undefined && typeof callback !== "function") {
-			throw createNodeTypeError2('The "callback" argument must be a function', "ERR_INVALID_ARG_TYPE");
+		if (max === undefined) {
+			max = min;
+			min = 0;
 		}
-		for (const [name, value] of [["min", min], ["max", max]]) {
+		if (callback !== undefined && typeof callback !== "function") {
+			throw createNodeTypeError2(
+				'The "callback" argument must be a function',
+				"ERR_INVALID_ARG_TYPE",
+			);
+		}
+		for (const [name, value] of [
+			["min", min],
+			["max", max],
+		]) {
 			if (!Number.isSafeInteger(value)) {
-				throw createNodeTypeError2(`The "${name}" argument must be a safe integer`, "ERR_INVALID_ARG_TYPE");
+				throw createNodeTypeError2(
+					`The "${name}" argument must be a safe integer`,
+					"ERR_INVALID_ARG_TYPE",
+				);
 			}
 		}
 		const range = max - min;
 		const domain = 2 ** 48;
 		if (range <= 0 || range >= domain) {
-			const error = new RangeError("max - min must be positive and less than 2 ** 48");
+			const error = new RangeError(
+				"max - min must be positive and less than 2 ** 48",
+			);
 			error.code = "ERR_OUT_OF_RANGE";
 			throw error;
 		}
 		// Rejection sampling avoids modulo bias for ranges that do not divide
 		// the six-byte entropy domain. Entropy always comes from the kernel.
 		const cutoff = domain - (domain % range);
-		let value;
+		let value: number;
 		do {
-			const bytes = import_buffer2.Buffer.from(_cryptoRandomFill.applySync(void 0, [6]), "base64");
-			if (bytes.length !== 6) throw new Error("crypto.randomInt received an invalid entropy length");
+			const bytes = import_buffer2.Buffer.from(
+				_cryptoRandomFill.applySync(void 0, [6]),
+				"base64",
+			);
+			if (bytes.length !== 6)
+				throw new Error("crypto.randomInt received an invalid entropy length");
 			value = bytes.readUIntBE(0, 6);
 		} while (value >= cutoff);
 		const result = min + (value % range);

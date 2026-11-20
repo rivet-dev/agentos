@@ -76,7 +76,7 @@ impl<F> MountedEngineFileSystem<F> {
 
 impl<F> MountedFileSystem for MountedEngineFileSystem<F>
 where
-    F: agentos_vfs_core::engine::VirtualFileSystem + 'static,
+    F: agentos_vfs_core::engine::VirtualFileSystem + Send + 'static,
 {
     fn as_any(&self) -> &dyn Any {
         self

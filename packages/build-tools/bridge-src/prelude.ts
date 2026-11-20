@@ -127,10 +127,18 @@ installBase64UrlBufferEncoding(EarlyBufferGlobal);
 // Node accepts every genuine Uint8Array (including foreign-realm views) here.
 // The vendored browser Buffer implementation still accepts only Buffer.
 if (typeof EarlyBufferGlobal === "function") {
-	const typedArrayTag = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get;
+	const typedArrayTag = Object.getOwnPropertyDescriptor(
+		Object.getPrototypeOf(Uint8Array.prototype),
+		Symbol.toStringTag,
+	).get;
 	EarlyBufferGlobal.prototype.equals = function equals(other) {
 		if (Reflect.apply(typedArrayTag, other, []) !== "Uint8Array") {
-			throw Object.assign(new TypeError('The "otherBuffer" argument must be a Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
+			throw Object.assign(
+				new TypeError(
+					'The "otherBuffer" argument must be a Buffer or Uint8Array',
+				),
+				{ code: "ERR_INVALID_ARG_TYPE" },
+			);
 		}
 		return EarlyBufferGlobal.compare(this, other) === 0;
 	};
@@ -262,34 +270,49 @@ function cloneStructuredValue(value, seen) {
 	throw createStructuredCloneDataCloneError();
 }
 const structuredCloneBufferTransfer = ArrayBuffer.prototype.transfer;
-const structuredCloneBufferLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength").get;
+const structuredCloneBufferLength = Object.getOwnPropertyDescriptor(
+	ArrayBuffer.prototype,
+	"byteLength",
+).get;
 const structuredCloneApply = Reflect.apply;
 const StructuredCloneUint8Array = Uint8Array;
 function validateStructuredTransfer(buffer) {
- try {
-  structuredCloneApply(structuredCloneBufferLength, buffer, []);
-  // A detached zero-byte buffer must remain distinct from a live empty buffer.
-  new StructuredCloneUint8Array(buffer);
- } catch { throw createStructuredCloneDataCloneError("Transfer list contains an invalid ArrayBuffer"); }
+	try {
+		structuredCloneApply(structuredCloneBufferLength, buffer, []);
+		// A detached zero-byte buffer must remain distinct from a live empty buffer.
+		new StructuredCloneUint8Array(buffer);
+	} catch {
+		throw createStructuredCloneDataCloneError(
+			"Transfer list contains an invalid ArrayBuffer",
+		);
+	}
 }
 function sandboxStructuredClone(value, options = void 0) {
- const transfers = new Set();
- const list = options == null ? undefined : options.transfer;
- if (list !== undefined) {
-  if (list == null || typeof list[Symbol.iterator] !== "function") throw new TypeError("Transfer list must be iterable");
-  for (const buffer of list) {
-   if (transfers.has(buffer)) throw createStructuredCloneDataCloneError("Transfer list contains a duplicate ArrayBuffer");
-   validateStructuredTransfer(buffer);
-   transfers.add(buffer);
-  }
-  if (transfers.size && typeof structuredCloneBufferTransfer !== "function") throw createStructuredCloneDataCloneError("ArrayBuffer transfer is unavailable");
- }
- // Validate and clone the complete graph before detaching any source. A getter
- // can fail or detach a listed buffer, so revalidate before committing transfers.
- const cloned = cloneStructuredValue(value, new Map());
- for (const buffer of transfers) validateStructuredTransfer(buffer);
- for (const buffer of transfers) structuredCloneApply(structuredCloneBufferTransfer, buffer, [0]);
- return cloned;
+	const transfers = new Set();
+	const list = options == null ? undefined : options.transfer;
+	if (list !== undefined) {
+		if (list == null || typeof list[Symbol.iterator] !== "function")
+			throw new TypeError("Transfer list must be iterable");
+		for (const buffer of list) {
+			if (transfers.has(buffer))
+				throw createStructuredCloneDataCloneError(
+					"Transfer list contains a duplicate ArrayBuffer",
+				);
+			validateStructuredTransfer(buffer);
+			transfers.add(buffer);
+		}
+		if (transfers.size && typeof structuredCloneBufferTransfer !== "function")
+			throw createStructuredCloneDataCloneError(
+				"ArrayBuffer transfer is unavailable",
+			);
+	}
+	// Validate and clone the complete graph before detaching any source. A getter
+	// can fail or detach a listed buffer, so revalidate before committing transfers.
+	const cloned = cloneStructuredValue(value, new Map());
+	for (const buffer of transfers) validateStructuredTransfer(buffer);
+	for (const buffer of transfers)
+		structuredCloneApply(structuredCloneBufferTransfer, buffer, [0]);
+	return cloned;
 }
 if (EarlyUtilTypes && typeof EarlyUtilTypes.isProxy !== "function") {
 	EarlyUtilTypes.isProxy = () => false;

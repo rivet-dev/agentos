@@ -1,6 +1,6 @@
 //! Audit test: every limit-shaped constant in the scanned source roots must be classified in
 //! `fixtures/limits-inventory.json` as `policy`, `policy-deferred`, or `invariant`. A new
-//! `MAX_*` / `*_LIMIT` / capacity / retention constant that is not classified fails this test
+//! `MAX_*` / `*_LIMIT` / capacity / retention / `*_DEADLINE_MS` constant that is not classified fails this test
 //! with instructions, so operator-tunable bounds cannot silently accumulate as hardcoded values.
 //!
 //! This is a pure filesystem test: no VM, no V8, no new dependencies (`serde_json` is already a
@@ -45,6 +45,7 @@ fn name_qualifies(name: &str) -> bool {
         || name.contains("LIMIT_")
         || name.contains("_CAPACITY")
         || name.contains("RETENTION")
+        || name.ends_with("_DEADLINE_MS")
     {
         return true;
     }

@@ -647,7 +647,10 @@ pub fn vm_limits_from_config(
         )?;
 
         if let Some(value) = js_runtime.max_blob_bytes {
-            limits.js_runtime.max_blob_bytes = Some(usize::try_from(value).map_err(|_| integer_too_large("limits.jsRuntime.maxBlobBytes", value))?);
+            limits.js_runtime.max_blob_bytes = Some(
+                usize::try_from(value)
+                    .map_err(|_| integer_too_large("limits.jsRuntime.maxBlobBytes", value))?,
+            );
         }
         if let Some(value) = js_runtime.v8_heap_limit_mb {
             limits.js_runtime.v8_heap_limit_mb = Some(
@@ -1316,7 +1319,7 @@ pub fn validate_vm_limits(
             limits.reactor.operation_deadline_ms as u128,
         ),
     ] {
-        if value == 0 || (value as u128) > ((1_u128 << 53) - 1) {
+        if value == 0 || value > ((1_u128 << 53) - 1) {
             return Err(SidecarCoreError::new(format!(
                 "{name} must be a positive JavaScript-safe integer"
             )));
@@ -1810,7 +1813,13 @@ pub fn validate_vm_limits(
         ));
     }
     if let Some(bytes) = limits.js_runtime.max_blob_bytes {
-        if bytes == 0 || bytes as u128 > ((1_u128 << 53) - 1) || limits.js_runtime.v8_heap_limit_mb.is_some_and(|mb| bytes as u64 > u64::from(mb) * 1024 * 1024) {
+        if bytes == 0
+            || bytes as u128 > ((1_u128 << 53) - 1)
+            || limits
+                .js_runtime
+                .v8_heap_limit_mb
+                .is_some_and(|mb| bytes as u64 > u64::from(mb) * 1024 * 1024)
+        {
             return Err(SidecarCoreError::new("limits.jsRuntime.maxBlobBytes must be positive and no larger than the configured V8 heap"));
         }
     }

@@ -87,13 +87,15 @@ pub(crate) fn transform<'s>(
     if decode {
         brotli::BrotliDecompress(&mut input, &mut output).map_err(|error| error.to_string())?;
     } else {
-        let mut params = brotli::enc::BrotliEncoderParams::default();
-        params.quality = args.get(1).int32_value(scope).unwrap_or(11);
-        params.lgwin = args.get(2).int32_value(scope).unwrap_or(22);
-        params.mode = match args.get(3).int32_value(scope).unwrap_or(0) {
-            1 => brotli::enc::backward_references::BrotliEncoderMode::BROTLI_MODE_TEXT,
-            2 => brotli::enc::backward_references::BrotliEncoderMode::BROTLI_MODE_FONT,
-            _ => brotli::enc::backward_references::BrotliEncoderMode::BROTLI_MODE_GENERIC,
+        let params = brotli::enc::BrotliEncoderParams {
+            quality: args.get(1).int32_value(scope).unwrap_or(11),
+            lgwin: args.get(2).int32_value(scope).unwrap_or(22),
+            mode: match args.get(3).int32_value(scope).unwrap_or(0) {
+                1 => brotli::enc::backward_references::BrotliEncoderMode::BROTLI_MODE_TEXT,
+                2 => brotli::enc::backward_references::BrotliEncoderMode::BROTLI_MODE_FONT,
+                _ => brotli::enc::backward_references::BrotliEncoderMode::BROTLI_MODE_GENERIC,
+            },
+            ..Default::default()
         };
         if !(0..=11).contains(&params.quality) || !(10..=24).contains(&params.lgwin) {
             return Err("ERR_OUT_OF_RANGE: invalid Brotli quality or window".into());

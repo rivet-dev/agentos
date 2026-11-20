@@ -1,14 +1,114 @@
-import {createServer,request as httpRequest} from "node:http";
-import {Duplex} from "node:stream";
-import {expect,test} from "vitest";
-import {AgentOs} from "../src/index.js";
-const source=`(req,res)=>{switch(req.url){case'/property':res.statusCode=201;res.statusMessage='Legacy Fetch';break;case'/head':res.writeHead(201,'Custom phrase',{'x-mode':'head'});break;case'/empty':res.writeHead(201,'');break;case'/stream':res.writeHead(201,'Stream phrase');res.write('a');setTimeout(()=>res.end('b'),5);return;case'/invalid':try{res.writeHead(201,'bad\\r\\nreason');}catch(e){res.statusMessage='OK';res.writeHead(200);res.end(JSON.stringify({code:e.code,message:e.message}));return;}throw Error('invalid reason accepted');default:res.statusCode=201;}res.end('body');}`;
-test("HTTP response reason phrases survive default, explicit and streamed writes",async()=>{
- const exchange=(port:number,createConnection?:()=>Duplex)=>Promise.all(['/default','/property','/head','/empty','/stream','/invalid'].map(path=>new Promise((resolve,reject)=>{const req=httpRequest({host:'127.0.0.1',port,path,...(createConnection?{createConnection}:{agent:false})},res=>{let body='';res.on('data',b=>body+=b);res.once('end',()=>resolve({status:res.statusCode,reason:res.statusMessage,mode:res.headers['x-mode']??null,body}));res.once('error',reject);});req.once('error',reject);req.end();})));
- const host=createServer(eval('('+source+')'));await new Promise<void>(resolve=>host.listen(0,'127.0.0.1',resolve));const address=host.address();if(!address||typeof address==='string')throw Error('missing host port');const expected=await exchange(address.port);
- const sidecar=await AgentOs.createSidecar();let vm:AgentOs|undefined;
- try{vm=await AgentOs.create({sidecar:{kind:'explicit',handle:sidecar},defaultSoftware:false,permissions:{network:'deny'}});const ready=Promise.withResolvers<void>();let stderr='';await vm.process.spawn('node',['-e',`require('node:http').createServer(${source}).listen(18883,'127.0.0.1',()=>console.log('ready'));`],{onStdout:b=>{if(Buffer.from(b).toString().includes('ready'))ready.resolve();},onStderr:b=>{stderr+=Buffer.from(b).toString();}});await ready.promise;
- const connections=await Promise.all(Array.from({length:6},()=>vm!.network.connect(18883)));let next=0;
- const actual=await exchange(18883,()=>{const connection=connections[next++]!;let reading=false;return new Duplex({read(){if(reading)return;reading=true;void connection.read().then(c=>{reading=false;if(c.body.length)this.push(c.body);if(c.done)this.push(null);},e=>this.destroy(e));},write(b,_e,done){void connection.write(b).then(()=>done(),done);},final(done){void connection.end().then(()=>done(),done);},destroy(error,done){void connection.close().then(()=>done(error),done);}});});expect(actual,stderr).toEqual(expected);
- }finally{try{await vm?.dispose();}finally{await sidecar.dispose();host.closeAllConnections();await new Promise<void>((resolve,reject)=>host.close(e=>e?reject(e):resolve()));}}
-},15000);
+import { createServer, request as httpRequest } from "node:http";
+import { Duplex } from "node:stream";
+import { expect, test } from "vitest";
+import { AgentOs } from "../src/index.js";
+
+const source = `(req,res)=>{switch(req.url){case'/property':res.statusCode=201;res.statusMessage='Legacy Fetch';break;case'/head':res.writeHead(201,'Custom phrase',{'x-mode':'head'});break;case'/empty':res.writeHead(201,'');break;case'/stream':res.writeHead(201,'Stream phrase');res.write('a');setTimeout(()=>res.end('b'),5);return;case'/invalid':try{res.writeHead(201,'bad\\r\\nreason');}catch(e){res.statusMessage='OK';res.writeHead(200);res.end(JSON.stringify({code:e.code,message:e.message}));return;}throw Error('invalid reason accepted');default:res.statusCode=201;}res.end('body');}`;
+test("HTTP response reason phrases survive default, explicit and streamed writes", async () => {
+	const exchange = (port: number, createConnection?: () => Duplex) =>
+		Promise.all(
+			["/default", "/property", "/head", "/empty", "/stream", "/invalid"].map(
+				(path) =>
+					new Promise((resolve, reject) => {
+						const req = httpRequest(
+							{
+								host: "127.0.0.1",
+								port,
+								path,
+								...(createConnection ? { createConnection } : { agent: false }),
+							},
+							(res) => {
+								let body = "";
+								res.on("data", (b) => (body += b));
+								res.once("end", () =>
+									resolve({
+										status: res.statusCode,
+										reason: res.statusMessage,
+										mode: res.headers["x-mode"] ?? null,
+										body,
+									}),
+								);
+								res.once("error", reject);
+							},
+						);
+						req.once("error", reject);
+						req.end();
+					}),
+			),
+		);
+	// biome-ignore lint/security/noGlobalEval: execute the identical fixed fixture handler in the host reference.
+	const host = createServer(eval("(" + source + ")"));
+	await new Promise<void>((resolve) => host.listen(0, "127.0.0.1", resolve));
+	const address = host.address();
+	if (!address || typeof address === "string") throw Error("missing host port");
+	const expected = await exchange(address.port);
+	const sidecar = await AgentOs.createSidecar();
+	let vm: AgentOs | undefined;
+	try {
+		vm = await AgentOs.create({
+			sidecar: { kind: "explicit", handle: sidecar },
+			defaultSoftware: false,
+			permissions: { network: "deny" },
+		});
+		const ready = Promise.withResolvers<void>();
+		let stderr = "";
+		await vm.process.spawn(
+			"node",
+			[
+				"-e",
+				`require('node:http').createServer(${source}).listen(18883,'127.0.0.1',()=>console.log('ready'));`,
+			],
+			{
+				onStdout: (b) => {
+					if (Buffer.from(b).toString().includes("ready")) ready.resolve();
+				},
+				onStderr: (b) => {
+					stderr += Buffer.from(b).toString();
+				},
+			},
+		);
+		await ready.promise;
+		const connections = await Promise.all(
+			Array.from({ length: 6 }, () => vm!.network.connect(18883)),
+		);
+		let next = 0;
+		const actual = await exchange(18883, () => {
+			const connection = connections[next++]!;
+			let reading = false;
+			return new Duplex({
+				read() {
+					if (reading) return;
+					reading = true;
+					void connection.read().then(
+						(c) => {
+							reading = false;
+							if (c.body.length) this.push(c.body);
+							if (c.done) this.push(null);
+						},
+						(e) => this.destroy(e),
+					);
+				},
+				write(b, _e, done) {
+					void connection.write(b).then(() => done(), done);
+				},
+				final(done) {
+					void connection.end().then(() => done(), done);
+				},
+				destroy(error, done) {
+					void connection.close().then(() => done(error), done);
+				},
+			});
+		});
+		expect(actual, stderr).toEqual(expected);
+	} finally {
+		try {
+			await vm?.dispose();
+		} finally {
+			await sidecar.dispose();
+			host.closeAllConnections();
+			await new Promise<void>((resolve, reject) =>
+				host.close((e) => (e ? reject(e) : resolve())),
+			);
+		}
+	}
+}, 15000);

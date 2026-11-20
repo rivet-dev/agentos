@@ -7,6 +7,7 @@ use agentos_executor_conformance::{
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tempfile::tempdir;
@@ -15,12 +16,14 @@ const PYTHON_WARMUP_METRICS_PREFIX: &str = "__AGENTOS_PYTHON_WARMUP_METRICS__:";
 
 fn setup_engine() -> (PythonExecutionEngine, String, PathBuf) {
     let mut engine = support::python_engine();
-    let pyodide_dir = engine
-        .bundled_pyodide_dist_path_for_vm("vm-python")
+    let paths = engine
+        .bundled_pyodide_paths_for_vm("vm-python")
         .expect("materialize bundled pyodide");
+    let pyodide_dir = paths.dist.clone();
     let context = engine.create_context(CreatePythonContextRequest {
         vm_id: String::from("vm-python"),
-        pyodide_dist_path: pyodide_dir.clone(),
+        pyodide_dist_path: paths.dist,
+        pyodide_cache_path: Some(paths.cache),
     });
     (engine, context.context_id, pyodide_dir)
 }
@@ -118,7 +121,28 @@ fn python_execution_prewarms_once_when_compile_cache_is_ready() {
 
 fn python_execution_invalidates_prewarm_stamp_when_pyodide_bundle_changes() {
     let temp = tempdir().expect("create temp dir");
-    let (mut engine, context_id, pyodide_dir) = setup_engine();
+    let (mut engine, _, shared_dir) = setup_engine();
+    // The bundled distribution is shared and read-only, so mutate a private
+    // copy supplied as a caller-owned distribution.
+    let pyodide_dir = temp.path().join("pyodide-dist");
+    fs::create_dir_all(&pyodide_dir).expect("create private pyodide dist");
+    for entry in fs::read_dir(&shared_dir).expect("list shared pyodide dist") {
+        let entry = entry.expect("shared pyodide entry");
+        if entry.file_type().expect("entry type").is_file() {
+            let target = pyodide_dir.join(entry.file_name());
+            fs::copy(entry.path(), &target).expect("copy pyodide asset");
+            let mut permissions = fs::metadata(&target).expect("stat copy").permissions();
+            permissions.set_mode(permissions.mode() | 0o200);
+            fs::set_permissions(&target, permissions).expect("make copy writable");
+        }
+    }
+    let context_id = engine
+        .create_context(CreatePythonContextRequest {
+            vm_id: String::from("vm-python"),
+            pyodide_dist_path: pyodide_dir.clone(),
+            pyodide_cache_path: None,
+        })
+        .context_id;
     let pyodide_mjs = pyodide_dir.join("pyodide.mjs");
     let (_first_stdout, first_stderr, first_exit_code) =
         run_python_execution(&mut engine, &context_id, temp.path(), "print('first')");

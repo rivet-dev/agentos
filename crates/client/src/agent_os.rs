@@ -65,6 +65,8 @@ pub(crate) struct ProcessEntry {
     pub execution_generation: Option<u64>,
     /// Epoch milliseconds captured when `spawn` registered this process (TS `Date.now()`).
     pub started_at: i64,
+    /// Ordered stdin queue; its writer starts once `Execute` is acknowledged.
+    pub stdin: crate::process::ProcessStdin,
 }
 
 /// A PTY-backed shell (TS `_shells` value). Keyed by synthetic `shell-N` id.
@@ -1039,7 +1041,8 @@ impl AgentOs {
 
         // Drain the SDK-spawned process registry. Per-process output tasks await
         // a broadcast `Closed` that retained sender clones otherwise prevent.
-        crate::process::drain_process_output_tasks(&self.inner.processes);
+        let pending_language_exits =
+            crate::process::drain_process_output_tasks(&self.inner.processes);
 
         // 2-5. Best-effort drain tracked shell and terminal tasks before the VM is disposed, bounded
         //      by SHELL_DISPOSE_TIMEOUT_MS so late output cannot race a closed transport.
@@ -1105,12 +1108,13 @@ impl AgentOs {
         //      VMs on the same sidecar, so it is only torn down when this was the last VM (matching
         //      the TS lease/shared-sidecar lifecycle); otherwise sibling VMs keep using it.
         // Disconnect alone is not confirmation: reap that generation before releasing VM ownership.
-        let mut disposal_result = if self.inner.vm_disposed.load(Ordering::SeqCst) {
-            Ok(())
+        let disposal = if self.inner.vm_disposed.load(Ordering::SeqCst) {
+            Ok(None)
         } else if self.transport().is_disconnected() {
             self.transport()
                 .terminate_child()
                 .await
+                .map(|_| None)
                 .map_err(ClientError::from)
         } else if self.inner.vm_disposal_started.swap(true, Ordering::SeqCst) {
             // A previous waiter was cancelled after the non-idempotent request
@@ -1118,8 +1122,13 @@ impl AgentOs {
             // do not guess that retrying an unknown/detached VM is safe.
             Err(ClientError::Sidecar("ERR_AGENTOS_VM_DISPOSAL_UNCONFIRMED: VM disposal waiter was cancelled; close the owning sidecar to confirm teardown".into()))
         } else {
-            self.request_vm_disposal().await
+            self.request_vm_disposal().await.map(Some)
         };
+        crate::process::settle_language_exits_after_dispose(
+            pending_language_exits,
+            disposal.as_ref().map(|completed| completed.as_deref()),
+        );
+        let mut disposal_result = disposal.map(|_| ());
         if disposal_result.is_err() {
             *shutdown_result = Some(disposal_result.clone());
         }
@@ -1165,12 +1174,12 @@ impl AgentOs {
         })
     }
 
-    async fn request_vm_disposal(&self) -> Result<(), ClientError> {
+    async fn request_vm_disposal(&self) -> Result<Vec<wire::ExecutionCompletedEvent>, ClientError> {
         #[cfg(test)]
         {
             let injected = self.inner.disposal_test_request.lock().clone();
             if let Some(request) = injected {
-                return request().await;
+                return request().await.map(|_| Vec::new());
             }
         }
         self.transport()
@@ -1335,12 +1344,14 @@ fn serialize_create_vm_config_for_sidecar(
         // keep their engine defaults (full Node emulation), matching prior
         // behavior where Agent OS only ever constrained the builtin allow-list.
         js_runtime: (config.allowed_node_builtins.is_some()
-            || config.high_resolution_time.is_some())
+            || config.high_resolution_time.is_some()
+            || config.snapshot_entrypoints.is_some())
         .then(|| vm_config::JsRuntimeConfig {
             platform: vm_config::JsRuntimePlatform::default(),
             module_resolution: vm_config::JsModuleResolution::default(),
             allowed_builtins: config.allowed_node_builtins.clone(),
             high_resolution_time: config.high_resolution_time,
+            snapshot_entrypoints: config.snapshot_entrypoints.clone(),
         }),
         bootstrap_commands: None,
     };
@@ -2992,9 +3003,15 @@ fn wire_ownership_vm_id(ownership: &wire::OwnershipScope) -> Option<&str> {
     }
 }
 
-fn vm_dispose_response(vm_id: &str, response: wire::ResponsePayload) -> Result<(), ClientError> {
+/// The completions of executions that finished before the dispose began.
+fn vm_dispose_response(
+    vm_id: &str,
+    response: wire::ResponsePayload,
+) -> Result<Vec<wire::ExecutionCompletedEvent>, ClientError> {
     match response {
-        wire::ResponsePayload::VmDisposedResponse(disposed) if disposed.vm_id == vm_id => Ok(()),
+        wire::ResponsePayload::VmDisposedResponse(disposed) if disposed.vm_id == vm_id => {
+            Ok(disposed.completed_executions)
+        }
         wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
         other => Err(ClientError::Sidecar(format!(
             "unexpected dispose_vm response: {other:?}"
@@ -3783,7 +3800,8 @@ mod tests {
                 retryable: Some(false),
                 errno: Some("ETIMEDOUT".into()),
             }),
-        );
+        )
+        .map(|_| ());
         retain_shutdown_failure(
             &mut result,
             Err(ClientError::Sidecar("secondary cleanup".into())),
@@ -3810,14 +3828,16 @@ mod tests {
         assert!(vm_dispose_response(
             "vm-ok",
             wire::ResponsePayload::VmDisposedResponse(wire::VmDisposedResponse {
-                vm_id: "vm-ok".into()
+                vm_id: "vm-ok".into(),
+                completed_executions: Vec::new(),
             })
         )
         .is_ok());
         assert!(vm_dispose_response(
             "vm-ok",
             wire::ResponsePayload::VmDisposedResponse(wire::VmDisposedResponse {
-                vm_id: "other-vm".into()
+                vm_id: "other-vm".into(),
+                completed_executions: Vec::new(),
             })
         )
         .is_err());
@@ -4157,7 +4177,10 @@ mod tests {
         );
         let js_runtime = limits.js_runtime.expect("js runtime limits");
         assert_eq!(js_runtime.max_blob_bytes, Some(32 * 1024 * 1024));
-        assert_eq!(js_runtime.v8_serialization_limit_bytes, Some(16 * 1024 * 1024));
+        assert_eq!(
+            js_runtime.v8_serialization_limit_bytes,
+            Some(16 * 1024 * 1024)
+        );
         assert_eq!(js_runtime.sync_rpc_wait_timeout_ms, Some(2_000));
         assert_eq!(js_runtime.cpu_time_limit_ms, Some(30_000));
         assert_eq!(js_runtime.wall_clock_limit_ms, Some(0));

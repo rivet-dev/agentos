@@ -1415,7 +1415,7 @@ impl VirtualFileSystem for HostDirFilesystem {
     }
 
     fn symlink(&mut self, target: &str, link_path: &str) -> VfsResult<()> {
-        let (parent_dir, _, name, normalized) = self.split_parent(link_path, true)?;
+        let (parent_dir, _, name, _) = self.split_parent(link_path, true)?;
         // Preserve relative link text. Absolute guest targets are translated
         // only within this explicitly mounted subtree, never to an ambient host
         // path. Store a confined host-absolute target so readlink can retain the
@@ -1924,40 +1924,6 @@ fn lexical_normalize_path(path: &Path) -> PathBuf {
         PathBuf::from("/")
     } else {
         normalized
-    }
-}
-
-fn relative_path(from_dir: &Path, to: &Path) -> PathBuf {
-    let from_components = from_dir.components().collect::<Vec<_>>();
-    let to_components = to.components().collect::<Vec<_>>();
-    let shared = from_components
-        .iter()
-        .zip(to_components.iter())
-        .take_while(|(left, right)| left == right)
-        .count();
-
-    let mut relative = PathBuf::new();
-    for _ in shared..from_components.len() {
-        relative.push("..");
-    }
-    for component in &to_components[shared..] {
-        if let Component::Normal(segment) = component {
-            relative.push(segment);
-        }
-    }
-
-    if relative.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        relative
-    }
-}
-
-fn virtual_dirname(path: &str) -> String {
-    let normalized = normalize_path(path);
-    match normalized.rsplit_once('/') {
-        Some((head, _)) if !head.is_empty() => head.to_owned(),
-        _ => String::from("/"),
     }
 }
 

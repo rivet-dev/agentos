@@ -3,12 +3,12 @@
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Once, mpsc};
+use std::sync::{mpsc, Arc, Mutex, Once};
 use std::thread;
 
 use crate::ipc::ExecutionError;
 use agentos_resource_accounting::queue_tracker::{
-    QueueGauge, TrackedLimit, register_queue, warn_limit_exhausted,
+    register_queue, warn_limit_exhausted, QueueGauge, TrackedLimit,
 };
 
 static V8_INIT: Once = Once::new();
@@ -615,6 +615,32 @@ pub fn configure_isolate(isolate: &mut v8::OwnedIsolate) {
 /// background compilation while keeping the trusted thread census bounded.
 const V8_PLATFORM_WORKER_THREADS: u32 = 4;
 
+/// Opt-in env knob for Wasm exnref exception handling (`try_table`,
+/// `throw_ref`), which Rust `panic=unwind` Wasm uses. V8 turns exnref on by
+/// default from 13.7 (Chrome 137, workerd):
+/// https://github.com/v8/v8/blob/33e7739c134d24c94fdda02ab631eefed6bd18df/src/wasm/wasm-feature-flags.h#L131-L135
+/// The pinned V8 13.0 never shipped it and lacks the later exnref fixes, so
+/// it is opt-in for the JavaScript runtime. The WASM executor enables it by
+/// default for toolchain compatibility. The setting applies to every VM in
+/// the process. The snapshot helper process inherits this environment,
+/// so snapshots are built and restored with the same flags.
+const WASM_EXNREF_ENV: &str = "AGENTOS_V8_WASM_EXNREF";
+
+pub(crate) fn wasm_exnref_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var_os(WASM_EXNREF_ENV) {
+        None => cfg!(feature = "wasm-exnref"),
+        Some(value) if value == "1" => true,
+        Some(value) if value == "0" => false,
+        Some(value) => {
+            tracing::warn!(
+                "ignoring {WASM_EXNREF_ENV}={value:?}: set 1 to enable Wasm exnref or 0 to disable it"
+            );
+            cfg!(feature = "wasm-exnref")
+        }
+    })
+}
+
 /// Initialize the V8 platform (once per process).
 /// Safe to call multiple times; only the first call takes effect.
 pub fn init_v8_platform() {
@@ -635,12 +661,10 @@ pub fn init_v8_platform() {
             .spawn(move || {
                 v8::icu::set_common_data_74(&ICU_COMMON_DATA.0)
                     .expect("failed to initialize V8 ICU common data");
-                // LLVM 19 emits the legacy Phase-3 WebAssembly exception
-                // encoding and our toolchain translates it to the finalized
-                // exnref form required by Wasmtime. V8 130 keeps that finalized
-                // form behind this process-global flag. The shared AgentOS
-                // validator still controls which guest proposals are accepted.
-                v8::V8::set_flags_from_string("--experimental-wasm-exnref");
+                // V8 reads flags once, before initialization.
+                if wasm_exnref_enabled() {
+                    v8::V8::set_flags_from_string("--experimental-wasm-exnref");
+                }
                 // Native lifetime tests use V8's deterministic full-GC test API.
                 #[cfg(test)]
                 v8::V8::set_flags_from_string("--expose_gc");
@@ -913,16 +937,10 @@ static ARRAY_BUFFER_BUDGET_VTABLE: v8::RustAllocatorVtable<ArrayBufferBudget> =
         drop: budget_drop,
     };
 
-/// Create a guest isolate, fresh or snapshot-restored (`customize` adds the
-/// snapshot parameters). The heap limit in MB (`None` applies
-/// `DEFAULT_HEAP_LIMIT_MB`) caps the V8 heap and, separately, the isolate's
-/// ArrayBuffer memory.
-pub(crate) fn create_guest_isolate(
-    heap_limit_mb: Option<u32>,
-    customize: impl FnOnce(v8::CreateParams) -> v8::CreateParams,
-) -> v8::OwnedIsolate {
-    let limit = heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB);
-    let limit_bytes = (limit as usize) * 1024 * 1024;
+/// Create params whose V8 heap and, separately, ArrayBuffer memory are each
+/// capped at `limit_mb`.
+fn budgeted_create_params(limit_mb: u32) -> (v8::CreateParams, Arc<ArrayBufferBudget>) {
+    let limit_bytes = (limit_mb as usize) * 1024 * 1024;
     let budget = Arc::new(ArrayBufferBudget {
         used: AtomicUsize::new(0),
         limit: limit_bytes,
@@ -936,11 +954,28 @@ pub(crate) fn create_guest_isolate(
             &ARRAY_BUFFER_BUDGET_VTABLE,
         )
     };
-    let params = customize(
-        v8::CreateParams::default()
-            .heap_limits(0, limit_bytes)
-            .array_buffer_allocator(allocator.make_shared()),
-    );
+    let params = v8::CreateParams::default()
+        .heap_limits(0, limit_bytes)
+        .array_buffer_allocator(allocator.make_shared());
+    (params, budget)
+}
+
+/// Bounded create params for an isolate that is not a guest session isolate,
+/// such as the snapshot creator in the helper process.
+pub(crate) fn bounded_create_params(limit_mb: u32) -> v8::CreateParams {
+    budgeted_create_params(limit_mb).0
+}
+
+/// Create a guest isolate, fresh or snapshot-restored (`customize` adds the
+/// snapshot parameters). The heap limit in MB (`None` applies
+/// `DEFAULT_HEAP_LIMIT_MB`) caps the V8 heap and, separately, the isolate's
+/// ArrayBuffer memory.
+pub(crate) fn create_guest_isolate(
+    heap_limit_mb: Option<u32>,
+    customize: impl FnOnce(v8::CreateParams) -> v8::CreateParams,
+) -> v8::OwnedIsolate {
+    let (params, budget) = budgeted_create_params(heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB));
+    let params = customize(params);
     // The existing constructor is infallible: reject unsupported/undersized
     // native stacks before creating an isolate, never from a guest callback.
     let terminal_stack = plan_native_terminal_stack()

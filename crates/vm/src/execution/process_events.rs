@@ -1255,6 +1255,7 @@ where
         max_service_claims: usize,
         operations: Option<&crate::request_operations::OperationTable>,
     ) -> Result<ProcessEventPumpTurn, VmError> {
+        let queued_before = self.pending_process_events.len();
         let mut emitted_any = self.poll_in_process_event_services_nowait();
         let mut host_services = Vec::new();
         let mut child_bridge_services = Vec::new();
@@ -1266,7 +1267,13 @@ where
                 emitted_any = true;
             }
 
-            for vm_id in self.vm_ids_for_scope(ownership)? {
+            let mut vm_ids = self.vm_ids_for_scope(ownership)?;
+            if !vm_ids.is_empty() {
+                let start = self.process_event_pump_rotation % vm_ids.len();
+                vm_ids.rotate_left(start);
+                self.process_event_pump_rotation = self.process_event_pump_rotation.wrapping_add(1);
+            }
+            for vm_id in vm_ids {
                 if let Some(operations) = operations {
                     let Some(vm) = self.vms.get(&vm_id) else {
                         continue;
@@ -1345,7 +1352,7 @@ where
                     let Some(event) = event else { continue };
                     let source_remains = self.vms.get(&vm_id).is_some_and(|vm| {
                         vm.active_processes.get(&process_id).is_some_and(|process| {
-                            !process.pending_execution_events.is_empty()
+                            process.has_queued_execution_events()
                                 || process.execution.has_pending_events()
                         })
                     });
@@ -1390,7 +1397,7 @@ where
                             reservation,
                         };
                         if retry {
-                            process.requeue_pending_execution_event_quiet(polled)?;
+                            process.restore_paused_execution_event(polled)?;
                             self.public_process_event_capacity_waiter
                                 .store(true, std::sync::atomic::Ordering::Release);
                             continue;
@@ -1456,6 +1463,7 @@ where
             self.rearm_kernel_reaper_task()?;
             Ok(())
         })();
+        emitted_any |= self.pending_process_events.len() > queued_before;
         let output_failure = match result {
             Ok(()) => None,
             Err(VmError::VmOutputLimit(fault)) => {
@@ -1471,6 +1479,25 @@ where
             emitted_any,
             host_services,
             child_bridge_services,
+        })
+    }
+
+    /// The V8 runtime reports a host-requested termination as this stderr
+    /// line. For a process the sidecar signalled, it is not guest output.
+    fn is_signal_termination_stderr(
+        &self,
+        vm_id: &str,
+        process_id: &str,
+        event: &ActiveExecutionEvent,
+    ) -> bool {
+        matches!(
+            event,
+            ActiveExecutionEvent::Stderr(chunk)
+                if chunk.as_slice() == super::child_process::SYNTHETIC_V8_TERMINATION_STDERR
+        ) && self.vms.get(vm_id).is_some_and(|vm| {
+            vm.active_processes
+                .get(process_id)
+                .is_some_and(|process| process.exit_signal.is_some())
         })
     }
 
@@ -1666,6 +1693,10 @@ where
             log_stale_process_event(&self.bridge, vm_id, process_id, "public event dispatch");
             return Ok(None);
         }
+        if self.is_signal_termination_stderr(vm_id, process_id, &event) {
+            // A killed process writes nothing; its exit event carries the signal.
+            return Ok(None);
+        }
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);
         let public_execution = self.is_public_execution_process(vm_id, process_id);
         // Output that held only cursor queries leaves nothing for clients;
@@ -1784,6 +1815,7 @@ where
         &mut self,
         ownership: &OwnershipScope,
     ) -> Result<bool, VmError> {
+        let queued_before = self.pending_process_events.len();
         let mut emitted_any = self.poll_in_process_event_services_nowait();
         self.expire_public_execution_deadlines()?;
         emitted_any |= self.drain_runtime_process_event_channel_nowait()?;
@@ -1892,7 +1924,7 @@ where
                                 reservation,
                             };
                             if retry {
-                                process.requeue_pending_execution_event_quiet(polled)?;
+                                process.restore_paused_execution_event(polled)?;
                                 self.public_process_event_capacity_waiter
                                     .store(true, std::sync::atomic::Ordering::Release);
                                 continue;
@@ -1947,6 +1979,7 @@ where
             emitted_any = true;
         }
         self.rearm_kernel_reaper_task()?;
+        emitted_any |= self.pending_process_events.len() > queued_before;
         Ok(emitted_any)
     }
 
@@ -2485,6 +2518,10 @@ where
         };
         if !active {
             log_stale_process_event(&self.bridge, vm_id, process_id, "execution event dispatch");
+            return Ok(None);
+        }
+        if self.is_signal_termination_stderr(vm_id, process_id, &event) {
+            // A killed process writes nothing; its exit event carries the signal.
             return Ok(None);
         }
         let ownership = OwnershipScope::vm(&connection_id, &session_id, vm_id);

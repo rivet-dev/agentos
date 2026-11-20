@@ -125,6 +125,139 @@ VM creation in Rust or TypeScript; they apply to that VM's executions and do
 not change other VMs or standalone executor defaults. They cannot be changed
 through guest globals.
 
+## Sidecar limits
+
+Library VMs share a sidecar process by default. Limits that apply to the whole
+process, such as `runtime.executor.maxActiveVms`, are set when creating a
+dedicated sidecar with `AgentOs.createSidecar()`, as in the example above.
+
+Each library request to the sidecar must fit in one protocol frame. The sidecar
+reports its frame limit (16 MiB) when the client connects, and the limit is not
+configurable. The client rejects a larger request with `SidecarFrameTooLarge`
+before it sends it, so the sidecar and the other VMs on it keep running.
+`writeFile` base64-encodes binary content, so one call carries at most about
+12 MiB of binary data. `writeFiles` sends raw bytes and splits a large batch
+into several requests by the frame limit and the per-request file limit
+(16) that the sidecar reports when the client connects, so only each single file must
+fit in one frame (about 16 MiB). To move larger files, split them into several
+files or mount a host directory.
+
+By default, the sidecar runs at most 128 ordinary requests at once from one
+client. Set `runtime.protocol.maxInFlightRequests` on the dedicated sidecar to
+change that limit, together with sufficient terminal capacity. The shipped
+sidecar derives ingress capacity from this explicit request budget and its
+fixed waiting-queue size. When no `maxControlFrames` override is supplied, it
+also reserves space for priority replies and heartbeat progress. An explicit
+control-frame cap is never raised automatically. Priority
+requests have a separate default limit of 128: VM dispose, process kill and signal,
+execution cancel and delete, stdin writes and closes, and PTY resizes. A flood
+of other work, such as VM creation, does not consume their admission slots.
+VM creates use at most half the ordinary slots (64 by default, at least one)
+and wait in their own queue, so a burst of creates does not queue ahead of
+other VMs' calls. A create above that cap waits in its queue, where the queue
+limits below apply (`ERR_AGENTOS_IN_FLIGHT_CREATE_REQUEST_LIMIT` names the cap
+internally and is not returned to callers). The shipped sidecar keeps the
+priority limit fixed; embedded Rust hosts can configure it through
+`DriverProtocolConfig.max_in_flight_priority_requests`.
+
+The sidecar queues requests above a limit, in arrival order, with separate
+queues for ordinary requests, VM creates, and priority requests. Up to 256
+requests (64 MiB) wait in each queue. An ordinary request waits at most 5
+seconds; a VM create or a priority request waits at most 30 seconds, since a
+burst of creates or a mass teardown takes longer. Teardown (VM dispose, process
+kill and signal, execution cancel and delete) never fails because the queue
+holds 256 requests: a rejected teardown would leak a VM or a process, and
+teardown is already bounded by the VMs and processes that exist and by the
+64 MiB limit. A request that finds the queue full fails with
+`ERR_AGENTOS_REQUEST_QUEUE_LIMIT`, and a request that waits too long fails with
+`ERR_AGENTOS_REQUEST_QUEUE_TIMEOUT`. Both errors are retryable (`EAGAIN`) and
+name the limit in `configuration_path`. The queue size, bytes, and deadlines
+are fixed in the shipped sidecar; no client option changes them. Embedded Rust
+hosts can set `DriverProtocolConfig.request_queue_limit`, `request_queue_bytes`,
+and `request_queue_deadline_ms`; create and priority queues always allow at
+least 30 seconds.
+
+Each client holds up to 1024 stdin writes per process until the process's
+launch is confirmed, so writes made right after `spawn()` arrive in order. A
+write beyond that fails with a retryable `ERR_AGENTOS_RESOURCE_LIMIT`
+(`process_stdin_queue_entries`); await earlier writes before sending more.
+
+The Rust client fans sidecar events out through a buffer of 4,096 events. If an
+`exec` falls further behind than that, it fails with `ERR_AGENTOS_OUTPUT_LAGGED`
+instead of returning incomplete output; output callbacks and streams log the
+skipped chunks. Recover the output with `read_process_output`. The TypeScript
+client delivers every byte written before a process exits to `onStdout` and
+`onStderr`, including when the host is slow to drain them.
+
+`dispose()` is one request: the sidecar stops the VM's running processes
+(`SIGTERM`, then `SIGKILL`) and then removes the VM. If `dispose()` fails, the
+VM can still be alive. A failed disposal is retained because repeating a partially completed teardown
+is not safe; shut down the owning sidecar to confirm cleanup.
+
+When a sidecar starts, it removes temp directories that exited sidecars left
+behind, for example after `SIGKILL`. It removes a directory only after that
+sidecar's liveness lock proves it is gone, and at most 1024 entries per start;
+later starts remove the rest.
+
+### Isolate memory
+
+Each V8 isolate that runs guest JavaScript or Python has two memory caps of the
+same size: one for the V8 heap and one for `ArrayBuffer` memory, which also
+backs typed arrays, `Buffer`, and `SharedArrayBuffer`. The size is
+`limits.jsRuntime.v8HeapLimitMb` for JavaScript (128 MiB by default) and
+`limits.python.maxOldSpaceMb` for Python. A script that goes past the heap cap
+fails with `execution_heap_limit_exceeded`. An allocation that goes past the
+`ArrayBuffer` cap throws `RangeError: Array buffer allocation failed`, and the
+sidecar reports the `v8_array_buffer_bytes` limit warning. Other VMs on the
+sidecar keep running in both cases.
+
+In JavaScript, WebAssembly memory and buffers that hold data from the host,
+such as file contents, have a third cap of the same size. V8 checks it during
+garbage collection. A script that goes past it fails with
+`execution_heap_limit_exceeded`, and the sidecar reports the
+`v8_external_memory_bytes` limit warning. Python keeps its interpreter memory
+in WebAssembly, so this cap does not apply to Python. Shared WebAssembly
+memory, resizable `ArrayBuffer`s, and growable `SharedArrayBuffer`s are not
+counted toward any cap.
+
+### Sidecar memory
+
+On Linux with glibc, the sidecar returns memory freed by a disposed VM's V8
+isolates to the OS shortly after disposal. At startup it also sets the glibc
+trim threshold to 1 MiB and the mmap threshold to 4 MiB, so memory freed by
+stopped processes does not stay in per-thread allocator arenas. A
+`MALLOC_TRIM_THRESHOLD_` or `MALLOC_MMAP_THRESHOLD_` value in the sidecar's
+environment replaces the matching setting.
+
+All isolates share one copy of the V8 snapshot and of the runtime's
+JavaScript bridge source. When a guest's event loop has received no work for
+one second, the sidecar runs one memory-reducing garbage collection on its
+isolate. It runs another only when the heap has doubled (by at least 8 MiB)
+since the last one and at least 30 seconds have passed, so a guest that
+serves requests with idle gaps does not pay for a full collection per gap.
+
+The sidecar also keeps a pool of up to four pre-started V8 isolates so that
+JavaScript and Python executions start faster. The pool stays resident while
+the sidecar runs, at about 15 MiB per isolate. To cap it, set
+`AGENTOS_V8_WARM_ISOLATES` to a value from `0` to `4` in the environment that
+starts the sidecar. `0` disables the pool and trades memory for slower
+execution starts.
+
+The sidecar stores built V8 snapshots on disk so a new sidecar process does
+not rebuild them: at most 16 files under `$XDG_CACHE_HOME/agentos/v8-snapshots`
+(or `~/.cache/agentos/v8-snapshots`). Set `AGENTOS_V8_SNAPSHOT_CACHE_DIR` to
+another directory, or to `off`, in the environment that starts the sidecar.
+Script sources that snapshot-restored isolates share are kept while a cached
+snapshot or a live isolate uses them, bounded to 64 MiB of copies. Unused
+sources are freed first; when the sources in use leave no room, a new snapshot
+fails with `ERR_AGENTOS_V8_SHARED_SOURCE_LIMIT` and processes load normally.
+
+A helper process builds each snapshot. It is killed after 30 seconds
+(`ERR_AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT`, and processes load normally), its V8
+heap and its ArrayBuffer memory are each capped at 1 GiB, and its CPU time is
+capped at the timeout. Set `AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT_MS` in the
+environment that starts the sidecar to change the timeout.
+
 ## Embedded API
 
 Embedded Core uses the same sidecar and VM resource policies without the actor

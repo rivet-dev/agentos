@@ -4,7 +4,7 @@ import { AgentOs } from "../src/index.js";
 import { forkStdinProbe } from "./fixtures/fork-stdin-probes.js";
 
 test("fork IPC remains usable when the child's ordinary stdin is ignored", async () => {
-  const source = `
+	const source = `
 import {fork} from 'node:child_process';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -26,40 +26,124 @@ try {
  }
 } finally {rmSync(directory,{recursive:true,force:true});}
 console.log(JSON.stringify(rows));`;
-  const host = spawnSync(process.execPath,["--input-type=module","-e",source],{encoding:"utf8",timeout:10_000});
-  expect(host.status,host.stderr).toBe(0);
-  const expected = JSON.parse(host.stdout);
-  expect(expected.every((row: {reply:unknown}) => row.reply !== null)).toBe(true);
-  const sidecar = await AgentOs.createSidecar();
-  let vm: AgentOs | undefined;
-  try {
-    vm = await AgentOs.create({sidecar:{kind:"explicit",handle:sidecar},defaultSoftware:false,permissions:{network:"deny",childProcess:"allow"}});
-    let stdout="",stderr="";
-    const proc = await vm.process.spawn("node",["--input-type=module","-e",source],{timeoutMs:10_000,onStdout:c=>{stdout+=Buffer.from(c).toString();},onStderr:c=>{stderr+=Buffer.from(c).toString();}});
-    expect((await vm.process.wait(proc.pid)).exitCode,stderr).toBe(0);
-    expect(JSON.parse(stdout)).toEqual(expected);
-  } finally {try {await vm?.dispose();} finally {await sidecar.dispose();}}
-},20_000);
+	const host = spawnSync(
+		process.execPath,
+		["--input-type=module", "-e", source],
+		{ encoding: "utf8", timeout: 10_000 },
+	);
+	expect(host.status, host.stderr).toBe(0);
+	const expected = JSON.parse(host.stdout);
+	expect(expected.every((row: { reply: unknown }) => row.reply !== null)).toBe(
+		true,
+	);
+	const sidecar = await AgentOs.createSidecar();
+	let vm: AgentOs | undefined;
+	try {
+		vm = await AgentOs.create({
+			sidecar: { kind: "explicit", handle: sidecar },
+			defaultSoftware: false,
+			permissions: { network: "deny", childProcess: "allow" },
+		});
+		let stdout = "",
+			stderr = "";
+		const proc = await vm.process.spawn(
+			"node",
+			["--input-type=module", "-e", source],
+			{
+				timeoutMs: 10_000,
+				onStdout: (c) => {
+					stdout += Buffer.from(c).toString();
+				},
+				onStderr: (c) => {
+					stderr += Buffer.from(c).toString();
+				},
+			},
+		);
+		expect((await vm.process.wait(proc.pid)).exitCode, stderr).toBe(0);
+		expect(JSON.parse(stdout)).toEqual(expected);
+	} finally {
+		try {
+			await vm?.dispose();
+		} finally {
+			await sidecar.dispose();
+		}
+	}
+}, 20_000);
 
-for(const mode of ["ignore","pipe"] as const) test(`fork public stdin ${mode} preserves ordinary EOF and IPC isolation`,async()=>{
-  const source=forkStdinProbe(mode);
-  const host=spawnSync(process.execPath,["--input-type=module","-e",source],{encoding:"utf8",timeout:10_000,maxBuffer:65536});
-  expect(host.status,host.stderr).toBe(0);
-  const expected=JSON.parse(host.stdout);
-  expect(expected.every((row:{timedOut:boolean;exit:{code:number}})=>!row.timedOut&&row.exit.code===0)).toBe(true);
-  const sidecar=await AgentOs.createSidecar();let vm:AgentOs|undefined;
-  const failures:unknown[]=[];
-  try {
-    vm=await AgentOs.create({sidecar:{kind:"explicit",handle:sidecar},defaultSoftware:false,permissions:{network:"deny",childProcess:"allow"}});
-    let stdout="",stderr="";
-    const proc=await vm.process.spawn("node",["--input-type=module","-e",source],{timeoutMs:10_000,onStdout:c=>{stdout+=Buffer.from(c).toString();if(Buffer.byteLength(stdout)>65536)throw new Error("probe stdout limit exceeded");},onStderr:c=>{stderr+=Buffer.from(c).toString();if(Buffer.byteLength(stderr)>65536)throw new Error("probe stderr limit exceeded");}});
-    const exit=await vm.process.wait(proc.pid);
-    console.log(JSON.stringify({kind:"fork-stdin-observation",mode,node:expected,guest:{stdout,stderr,exit}}));
-    expect(exit.exitCode,stderr).toBe(0);
-    expect(JSON.parse(stdout)).toEqual(expected);
-  } catch(error){failures.push(error);}
-  finally {
-    for(const cleanup of [()=>vm?.dispose(),()=>sidecar.dispose()])try{await cleanup();}catch(error){failures.push(error);}
-  }
-  if(failures.length)throw new AggregateError(failures,failures.map(error=>String(error instanceof Error?error.stack??error.message:error)).join("\n\n"));
-},20_000);
+for (const mode of ["ignore", "pipe"] as const)
+	test(`fork public stdin ${mode} preserves ordinary EOF and IPC isolation`, async () => {
+		const source = forkStdinProbe(mode);
+		const host = spawnSync(
+			process.execPath,
+			["--input-type=module", "-e", source],
+			{ encoding: "utf8", timeout: 10_000, maxBuffer: 65536 },
+		);
+		expect(host.status, host.stderr).toBe(0);
+		const expected = JSON.parse(host.stdout);
+		expect(
+			expected.every(
+				(row: { timedOut: boolean; exit: { code: number } }) =>
+					!row.timedOut && row.exit.code === 0,
+			),
+		).toBe(true);
+		const sidecar = await AgentOs.createSidecar();
+		let vm: AgentOs | undefined;
+		const failures: unknown[] = [];
+		try {
+			vm = await AgentOs.create({
+				sidecar: { kind: "explicit", handle: sidecar },
+				defaultSoftware: false,
+				permissions: { network: "deny", childProcess: "allow" },
+			});
+			let stdout = "",
+				stderr = "";
+			const proc = await vm.process.spawn(
+				"node",
+				["--input-type=module", "-e", source],
+				{
+					timeoutMs: 10_000,
+					onStdout: (c) => {
+						stdout += Buffer.from(c).toString();
+						if (Buffer.byteLength(stdout) > 65536)
+							throw new Error("probe stdout limit exceeded");
+					},
+					onStderr: (c) => {
+						stderr += Buffer.from(c).toString();
+						if (Buffer.byteLength(stderr) > 65536)
+							throw new Error("probe stderr limit exceeded");
+					},
+				},
+			);
+			const exit = await vm.process.wait(proc.pid);
+			console.log(
+				JSON.stringify({
+					kind: "fork-stdin-observation",
+					mode,
+					node: expected,
+					guest: { stdout, stderr, exit },
+				}),
+			);
+			expect(exit.exitCode, stderr).toBe(0);
+			expect(JSON.parse(stdout)).toEqual(expected);
+		} catch (error) {
+			failures.push(error);
+		} finally {
+			for (const cleanup of [() => vm?.dispose(), () => sidecar.dispose()])
+				try {
+					await cleanup();
+				} catch (error) {
+					failures.push(error);
+				}
+		}
+		if (failures.length)
+			throw new AggregateError(
+				failures,
+				failures
+					.map((error) =>
+						String(
+							error instanceof Error ? (error.stack ?? error.message) : error,
+						),
+					)
+					.join("\n\n"),
+			);
+	}, 20_000);

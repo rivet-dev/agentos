@@ -518,11 +518,9 @@ fn service_javascript_crypto_verify_sync_rpc(request: &HostRpcRequest) -> Result
     verifier
         .update(&data)
         .map_err(javascript_crypto_openssl_error)?;
-    Ok(json!(
-        verifier
-            .verify(&signature)
-            .map_err(javascript_crypto_openssl_error)?
-    ))
+    Ok(json!(verifier
+        .verify(&signature)
+        .map_err(javascript_crypto_openssl_error)?))
 }
 
 fn service_javascript_crypto_asymmetric_op_sync_rpc(

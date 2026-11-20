@@ -268,7 +268,17 @@ Object.setPrototypeOf(builtinPerformance, Performance.prototype);
 if (typeof builtinPerformance.timeOrigin !== "number") {
 	builtinPerformance.timeOrigin = Date.now() - builtinPerformance.now();
 }
-for (const name of ["now", "timeOrigin", "mark", "measure", "clearMarks", "clearMeasures", "getEntries", "getEntriesByName", "getEntriesByType"]) {
+for (const name of [
+	"now",
+	"timeOrigin",
+	"mark",
+	"measure",
+	"clearMarks",
+	"clearMeasures",
+	"getEntries",
+	"getEntriesByName",
+	"getEntriesByType",
+]) {
 	const descriptor = Object.getOwnPropertyDescriptor(builtinPerformance, name);
 	if (descriptor) {
 		Object.defineProperty(Performance.prototype, name, descriptor);

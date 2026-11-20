@@ -188,7 +188,7 @@ class PatchedCustomEvent extends PatchedEvent {
 
 // Bridge-private liveness observation. This never changes listener admission.
 function observeEventTargetListeners(target, observer) {
-    targetState.get(target).listenerObserver = observer;
+	targetState.get(target).listenerObserver = observer;
 }
 
 class PatchedEventTarget {
@@ -262,7 +262,7 @@ class PatchedEventTarget {
 		records.push(record);
 		state.listeners.set(eventType, records);
 		state.listenerCount += 1;
-        state.listenerObserver?.(this, eventType, records.length);
+		state.listenerObserver?.(this, eventType, records.length);
 	}
 
 	removeEventListener(type, listener, options) {
@@ -286,7 +286,7 @@ class PatchedEventTarget {
 		}
 		if (nextRecords.length === 0) state.listeners.delete(eventType);
 		else state.listeners.set(eventType, nextRecords);
-        state.listenerObserver?.(this, eventType, nextRecords.length);
+		state.listenerObserver?.(this, eventType, nextRecords.length);
 	}
 
 	dispatchEvent(event) {
@@ -370,7 +370,9 @@ function addProtectedEventListener(target, type, listener, options) {
 function getEventTargetListeners(target, type) {
 	const state = targetState.get(target);
 	if (!state) return undefined;
-	return (state.listeners.get(toDomString(type)) ?? []).map(record => record.listener);
+	return (state.listeners.get(toDomString(type)) ?? []).map(
+		(record) => record.listener,
+	);
 }
 
 var Event = PatchedEvent;
@@ -378,17 +380,17 @@ var CustomEvent = PatchedCustomEvent;
 var EventTarget = PatchedEventTarget;
 
 export {
-    observeEventTargetListeners,
-	getEventTargetListeners,
 	addProtectedEventListener,
 	CustomEvent,
 	Event,
 	EventTarget,
+	getEventTargetListeners,
 	isAbortSignalLike,
 	MAX_EVENT_LISTENERS,
 	MAX_EVENT_TYPES,
 	normalizeAddEventListenerOptions,
 	normalizeRemoveEventListenerOptions,
+	observeEventTargetListeners,
 	PatchedCustomEvent,
 	PatchedEvent,
 	PatchedEventTarget,

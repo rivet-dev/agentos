@@ -114,6 +114,62 @@ describe("AgentOs _processes leak (H5)", () => {
 		expect(processes.size).toBe(0);
 	});
 
+	test("dispose reports a signalled exit for each running language process", async () => {
+		const { vm } = makeAgentOs();
+		type LanguageProcess = {
+			executionId: string;
+			descriptor: {
+				pid: number;
+				state: "running" | "exited";
+				language: "javascript";
+				startedAtMs: number;
+			};
+			exit?: {
+				pid: number;
+				outcome: "signalled";
+				exitCode: number;
+				exitSignal: number;
+				signal: "SIGKILL";
+			};
+			outputHandlers: Set<(event: unknown) => void>;
+			exitHandlers: Set<(event: unknown) => void>;
+		};
+		const internals = vm as unknown as {
+			_languageProcesses: Map<number, LanguageProcess>;
+			_languageProcessIds: Map<string, number>;
+		};
+		const process: LanguageProcess = {
+			executionId: "execution-303",
+			descriptor: {
+				pid: 303,
+				state: "running",
+				language: "javascript",
+				startedAtMs: 0,
+			},
+			outputHandlers: new Set(),
+			exitHandlers: new Set(),
+		};
+		internals._languageProcesses.set(303, process);
+		internals._languageProcessIds.set(process.executionId, 303);
+
+		let observedExit: unknown;
+		vm.onProcessExit(303, (exit) => {
+			observedExit = exit;
+		});
+
+		await vm.dispose();
+
+		expect(observedExit).toEqual({
+			pid: 303,
+			outcome: "signalled",
+			exitCode: 137,
+			exitSignal: 9,
+			signal: "SIGKILL",
+		});
+		expect(internals._languageProcesses.size).toBe(0);
+		expect(internals._languageProcessIds.size).toBe(0);
+	});
+
 	test("command and language spawns share bounded pending admission", () => {
 		const { vm, processes } = makeAgentOs();
 		const warned = vi.spyOn(console, "warn").mockImplementation(() => {});

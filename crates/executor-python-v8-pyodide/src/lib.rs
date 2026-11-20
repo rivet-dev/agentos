@@ -314,6 +314,9 @@ struct PythonGuestPathMappingWire {
 pub struct CreatePythonContextRequest {
     pub vm_id: String,
     pub pyodide_dist_path: PathBuf,
+    /// Writable package cache for this VM. `None` uses the
+    /// `pyodide-package-cache` directory beside a caller-supplied distribution.
+    pub pyodide_cache_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,6 +324,25 @@ pub struct PythonContext {
     pub context_id: String,
     pub vm_id: String,
     pub pyodide_dist_path: PathBuf,
+    pub pyodide_cache_path: PathBuf,
+}
+
+/// Host locations of a VM's Pyodide distribution, which is read-only and may be
+/// shared by every VM in the process, and of its private writable package cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PyodidePaths {
+    pub dist: PathBuf,
+    pub cache: PathBuf,
+}
+
+impl PyodidePaths {
+    /// Paths for a caller-supplied distribution with its cache beside it.
+    pub fn for_dist(dist: &Path) -> Self {
+        Self {
+            dist: dist.to_path_buf(),
+            cache: pyodide_cache_path(dist),
+        }
+    }
 }
 
 /// Per-execution Python runtime limits, carried as typed fields rather than
@@ -491,7 +513,8 @@ pub struct PythonExecution {
     execution_id: String,
     child_pid: u32,
     inner: JavascriptExecution,
-    pyodide_dist_path: PathBuf,
+    _import_cache_guard: Arc<agentos_executor_v8_runtime::asset_cache::NodeImportCacheCleanup>,
+    pyodide_paths: PyodidePaths,
     managed_host_files: PythonManagedHostFiles,
     pending_vfs_rpc: Arc<Mutex<PendingVfsRpcRegistry>>,
     managed_network: Arc<Mutex<PythonManagedNetworkState>>,
@@ -987,9 +1010,21 @@ impl PythonExecution {
         &mut self,
         request: &HostRpcRequest,
     ) -> Result<bool, PythonExecutionError> {
-        self.inner
-            .try_service_standalone_module_sync_rpc(request)
-            .map_err(map_javascript_error)
+        match self.inner.try_service_standalone_module_sync_rpc(request) {
+            // As for JavaScript sync RPCs: the V8 registry reports a stale
+            // completion only after proving that teardown (for example a
+            // cancel) canceled this exact route, so the reply has no reader.
+            Err(JavascriptExecutionError::RpcResponse(message))
+                if message.contains("ERR_AGENTOS_BRIDGE_STALE_COMPLETION") =>
+            {
+                eprintln!(
+                    "INFO_AGENTOS_STALE_BRIDGE_COMPLETION: Python module sync RPC {}: {message}",
+                    request.id
+                );
+                Ok(true)
+            }
+            other => other.map_err(map_javascript_error),
+        }
     }
 
     /// Service the local stdin bridge for consumers that drive a standalone
@@ -1154,7 +1189,7 @@ impl PythonExecution {
                         return Ok(None);
                     }
                     if let Some(action) = python_javascript_sync_rpc_action(
-                        &self.pyodide_dist_path,
+                        &self.pyodide_paths,
                         &mut self.managed_host_files,
                         &request,
                     )? {
@@ -2355,24 +2390,26 @@ impl PythonExecutionEngine {
         self.javascript_engine.set_event_notify(notify);
     }
 
-    pub fn bundled_pyodide_dist_path_for_vm(
+    /// Materialize the process-shared Pyodide distribution and this VM's
+    /// private package cache, then return both host paths.
+    pub fn bundled_pyodide_paths_for_vm(
         &mut self,
         vm_id: &str,
-    ) -> Result<PathBuf, PythonExecutionError> {
+    ) -> Result<PyodidePaths, PythonExecutionError> {
         ensure_pyodide_available()?;
         let runtime = self.runtime_context()?.clone();
         let import_cache = self.import_caches.entry(vm_id.to_owned()).or_default();
         import_cache
             .ensure_materialized_with_runtime(&runtime)
             .map_err(PythonExecutionError::PrepareRuntime)?;
-        Ok(import_cache.pyodide_dist_path().to_path_buf())
+        Ok(bundled_pyodide_paths(import_cache))
     }
 
-    pub async fn bundled_pyodide_dist_path_for_vm_async(
+    pub async fn bundled_pyodide_paths_for_vm_async(
         &mut self,
         vm_id: &str,
         runtime: &DriverHandle,
-    ) -> Result<PathBuf, PythonExecutionError> {
+    ) -> Result<PyodidePaths, PythonExecutionError> {
         ensure_pyodide_available()?;
         let import_cache = self.import_caches.entry(vm_id.to_owned()).or_default();
         import_cache
@@ -2382,7 +2419,7 @@ impl PythonExecutionEngine {
             )
             .await
             .map_err(PythonExecutionError::PrepareRuntime)?;
-        Ok(import_cache.pyodide_dist_path().to_path_buf())
+        Ok(bundled_pyodide_paths(import_cache))
     }
 
     pub fn create_context(&mut self, request: CreatePythonContextRequest) -> PythonContext {
@@ -2399,6 +2436,9 @@ impl PythonExecutionEngine {
         let context = PythonContext {
             context_id: format!("python-ctx-{}", self.next_context_id),
             vm_id: request.vm_id,
+            pyodide_cache_path: request
+                .pyodide_cache_path
+                .unwrap_or_else(|| pyodide_cache_path(&request.pyodide_dist_path)),
             pyodide_dist_path: request.pyodide_dist_path,
         };
         self.javascript_context_ids
@@ -2559,8 +2599,7 @@ impl PythonExecutionEngine {
             .import_caches
             .get(&context.vm_id)
             .expect("vm import cache should exist after materialization");
-        let pyodide_dist_path =
-            resolved_pyodide_dist_path(&context.pyodide_dist_path, &request.cwd);
+        let pyodide_paths = resolved_pyodide_paths(context, &request.cwd);
         let javascript_execution = start_python_javascript_execution(
             &mut self.javascript_engine,
             &runtime,
@@ -2590,7 +2629,8 @@ impl PythonExecutionEngine {
             child_pid: javascript_execution.native_process_id().unwrap_or_default(),
             v8_session: javascript_execution.v8_session_handle(),
             inner: javascript_execution,
-            pyodide_dist_path,
+            _import_cache_guard: import_cache.cleanup_guard(),
+            pyodide_paths,
             managed_host_files: PythonManagedHostFiles::new(python_managed_host_file_limit(
                 &request,
             )),
@@ -2815,9 +2855,9 @@ fn build_python_internal_env(
         .filter(|(key, _)| key.starts_with("AGENTOS_"))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<BTreeMap<_, _>>();
-    let pyodide_dist_path = resolved_pyodide_dist_path(&context.pyodide_dist_path, &request.cwd);
+    let pyodide_paths = resolved_pyodide_paths(context, &request.cwd);
 
-    add_python_guest_path_mapping(&mut internal_env, &pyodide_dist_path);
+    add_python_guest_path_mapping(&mut internal_env, &pyodide_paths);
 
     internal_env.insert(
         PYODIDE_INDEX_URL_ENV.to_string(),
@@ -2866,9 +2906,8 @@ fn build_python_internal_env(
 
 fn add_python_guest_path_mapping(
     internal_env: &mut BTreeMap<String, String>,
-    pyodide_dist_path: &Path,
+    pyodide_paths: &PyodidePaths,
 ) {
-    let pyodide_cache_path = pyodide_cache_path(pyodide_dist_path);
     let mut mappings = internal_env
         .get(NODE_GUEST_PATH_MAPPINGS_ENV)
         .and_then(|value| serde_json::from_str::<Vec<PythonGuestPathMappingWire>>(value).ok())
@@ -2879,11 +2918,11 @@ fn add_python_guest_path_mapping(
     });
     mappings.push(PythonGuestPathMappingWire {
         guest_path: String::from(PYODIDE_GUEST_ROOT),
-        host_path: pyodide_dist_path.display().to_string(),
+        host_path: pyodide_paths.dist.display().to_string(),
     });
     mappings.push(PythonGuestPathMappingWire {
         guest_path: String::from(PYODIDE_CACHE_GUEST_ROOT),
-        host_path: pyodide_cache_path.display().to_string(),
+        host_path: pyodide_paths.cache.display().to_string(),
     });
 
     let serialized = serde_json::to_string(&mappings).unwrap_or_else(|_| String::from("[]"));
@@ -3155,8 +3194,18 @@ fn spawn_python_vfs_rpc_timeout(
     Ok(())
 }
 
-fn resolved_pyodide_dist_path(path: &Path, cwd: &Path) -> PathBuf {
-    resolve_execution_path(path, cwd)
+fn resolved_pyodide_paths(context: &PythonContext, cwd: &Path) -> PyodidePaths {
+    PyodidePaths {
+        dist: resolve_execution_path(&context.pyodide_dist_path, cwd),
+        cache: resolve_execution_path(&context.pyodide_cache_path, cwd),
+    }
+}
+
+fn bundled_pyodide_paths(import_cache: &NodeImportCache) -> PyodidePaths {
+    PyodidePaths {
+        dist: import_cache.pyodide_dist_path().to_path_buf(),
+        cache: import_cache.pyodide_cache_path().to_path_buf(),
+    }
 }
 
 #[derive(Debug)]
@@ -3204,7 +3253,7 @@ fn python_managed_host_file_limit(request: &StartPythonExecutionRequest) -> usiz
 }
 
 fn python_javascript_sync_rpc_action(
-    pyodide_dist_path: &Path,
+    pyodide_paths: &PyodidePaths,
     managed_host_files: &mut PythonManagedHostFiles,
     request: &HostRpcRequest,
 ) -> Result<Option<PythonJavascriptSyncRpcAction>, PythonExecutionError> {
@@ -3276,10 +3325,25 @@ fn python_javascript_sync_rpc_action(
     let Some(path) = request.args.first().and_then(Value::as_str) else {
         return Ok(None);
     };
-    let path_kind = python_managed_path_kind(pyodide_dist_path, path);
+    let path_kind = python_managed_path_kind(pyodide_paths, path);
     let Some(host_path) = path_kind.host_path() else {
         return Ok(None);
     };
+    // The distribution is shared by every VM in the process; only the VM's
+    // own package cache accepts writes.
+    if matches!(
+        request.method.as_str(),
+        "fs.mkdirSync" | "fs.promises.mkdir" | "fs.writeFileSync" | "fs.promises.writeFile"
+    ) && !path_kind.writable
+    {
+        return Ok(Some(PythonJavascriptSyncRpcAction::Error {
+            code: "EROFS",
+            message: format!(
+                "EROFS: managed Python runtime assets are read-only, {} '{path}'",
+                request.method
+            ),
+        }));
+    }
 
     Ok(Some(match request.method.as_str() {
         "fs.openSync" => {
@@ -3416,20 +3480,18 @@ fn python_javascript_sync_rpc_action(
             // Pyodide stores each downloaded lockfile package in its package
             // cache. Only bytes that match the sha256 pinned by the bundled
             // pyodide-lock.json may enter the cache.
-            if matches!(path_kind.kind, PythonManagedPathKind::GuestCache) {
-                let file_name = host_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("");
-                let digest = format!("{:x}", Sha256::digest(&contents));
-                if bundled_pyodide_file_sha256(file_name) != Some(digest.as_str()) {
-                    return Ok(Some(PythonJavascriptSyncRpcAction::Error {
-                        code: "EIO",
-                        message: format!(
-                            "EIO: {file_name} does not match the sha256 pinned in pyodide-lock.json, write '{path}'"
-                        ),
-                    }));
-                }
+            let file_name = host_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            let digest = format!("{:x}", Sha256::digest(&contents));
+            if bundled_pyodide_file_sha256(file_name) != Some(digest.as_str()) {
+                return Ok(Some(PythonJavascriptSyncRpcAction::Error {
+                    code: "EIO",
+                    message: format!(
+                        "EIO: {file_name} does not match the sha256 pinned in pyodide-lock.json, write '{path}'"
+                    ),
+                }));
             }
             if let Some(parent) = host_path.parent() {
                 fs::create_dir_all(parent).map_err(PythonExecutionError::PrepareRuntime)?;
@@ -3439,7 +3501,7 @@ fn python_javascript_sync_rpc_action(
         }
         "fs.realpathSync" | "fs.realpathSync.native" => match fs::canonicalize(&host_path) {
             Ok(canonical) => PythonJavascriptSyncRpcAction::Success(Value::String(
-                path_kind.render_path(pyodide_dist_path, &canonical, path),
+                path_kind.render_path(pyodide_paths, &canonical, path),
             )),
             Err(error) => {
                 return python_sync_rpc_fs_action_error(path, "realpath", error).map(Some);
@@ -3504,10 +3566,15 @@ enum PythonManagedPathKind {
 }
 
 impl PythonManagedPathKind {
-    fn render_path(&self, pyodide_dist_path: &Path, canonical: &Path, original: &str) -> String {
+    fn render_path(
+        &self,
+        pyodide_paths: &PyodidePaths,
+        canonical: &Path,
+        original: &str,
+    ) -> String {
         match self {
             Self::GuestPyodide | Self::GuestCache => {
-                python_host_path_to_guest(pyodide_dist_path, canonical)
+                python_host_path_to_guest(pyodide_paths, canonical)
                     .unwrap_or_else(|| original.to_owned())
             }
             Self::HostManaged => canonical.display().to_string(),
@@ -3516,8 +3583,9 @@ impl PythonManagedPathKind {
     }
 }
 
-fn python_managed_path_kind(pyodide_dist_path: &Path, path: &str) -> PythonManagedResolvedPath {
-    let cache_path = pyodide_cache_path(pyodide_dist_path);
+fn python_managed_path_kind(pyodide_paths: &PyodidePaths, path: &str) -> PythonManagedResolvedPath {
+    let pyodide_dist_path = pyodide_paths.dist.as_path();
+    let cache_path = pyodide_paths.cache.as_path();
 
     if let Some(normalized) = strip_guest_managed_root(path, PYODIDE_GUEST_ROOT) {
         let root = canonicalize_existing_or_self(pyodide_dist_path);
@@ -3531,16 +3599,18 @@ fn python_managed_path_kind(pyodide_dist_path: &Path, path: &str) -> PythonManag
             return PythonManagedResolvedPath {
                 kind: PythonManagedPathKind::GuestPyodide,
                 host_path: Some(host_path),
+                writable: false,
             };
         }
         return PythonManagedResolvedPath {
             kind: PythonManagedPathKind::Unmanaged,
             host_path: None,
+            writable: false,
         };
     }
 
     if let Some(normalized) = strip_guest_managed_root(path, PYODIDE_CACHE_GUEST_ROOT) {
-        let root = canonicalize_existing_or_self(&cache_path);
+        let root = canonicalize_existing_or_self(cache_path);
         let relative = normalize_relative_guest_suffix(normalized);
         let host_path = if relative.as_os_str().is_empty() {
             root.clone()
@@ -3551,17 +3621,19 @@ fn python_managed_path_kind(pyodide_dist_path: &Path, path: &str) -> PythonManag
             return PythonManagedResolvedPath {
                 kind: PythonManagedPathKind::GuestCache,
                 host_path: Some(host_path),
+                writable: true,
             };
         }
         return PythonManagedResolvedPath {
             kind: PythonManagedPathKind::Unmanaged,
             host_path: None,
+            writable: false,
         };
     }
 
     let candidate = PathBuf::from(path);
     let pyodide_root = canonicalize_existing_or_self(pyodide_dist_path);
-    let cache_root = canonicalize_existing_or_self(&cache_path);
+    let cache_root = canonicalize_existing_or_self(cache_path);
     if candidate.is_absolute()
         && !path_has_parent_or_prefix_component(&candidate)
         && confined_managed_path(&candidate, &pyodide_root)
@@ -3569,6 +3641,7 @@ fn python_managed_path_kind(pyodide_dist_path: &Path, path: &str) -> PythonManag
         return PythonManagedResolvedPath {
             kind: PythonManagedPathKind::HostManaged,
             host_path: Some(candidate),
+            writable: false,
         };
     }
     if candidate.is_absolute()
@@ -3578,12 +3651,14 @@ fn python_managed_path_kind(pyodide_dist_path: &Path, path: &str) -> PythonManag
         return PythonManagedResolvedPath {
             kind: PythonManagedPathKind::HostManaged,
             host_path: Some(candidate),
+            writable: true,
         };
     }
 
     PythonManagedResolvedPath {
         kind: PythonManagedPathKind::Unmanaged,
         host_path: None,
+        writable: false,
     }
 }
 
@@ -3591,6 +3666,8 @@ fn python_managed_path_kind(pyodide_dist_path: &Path, path: &str) -> PythonManag
 struct PythonManagedResolvedPath {
     kind: PythonManagedPathKind,
     host_path: Option<PathBuf>,
+    /// Only the VM's private package cache accepts writes.
+    writable: bool,
 }
 
 impl PythonManagedResolvedPath {
@@ -3598,9 +3675,13 @@ impl PythonManagedResolvedPath {
         self.host_path.clone()
     }
 
-    fn render_path(&self, pyodide_dist_path: &Path, canonical: &Path, original: &str) -> String {
-        self.kind
-            .render_path(pyodide_dist_path, canonical, original)
+    fn render_path(
+        &self,
+        pyodide_paths: &PyodidePaths,
+        canonical: &Path,
+        original: &str,
+    ) -> String {
+        self.kind.render_path(pyodide_paths, canonical, original)
     }
 }
 
@@ -3670,8 +3751,8 @@ fn canonicalize_managed_candidate(path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn python_host_path_to_guest(pyodide_dist_path: &Path, host_path: &Path) -> Option<String> {
-    if let Ok(relative) = host_path.strip_prefix(pyodide_dist_path) {
+fn python_host_path_to_guest(pyodide_paths: &PyodidePaths, host_path: &Path) -> Option<String> {
+    if let Ok(relative) = host_path.strip_prefix(&pyodide_paths.dist) {
         let suffix = relative.to_string_lossy().replace('\\', "/");
         return Some(if suffix.is_empty() {
             String::from(PYODIDE_GUEST_ROOT)
@@ -3680,8 +3761,7 @@ fn python_host_path_to_guest(pyodide_dist_path: &Path, host_path: &Path) -> Opti
         });
     }
 
-    let cache_path = pyodide_cache_path(pyodide_dist_path);
-    let relative = host_path.strip_prefix(cache_path).ok()?;
+    let relative = host_path.strip_prefix(&pyodide_paths.cache).ok()?;
     let suffix = relative.to_string_lossy().replace('\\', "/");
     Some(if suffix.is_empty() {
         String::from(PYODIDE_CACHE_GUEST_ROOT)
@@ -3830,8 +3910,8 @@ mod tests {
         python_javascript_sync_rpc_action, python_managed_path_kind,
         python_runner_javascript_limits, python_vfs_rpc_admission_error, python_wait_remaining,
         set_pending_vfs_rpc_state, CreatePythonContextRequest, HostRpcRequest, PendingVfsRpc,
-        PendingVfsRpcRegistry, PendingVfsRpcResolution, PendingVfsRpcState, PythonExecutionEngine,
-        PythonExecutionError, PythonExecutionLimits, PythonHostReplyKind,
+        PendingVfsRpcRegistry, PendingVfsRpcResolution, PendingVfsRpcState, PyodidePaths,
+        PythonExecutionEngine, PythonExecutionError, PythonExecutionLimits, PythonHostReplyKind,
         PythonJavascriptSyncRpcAction, PythonManagedHostFiles, PythonManagedPathKind,
         NODE_GUEST_ENTRYPOINT_MODULE_MODE_ENV, PYODIDE_CACHE_GUEST_ROOT, PYODIDE_GUEST_ROOT,
     };
@@ -4107,6 +4187,7 @@ mod tests {
         let context = engine.create_context(CreatePythonContextRequest {
             vm_id: String::from("vm-python-context-dispose"),
             pyodide_dist_path: temp.path().to_path_buf(),
+            pyodide_cache_path: None,
         });
         assert_eq!(engine.context_count_for_test(), baseline.0 + 1);
         assert_eq!(engine.javascript_context_count_for_test(), baseline.1 + 1);
@@ -4134,6 +4215,7 @@ mod tests {
         let context = engine.create_context(CreatePythonContextRequest {
             vm_id: vm_id.into(),
             pyodide_dist_path: temp.path().join("pyodide"),
+            pyodide_cache_path: None,
         });
         let original_nested_id = engine.javascript_context_ids[&context.context_id].clone();
         // Force a typed materialization failure before any guest execution.
@@ -4322,12 +4404,16 @@ mod tests {
             raw_bytes_args: HashMap::from([(usize::MAX, Vec::new())]),
         };
         assert!(matches!(
-            python_javascript_sync_rpc_action(&pyodide, &mut files, &request).expect("read range"),
+            python_javascript_sync_rpc_action(&PyodidePaths::for_dist(&pyodide), &mut files, &request).expect("read range"),
             Some(PythonJavascriptSyncRpcAction::RawSuccess(bytes)) if bytes == b"bytes"
         ));
         request.args[2] = serde_json::json!(super::PYTHON_SYNC_RPC_DATA_BYTES + 1);
         assert!(matches!(
-            python_javascript_sync_rpc_action(&pyodide, &mut files, &request),
+            python_javascript_sync_rpc_action(
+                &PyodidePaths::for_dist(&pyodide),
+                &mut files,
+                &request
+            ),
             Err(PythonExecutionError::RpcResponse(_))
         ));
     }
@@ -4348,7 +4434,7 @@ mod tests {
             raw_bytes_args: HashMap::new(),
         };
         assert!(matches!(
-            python_javascript_sync_rpc_action(&pyodide, &mut PythonManagedHostFiles::default(), &request)
+            python_javascript_sync_rpc_action(&PyodidePaths::for_dist(&pyodide), &mut PythonManagedHostFiles::default(), &request)
                 .expect("route cache write"),
             Some(PythonJavascriptSyncRpcAction::Error { code: "EIO", message })
                 if message.contains("sha256 pinned in pyodide-lock.json")
@@ -4373,9 +4459,13 @@ mod tests {
             ],
             raw_bytes_args: HashMap::new(),
         };
-        let fd = match python_javascript_sync_rpc_action(&pyodide, &mut files, &open)
-            .expect("route managed open")
-            .expect("managed open action")
+        let fd = match python_javascript_sync_rpc_action(
+            &PyodidePaths::for_dist(&pyodide),
+            &mut files,
+            &open,
+        )
+        .expect("route managed open")
+        .expect("managed open action")
         {
             PythonJavascriptSyncRpcAction::Success(value) => {
                 value.as_u64().expect("managed descriptor")
@@ -4393,9 +4483,13 @@ mod tests {
             ],
             raw_bytes_args: HashMap::from([(usize::MAX, Vec::new())]),
         };
-        match python_javascript_sync_rpc_action(&pyodide, &mut files, &read)
-            .expect("route managed read")
-            .expect("managed read action")
+        match python_javascript_sync_rpc_action(
+            &PyodidePaths::for_dist(&pyodide),
+            &mut files,
+            &read,
+        )
+        .expect("route managed read")
+        .expect("managed read action")
         {
             PythonJavascriptSyncRpcAction::RawSuccess(bytes) => {
                 assert_eq!(bytes, b"stdlib-bytes")
@@ -4410,8 +4504,12 @@ mod tests {
             raw_bytes_args: HashMap::new(),
         };
         assert!(matches!(
-            python_javascript_sync_rpc_action(&pyodide, &mut files, &close)
-                .expect("route managed close"),
+            python_javascript_sync_rpc_action(
+                &PyodidePaths::for_dist(&pyodide),
+                &mut files,
+                &close
+            )
+            .expect("route managed close"),
             Some(PythonJavascriptSyncRpcAction::Success(
                 serde_json::Value::Null
             ))
@@ -4444,19 +4542,27 @@ mod tests {
             other => panic!("unexpected managed open action: {other:?}"),
         };
         let first = opened_fd(
-            python_javascript_sync_rpc_action(&pyodide, &mut files, &open(1))
-                .expect("route first open")
-                .expect("first open action"),
+            python_javascript_sync_rpc_action(
+                &PyodidePaths::for_dist(&pyodide),
+                &mut files,
+                &open(1),
+            )
+            .expect("route first open")
+            .expect("first open action"),
         );
         let _second = opened_fd(
-            python_javascript_sync_rpc_action(&pyodide, &mut files, &open(2))
-                .expect("route second open")
-                .expect("second open action"),
+            python_javascript_sync_rpc_action(
+                &PyodidePaths::for_dist(&pyodide),
+                &mut files,
+                &open(2),
+            )
+            .expect("route second open")
+            .expect("second open action"),
         );
         assert_eq!(files.files.len(), 2);
 
         assert!(matches!(
-            python_javascript_sync_rpc_action(&pyodide, &mut files, &open(3))
+            python_javascript_sync_rpc_action(&PyodidePaths::for_dist(&pyodide), &mut files, &open(3))
                 .expect("route saturated open"),
             Some(PythonJavascriptSyncRpcAction::Error { code: "EMFILE", message })
                 if message.contains("limits.resources.maxOpenFds")
@@ -4470,15 +4576,24 @@ mod tests {
             raw_bytes_args: HashMap::new(),
         };
         assert!(matches!(
-            python_javascript_sync_rpc_action(&pyodide, &mut files, &close).expect("route close"),
+            python_javascript_sync_rpc_action(
+                &PyodidePaths::for_dist(&pyodide),
+                &mut files,
+                &close
+            )
+            .expect("route close"),
             Some(PythonJavascriptSyncRpcAction::Success(
                 serde_json::Value::Null
             ))
         ));
         let _replacement = opened_fd(
-            python_javascript_sync_rpc_action(&pyodide, &mut files, &open(5))
-                .expect("route replacement open")
-                .expect("replacement open action"),
+            python_javascript_sync_rpc_action(
+                &PyodidePaths::for_dist(&pyodide),
+                &mut files,
+                &open(5),
+            )
+            .expect("route replacement open")
+            .expect("replacement open action"),
         );
         assert_eq!(files.files.len(), 2);
     }
@@ -4490,7 +4605,7 @@ mod tests {
         fs::create_dir_all(pyodide.join("lib")).expect("create pyodide lib");
 
         let resolved = python_managed_path_kind(
-            &pyodide,
+            &PyodidePaths::for_dist(&pyodide),
             &format!("{PYODIDE_GUEST_ROOT}/lib/../pyodide.mjs"),
         );
 
@@ -4507,8 +4622,10 @@ mod tests {
         let pyodide = temp.path().join("pyodide");
         fs::create_dir_all(&pyodide).expect("create pyodide root");
 
-        let resolved =
-            python_managed_path_kind(&pyodide, &format!("{PYODIDE_GUEST_ROOT}/../../outside.txt"));
+        let resolved = python_managed_path_kind(
+            &PyodidePaths::for_dist(&pyodide),
+            &format!("{PYODIDE_GUEST_ROOT}/../../outside.txt"),
+        );
 
         assert!(matches!(resolved.kind, PythonManagedPathKind::GuestPyodide));
         assert_eq!(
@@ -4527,8 +4644,10 @@ mod tests {
         fs::create_dir_all(&outside).expect("create outside dir");
         symlink(&outside, pyodide.join("escape")).expect("create escape symlink");
 
-        let resolved =
-            python_managed_path_kind(&pyodide, &format!("{PYODIDE_GUEST_ROOT}/escape/file.txt"));
+        let resolved = python_managed_path_kind(
+            &PyodidePaths::for_dist(&pyodide),
+            &format!("{PYODIDE_GUEST_ROOT}/escape/file.txt"),
+        );
 
         assert!(matches!(resolved.kind, PythonManagedPathKind::Unmanaged));
         assert!(resolved.host_path().is_none());
@@ -4545,7 +4664,7 @@ mod tests {
         symlink(&outside, pyodide.join("escape")).expect("create escape symlink");
 
         let resolved = python_managed_path_kind(
-            &pyodide,
+            &PyodidePaths::for_dist(&pyodide),
             &format!("{PYODIDE_GUEST_ROOT}/escape/missing/file.txt"),
         );
 
@@ -4560,7 +4679,10 @@ mod tests {
         fs::create_dir_all(pyodide.join("pkg")).expect("create pyodide package dir");
         let candidate = pyodide.join("pkg/module.py");
 
-        let resolved = python_managed_path_kind(&pyodide, &candidate.display().to_string());
+        let resolved = python_managed_path_kind(
+            &PyodidePaths::for_dist(&pyodide),
+            &candidate.display().to_string(),
+        );
 
         assert!(matches!(resolved.kind, PythonManagedPathKind::HostManaged));
         assert_eq!(resolved.host_path().expect("host path"), candidate);
@@ -4573,7 +4695,10 @@ mod tests {
         fs::create_dir_all(&pyodide).expect("create pyodide root");
         let candidate = pyodide.join("missing/../../outside.txt");
 
-        let resolved = python_managed_path_kind(&pyodide, &candidate.display().to_string());
+        let resolved = python_managed_path_kind(
+            &PyodidePaths::for_dist(&pyodide),
+            &candidate.display().to_string(),
+        );
 
         assert!(matches!(resolved.kind, PythonManagedPathKind::Unmanaged));
         assert!(resolved.host_path().is_none());
@@ -4586,7 +4711,7 @@ mod tests {
         fs::create_dir_all(&pyodide).expect("create pyodide root");
 
         let resolved = python_managed_path_kind(
-            &pyodide,
+            &PyodidePaths::for_dist(&pyodide),
             &format!("{PYODIDE_CACHE_GUEST_ROOT}/wheels/pkg.whl"),
         );
         let host_path = resolved.host_path().expect("host path");

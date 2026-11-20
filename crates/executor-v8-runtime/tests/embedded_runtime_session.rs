@@ -144,10 +144,11 @@ fn dispatch_execute(
         message: SessionMessage::Execute {
             mode,
             file_path: String::new(),
-            bridge_code: bridge_code.to_owned(),
+            bridge_code: bridge_code.into(),
             post_restore_script: String::new(),
-            userland_code: String::new(),
+            userland_code: "".into(),
             high_resolution_time: false,
+            runtime_shim: String::new(),
             user_code: user_code.to_owned(),
             wasm_module_bytes: None,
             guest_bridge_policy: None,
@@ -345,8 +346,8 @@ fn assert_warmed_snapshot_bridge_state() -> io::Result<()> {
     let bridge_code = "(function() { globalThis.__snapshotMarker = 'warm'; })();";
 
     runtime.dispatch(RuntimeCommand::WarmSnapshot {
-        bridge_code: bridge_code.to_owned(),
-        userland_code: String::new(),
+        bridge_code: bridge_code.into(),
+        userland_code: "".into(),
     })?;
     dispatch_execute(
         runtime.as_ref(),
@@ -1411,7 +1412,7 @@ fn bridge_policy_new_sessions_claim_warm_pool_after_prior_owner_retires() -> io:
     let runtime = Arc::new(embedded_runtime(1)?);
     let bridge = agentos_executor_v8_runtime::adapter_host::V8RuntimeHost::bridge_code().to_owned();
     for owner in ["bridge-pool-owner-a", "bridge-pool-owner-b"] {
-        runtime.pre_warm_workers(bridge.clone(), String::new(), None, 1);
+        runtime.pre_warm_workers(bridge.clone().into(), Arc::from(""), None, 1);
         wait_until("warm worker must be parked before session claim", || {
             !runtime.test_parked_worker_ids().is_empty()
         });
@@ -1432,8 +1433,8 @@ fn bridge_policy_new_sessions_claim_warm_pool_after_prior_owner_retires() -> io:
                 wall_clock_limit_ms: None,
                 limit_external_memory: false,
                 warm_hint: Some(WarmSessionHint {
-                    bridge_code: bridge.clone(),
-                    userland_code: String::new(),
+                    bridge_code: bridge.clone().into(),
+                    userland_code: Arc::from(""),
                     heap_limit_mb: None,
                 }),
             },
@@ -1455,8 +1456,8 @@ fn bridge_policy_new_sessions_claim_warm_pool_after_prior_owner_retires() -> io:
             };
             for _ in 0..2 {
                 runtime.dispatch(RuntimeCommand::SendToSession {session_id:id.clone(),message:SessionMessage::Execute {
-                    mode:2,file_path:String::new(),bridge_code:bridge.clone(),post_restore_script:String::new(),
-                    userland_code:String::new(),high_resolution_time:false,
+                    mode:2,file_path:String::new(),bridge_code:bridge.clone().into(),post_restore_script:String::new(),
+                    userland_code:Arc::from(""),high_resolution_time:false,runtime_shim:String::new(),
                     user_code:"if(typeof __agentOSBridgeLimitInstaller!=='undefined')throw Error('installer escaped');".into(),
                     wasm_module_bytes:None,guest_bridge_policy:Some(policy.clone()),
                 }})?;
@@ -1469,10 +1470,12 @@ fn bridge_policy_new_sessions_claim_warm_pool_after_prior_owner_retires() -> io:
                 message: SessionMessage::Execute {
                     mode: 2,
                     file_path: String::new(),
-                    bridge_code: format!("{bridge}\n// changed-source owner rejection control"),
+                    bridge_code: format!("{bridge}\n// changed-source owner rejection control")
+                        .into(),
                     post_restore_script: String::new(),
-                    userland_code: String::new(),
+                    userland_code: Arc::from(""),
                     high_resolution_time: false,
+                    runtime_shim: String::new(),
                     user_code: "throw Error('foreign guest must not run')".into(),
                     wasm_module_bytes: None,
                     guest_bridge_policy: Some(foreign),
@@ -1487,8 +1490,8 @@ fn bridge_policy_new_sessions_claim_warm_pool_after_prior_owner_retires() -> io:
                 other => panic!("changed-owner/source Execute unexpectedly accepted: {other:?}"),
             }
             runtime.dispatch(RuntimeCommand::SendToSession {session_id:id.clone(),message:SessionMessage::Execute {
-                mode:2,file_path:String::new(),bridge_code:bridge.clone(),post_restore_script:String::new(),
-                userland_code:String::new(),high_resolution_time:false,user_code:"if(typeof __agentOSBridgeLimitInstaller!=='undefined')throw Error('installer escaped');".into(),
+                mode:2,file_path:String::new(),bridge_code:bridge.clone().into(),post_restore_script:String::new(),
+                userland_code:Arc::from(""),high_resolution_time:false,runtime_shim:String::new(),user_code:"if(typeof __agentOSBridgeLimitInstaller!=='undefined')throw Error('installer escaped');".into(),
                 wasm_module_bytes:None,guest_bridge_policy:Some(policy),
             }})?;
             assert_execution_ok(&receiver, &id);

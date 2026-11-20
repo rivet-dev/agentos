@@ -190,11 +190,13 @@ pub(crate) fn owner_controls() {
             Object.freeze=()=>{{throw Error('untrusted replacement freeze invoked');}};
         }})();"#
         );
-        let blob = crate::snapshot::create_snapshot_with_userland(source, &userland).unwrap();
+        let blob = crate::snapshot::SnapshotCache::new(1)
+            .get_or_create_with_userland(source, Some(&userland))
+            .unwrap();
         // New isolates + TWO contexts each: serialized V8 data retrieval, not a
         // surviving Global or assumption about Private::for_api name identity.
         for _ in 0..2 {
-            let mut isolate = crate::snapshot::create_isolate_from_snapshot(blob.clone(), None);
+            let mut isolate = crate::snapshot::create_isolate_from_cached_snapshot(&blob, None);
             for owner in ["bridge-policy-a", "bridge-policy-b"] {
                 let alternate = GuestBridgePolicy {
                     vm_id: owner.into(),
@@ -229,7 +231,7 @@ pub(crate) fn owner_controls() {
         }
         // A blob baked with different effective values cannot be reused merely
         // because its bridge/source owner string was mistakenly passed through.
-        let mut isolate = crate::snapshot::create_isolate_from_snapshot(blob, None);
+        let mut isolate = crate::snapshot::create_isolate_from_cached_snapshot(&blob, None);
         let context = crate::isolate::create_context(&mut isolate);
         {
             let scope = &mut v8::HandleScope::new(&mut isolate);

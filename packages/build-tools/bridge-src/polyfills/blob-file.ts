@@ -1,6 +1,6 @@
-import { guestBridgeLimits } from "../guest-bridge-limits.js";
 import { Blob as UpstreamBlob } from "fetch-blob";
 import { File as UpstreamFile } from "fetch-blob/file.js";
+import { guestBridgeLimits } from "../guest-bridge-limits.js";
 
 const MAX_BLOB_PARTS = 1024;
 
@@ -37,9 +37,11 @@ function normalizeBlobParts(parts) {
 		}
 		normalized.push(part);
 	}
-    if (totalBytes >= maxBytes * 0.8) {
-        console.warn(`limits.jsRuntime.maxBlobBytes approaching limit: observed=${totalBytes} maximum=${maxBytes}; raise this limit when creating the VM`);
-    }
+	if (totalBytes >= maxBytes * 0.8) {
+		console.warn(
+			`limits.jsRuntime.maxBlobBytes approaching limit: observed=${totalBytes} maximum=${maxBytes}; raise this limit when creating the VM`,
+		);
+	}
 	return normalized;
 }
 
@@ -73,10 +75,4 @@ class File extends UpstreamFile {
 	}
 }
 
-export {
-	Blob,
-	File,
-	MAX_BLOB_PARTS,
-	normalizeBlobOptions,
-	normalizeBlobParts,
-};
+export { Blob, File, MAX_BLOB_PARTS, normalizeBlobOptions, normalizeBlobParts };

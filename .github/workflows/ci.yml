@@ -297,6 +297,29 @@ jobs:
               --features "$feature"
           done
 
+  rust-clippy:
+    name: Rust Clippy
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install V8 bridge build dependencies
+        run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-build-tools...'
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
   rust:
     name: Rust
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
@@ -314,10 +337,8 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@1.98.1
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
-        with:
-          key: native-pr-${{ hashFiles('Cargo.lock') }}
       - name: Install V8 bridge build dependencies
         run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-build-tools...'
       - name: Verify generated VM config bindings
@@ -326,7 +347,6 @@ jobs:
           git diff --exit-code -- packages/core/src/generated
       - name: Build PR sidecar binaries
         run: cargo build -p agentos-sidecar
-      - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Check VM architecture boundaries
         run: cargo test -p agentos-vm --test architecture_guards -- --test-threads=1
       - run: cargo test -p agentos-sidecar -- --test-threads=1
@@ -460,8 +480,8 @@ jobs:
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
         run: |
-          node ../agentos-toolchain/scripts/test.mjs tests/node-v8-serialization.native.test.ts tests/node-v8-heap-statistics.native.test.ts tests/mount.test.ts tests/limits.test.ts tests/filesystem-write-files.test.ts \
-            --testNamePattern '(?:node:v8 CJS and ESM reject lossy values and preserve JSON-compatible data|node:v8 heap statistics report live isolate use through CJS and ESM|failed host mount callbacks preserve EIO metadata and exists diagnostics|invalid host exists responses log their type without payload data|reactor\.operationDeadlineMs bounds an undrained socket write|a failed entry reports its own error and every other entry is written|writeFiles batches existing public writes without single-file RPCs|writeFiles splits more than the server entry cap without changing order)$' \
+          node ../agentos-toolchain/scripts/test.mjs tests/node-v8-native-wire.native.test.ts tests/node-v8-heap-statistics.native.test.ts tests/mount.test.ts tests/limits.test.ts tests/filesystem-write-files.test.ts \
+            --testNamePattern '(?:node:v8 preserves graphs and exchanges native serialization with Node.js|node:v8 heap statistics report live isolate use through CJS and ESM|failed host mount callbacks preserve EIO metadata and exists diagnostics|invalid host exists responses log their type without payload data|reactor\.operationDeadlineMs bounds an undrained socket write|a failed entry reports its own error and every other entry is written|writeFiles batches existing public writes without single-file RPCs|writeFiles splits more than the server entry cap without changing order)$' \
             --cache=false --fileParallelism=false --maxWorkers=1 --minWorkers=1 \
             --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/runtime-compatibility.json"
           node --input-type=module - "$RUNNER_TEMP/runtime-compatibility.json" <<'NODE'
@@ -470,7 +490,7 @@ jobs:
           const path = process.argv[2];
           assert.ok(statSync(path).size <= 16 * 1024 * 1024);
           const report = JSON.parse(readFileSync(path, 'utf8'));
-          const expected = ["node:v8 CJS and ESM reject lossy values and preserve JSON-compatible data", "node:v8 heap statistics report live isolate use through CJS and ESM", "failed host mount callbacks preserve EIO metadata and exists diagnostics", "invalid host exists responses log their type without payload data", "reactor.operationDeadlineMs bounds an undrained socket write", "a failed entry reports its own error and every other entry is written", "writeFiles batches existing public writes without single-file RPCs", "writeFiles splits more than the server entry cap without changing order"];
+          const expected = ["node:v8 preserves graphs and exchanges native serialization with Node.js", "node:v8 heap statistics report live isolate use through CJS and ESM", "failed host mount callbacks preserve EIO metadata and exists diagnostics", "invalid host exists responses log their type without payload data", "reactor.operationDeadlineMs bounds an undrained socket write", "a failed entry reports its own error and every other entry is written", "writeFiles batches existing public writes without single-file RPCs", "writeFiles splits more than the server entry cap without changing order"];
           const rows = report.testResults.flatMap(file => file.assertionResults);
           const executed = rows.filter(row => row.status === 'passed' || row.status === 'failed');
           assert.equal(report.success, true);
@@ -487,7 +507,7 @@ jobs:
   required:
     name: CI / Required
     if: ${{ always() && (github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')) }}
-    needs: [checks, wasm-commands, rust, executor-feature-isolation, core-pr, core-runtime-pr, wasm-backend-matrix]
+    needs: [checks, wasm-commands, rust, rust-clippy, executor-feature-isolation, core-pr, core-runtime-pr, wasm-backend-matrix]
     runs-on: ubuntu-latest
     steps:
       - name: Require every PR gate
@@ -495,6 +515,7 @@ jobs:
           CHECKS_RESULT: ${{ needs.checks.result }}
           WASM_RESULT: ${{ needs.wasm-commands.result }}
           RUST_RESULT: ${{ needs.rust.result }}
+          RUST_CLIPPY_RESULT: ${{ needs.rust-clippy.result }}
           FEATURE_ISOLATION_RESULT: ${{ needs.executor-feature-isolation.result }}
           CORE_RESULT: ${{ needs.core-pr.result }}
           CORE_RUNTIME_RESULT: ${{ needs.core-runtime-pr.result }}
@@ -505,6 +526,7 @@ jobs:
             "$CHECKS_RESULT" \
             "$WASM_RESULT" \
             "$RUST_RESULT" \
+            "$RUST_CLIPPY_RESULT" \
             "$FEATURE_ISOLATION_RESULT" \
             "$CORE_RESULT" \
             "$CORE_RUNTIME_RESULT"; do

@@ -465,6 +465,28 @@ async function rewriteUnsupportedUtilTypesBundle(
 	await writeFile(bundlePath, patched);
 }
 
+// Keep the clock closures and Performance object across snapshot restore.
+// The execution shim refreshes their epoch before the entry module loads.
+const performancePrelude = `
+if (typeof globalThis.performance === "undefined") {
+  const dateNow = Date.now;
+  const bootstrapOrigin = dateNow();
+  const timeOrigin = () => globalThis._processConfig?.performanceTimeOrigin ?? bootstrapOrigin;
+  globalThis.performance = {
+    now() {
+      return typeof globalThis.__agentOsHrNowUs === "function"
+        ? globalThis.__agentOsHrNowUs() / 1000
+        : dateNow() - timeOrigin();
+    },
+    get timeOrigin() { return timeOrigin(); },
+    toJSON() { return { timeOrigin: this.timeOrigin }; },
+  };
+}
+if (typeof globalThis.performance.markResourceTiming !== "function") {
+  globalThis.performance.markResourceTiming = () => {};
+}
+`;
+
 async function buildWebStreamsPrelude() {
 	const preludeResult = await build({
 		stdin: {
@@ -520,20 +542,7 @@ async function buildWebStreamsPrelude() {
 				"    }",
 				"  };",
 				"}",
-				'if (typeof globalThis.performance === "undefined") {',
-				"  const performanceStart = Date.now();",
-				"  globalThis.performance = {",
-				"    now() {",
-				'      if (typeof globalThis.__agentOsHrNowUs === "function") {',
-				"        return globalThis.__agentOsHrNowUs() / 1000;",
-				"      }",
-				"      return Date.now() - performanceStart;",
-				"    },",
-				"  };",
-				"}",
-				'if (typeof globalThis.performance.markResourceTiming !== "function") {',
-				"  globalThis.performance.markResourceTiming = () => {};",
-				"}",
+				performancePrelude,
 			].join("\n"),
 			resolveDir: bridgeAssetsDir,
 			sourcefile: "v8-bridge-web-streams.entry.js",
@@ -795,7 +804,7 @@ const result = await build({
 				`if(typeof globalThis.TextDecoder==="undefined"){globalThis.TextDecoder=class{decode(value=new Uint8Array()){const view=value instanceof Uint8Array?value:ArrayBuffer.isView(value)?new Uint8Array(value.buffer,value.byteOffset,value.byteLength):value instanceof ArrayBuffer?new Uint8Array(value):new Uint8Array(0);let binary="";for(let i=0;i<view.length;i++){binary+=String.fromCharCode(view[i]);}return decodeURIComponent(escape(binary));}};}`,
 				`if(typeof globalThis.Buffer==="undefined"){const __agentOsTe=typeof TextEncoder==="function"?new TextEncoder():null;const __agentOsTd=typeof TextDecoder==="function"?new TextDecoder():null;class __AgentOsEarlyBuffer extends Uint8Array{static from(value,encoding="utf8"){if(value instanceof ArrayBuffer){return new __AgentOsEarlyBuffer(value);}if(ArrayBuffer.isView(value)){return new __AgentOsEarlyBuffer(value.buffer.slice(value.byteOffset,value.byteOffset+value.byteLength));}if(Array.isArray(value)){return new __AgentOsEarlyBuffer(value);}const stringValue=String(value??"");if(encoding==="base64"&&typeof atob==="function"){const binary=atob(stringValue);const out=new __AgentOsEarlyBuffer(binary.length);for(let i=0;i<binary.length;i++){out[i]=binary.charCodeAt(i);}return out;}if(encoding==="binary"||encoding==="latin1"){const out=new __AgentOsEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}if(__agentOsTe){return new __AgentOsEarlyBuffer(__agentOsTe.encode(stringValue));}const out=new __AgentOsEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}static alloc(size){return new __AgentOsEarlyBuffer(Number(size)||0);}static concat(list,totalLength){const length=totalLength??list.reduce((sum,item)=>sum+(item?.length??0),0);const out=new __AgentOsEarlyBuffer(length);let offset=0;for(const item of list){const chunk=item instanceof Uint8Array?item:__AgentOsEarlyBuffer.from(item);out.set(chunk,offset);offset+=chunk.length;}return out;}static isBuffer(value){return value instanceof Uint8Array;}static byteLength(value,encoding="utf8"){return __AgentOsEarlyBuffer.from(value,encoding).byteLength;}toString(encoding="utf8"){if(encoding==="base64"&&typeof btoa==="function"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return btoa(binary);}if(encoding==="binary"||encoding==="latin1"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return binary;}if(__agentOsTd){return __agentOsTd.decode(this);}return Array.from(this,byte=>String.fromCharCode(byte)).join("");}}globalThis.Buffer=__AgentOsEarlyBuffer;}`,
 				'if(typeof globalThis.Buffer.allocUnsafe!=="function"){globalThis.Buffer.allocUnsafe=globalThis.Buffer.alloc;}if(typeof globalThis.Buffer.allocUnsafeSlow!=="function"){globalThis.Buffer.allocUnsafeSlow=globalThis.Buffer.alloc;}',
-				'if(typeof globalThis.performance==="undefined"){const __agentOsPerformanceStart=Date.now();globalThis.performance={now(){if(typeof globalThis.__agentOsHrNowUs==="function"){return globalThis.__agentOsHrNowUs()/1000;}return Date.now()-__agentOsPerformanceStart;}};}if(typeof globalThis.performance.markResourceTiming!=="function"){globalThis.performance.markResourceTiming=()=>{};}',
+				performancePrelude,
 				'if(typeof TextEncoder==="undefined"&&typeof globalThis.TextEncoder!=="undefined"){var TextEncoder=globalThis.TextEncoder;}if(typeof TextDecoder==="undefined"&&typeof globalThis.TextDecoder!=="undefined"){var TextDecoder=globalThis.TextDecoder;}if(typeof Buffer==="undefined"&&typeof globalThis.Buffer!=="undefined"){var Buffer=globalThis.Buffer;}',
 			].join(""),
 	},
@@ -853,7 +862,7 @@ const zlibResult = await build({
 				`if(typeof globalThis.TextDecoder==="undefined"){globalThis.TextDecoder=class{decode(value=new Uint8Array()){const view=value instanceof Uint8Array?value:ArrayBuffer.isView(value)?new Uint8Array(value.buffer,value.byteOffset,value.byteLength):value instanceof ArrayBuffer?new Uint8Array(value):new Uint8Array(0);let binary="";for(let i=0;i<view.length;i++){binary+=String.fromCharCode(view[i]);}return decodeURIComponent(escape(binary));}};}`,
 				`if(typeof globalThis.Buffer==="undefined"){const __agentOsTe=typeof TextEncoder==="function"?new TextEncoder():null;const __agentOsTd=typeof TextDecoder==="function"?new TextDecoder():null;class __AgentOsEarlyBuffer extends Uint8Array{static from(value,encoding="utf8"){if(value instanceof ArrayBuffer){return new __AgentOsEarlyBuffer(value);}if(ArrayBuffer.isView(value)){return new __AgentOsEarlyBuffer(value.buffer.slice(value.byteOffset,value.byteOffset+value.byteLength));}if(Array.isArray(value)){return new __AgentOsEarlyBuffer(value);}const stringValue=String(value??"");if(encoding==="base64"&&typeof atob==="function"){const binary=atob(stringValue);const out=new __AgentOsEarlyBuffer(binary.length);for(let i=0;i<binary.length;i++){out[i]=binary.charCodeAt(i);}return out;}if(encoding==="binary"||encoding==="latin1"){const out=new __AgentOsEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}if(__agentOsTe){return new __AgentOsEarlyBuffer(__agentOsTe.encode(stringValue));}const out=new __AgentOsEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}static alloc(size){return new __AgentOsEarlyBuffer(Number(size)||0);}static concat(list,totalLength){const length=totalLength??list.reduce((sum,item)=>sum+(item?.length??0),0);const out=new __AgentOsEarlyBuffer(length);let offset=0;for(const item of list){const chunk=item instanceof Uint8Array?item:__AgentOsEarlyBuffer.from(item);out.set(chunk,offset);offset+=chunk.length;}return out;}static isBuffer(value){return value instanceof Uint8Array;}static byteLength(value,encoding="utf8"){return __AgentOsEarlyBuffer.from(value,encoding).byteLength;}toString(encoding="utf8"){if(encoding==="base64"&&typeof btoa==="function"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return btoa(binary);}if(encoding==="binary"||encoding==="latin1"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return binary;}if(__agentOsTd){return __agentOsTd.decode(this);}return Array.from(this,byte=>String.fromCharCode(byte)).join("");}}globalThis.Buffer=__AgentOsEarlyBuffer;}`,
 				'if(typeof globalThis.Buffer.allocUnsafe!=="function"){globalThis.Buffer.allocUnsafe=globalThis.Buffer.alloc;}if(typeof globalThis.Buffer.allocUnsafeSlow!=="function"){globalThis.Buffer.allocUnsafeSlow=globalThis.Buffer.alloc;}',
-				'if(typeof globalThis.performance==="undefined"){const __agentOsPerformanceStart=Date.now();globalThis.performance={now(){if(typeof globalThis.__agentOsHrNowUs==="function"){return globalThis.__agentOsHrNowUs()/1000;}return Date.now()-__agentOsPerformanceStart;}};}if(typeof globalThis.performance.markResourceTiming!=="function"){globalThis.performance.markResourceTiming=()=>{};}',
+				performancePrelude,
 				'if(typeof TextEncoder==="undefined"&&typeof globalThis.TextEncoder!=="undefined"){var TextEncoder=globalThis.TextEncoder;}if(typeof TextDecoder==="undefined"&&typeof globalThis.TextDecoder!=="undefined"){var TextDecoder=globalThis.TextDecoder;}if(typeof Buffer==="undefined"&&typeof globalThis.Buffer!=="undefined"){var Buffer=globalThis.Buffer;}',
 			].join(""),
 	},

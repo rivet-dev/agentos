@@ -1,5 +1,7 @@
-export function forkStdinProbe(mode:"ignore"|"pipe"):string {
-  const child=mode==="ignore" ? `
+export function forkStdinProbe(mode: "ignore" | "pipe"): string {
+	const child =
+		mode === "ignore"
+			? `
 import {read} from 'node:fs';
 const buffers=[];let ended=false;
 process.stdin.on('data',chunk=>{if(buffers.reduce((n,b)=>n+b.length,0)<256)buffers.push(Buffer.from(chunk).subarray(0,256));});
@@ -10,7 +12,8 @@ process.on('message',message=>{if(message.kind==='ping')setTimeout(()=>{process.
 if(process.argv[2]==='read') {
  read(0,Buffer.alloc(1),0,1,null,(error,bytesRead)=>{process.send({kind:'read',bytesRead,error:error?{name:error.name,code:error.code??null,message:error.message}:null});process.send({kind:'ready'});});
 } else process.send({kind:'ready'});
-` : `
+`
+			: `
 const buffers=[];
 process.stdin.on('data',chunk=>{if(buffers.reduce((n,b)=>n+b.length,0)<256)buffers.push(Buffer.from(chunk).subarray(0,256));});
 process.stdin.on('end',()=>process.send({kind:'stdin-end',data:Buffer.concat(buffers).toString('base64')}));
@@ -22,7 +25,7 @@ process.on('message',message=>{
 });
 process.send({kind:'ready'});
 `;
-  return `
+	return `
 import {fork} from 'node:child_process';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -30,7 +33,7 @@ const directory=mkdtempSync(tmpdir()+'/fork-stdin-'),path=directory+'/child.mjs'
 writeFileSync(path,${JSON.stringify(child)});
 const rows=[];
 try {
- for(const subcase of ${JSON.stringify(mode==="ignore"?["public","read"]:["pipe"])}) {
+ for(const subcase of ${JSON.stringify(mode === "ignore" ? ["public", "read"] : ["pipe"])}) {
   const child=fork(path,subcase==='read'?['read']:[],{execArgv:[],stdio:[${JSON.stringify(mode)},'pipe','pipe','ipc']});
   const messages=[],errors=[];let timedOut=false,stderr='';
   child.stderr.on('data',chunk=>{stderr=(stderr+chunk.toString()).slice(0,1024);});

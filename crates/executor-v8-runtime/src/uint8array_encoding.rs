@@ -1,5 +1,4 @@
 //! One V8-owned ASCII allocation per encoding, with no IPC or host resources.
-use v8;
 
 fn range_error(scope: &mut v8::HandleScope, message: &str, code: &str) {
     let message = v8::String::new(scope, message).unwrap();

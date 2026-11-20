@@ -7,7 +7,7 @@ impl CommandProjectionScratchObserver {
                 observer.borrow().is_none(),
                 "scratch observer already active"
             );
-            *observer.borrow_mut() = Some(None);
+            *observer.borrow_mut() = Some(Arc::new(std::sync::Mutex::new(None)));
         });
         Self
     }
@@ -17,8 +17,8 @@ impl CommandProjectionScratchObserver {
             observer
                 .borrow()
                 .as_ref()
-                .and_then(Clone::clone)
-                .expect("creation must allocate scratch on the observed thread")
+                .and_then(|slot| slot.lock().expect("scratch observer lock").clone())
+                .expect("creation must allocate scratch")
         })
     }
 }
@@ -57,7 +57,8 @@ fn command_projection_create_control(
     inode_limit: usize,
     fail_namespace: bool,
 ) {
-    let mut manager = VmManager::new(LocalBridge::default()).expect("manager");
+    let mut manager =
+        VmManager::new(super::teardown_test_bridge::RecordingBridge::default()).expect("manager");
     manager.connections.insert(
         "quota-connection".into(),
         ConnectionState {
@@ -172,6 +173,16 @@ fn command_projection_create_control(
             "{error}"
         );
     }
+    assert!(
+        manager
+            .bridge
+            .with_mut(|host| Ok(host
+                .lifecycle_events
+                .iter()
+                .all(|event| { event.state != agentos_vm_host_interface::LifecycleState::Ready })))
+            .expect("host lifecycle observation"),
+        "failed create published host Ready"
+    );
     assert!(manager.vms.is_empty());
     assert!(manager.sessions["quota-session"].vm_ids.is_empty());
     let permissions_retained = !manager.bridge.permissions.lock().unwrap().is_empty();

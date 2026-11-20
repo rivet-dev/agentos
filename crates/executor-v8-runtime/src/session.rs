@@ -482,6 +482,7 @@ impl Drop for RuntimeEventOutputReceiver {
 
 const LATE_STREAM_EVENT_ERROR_CODE: &str = "ERR_LATE_STREAM_EVENT";
 const LATE_BRIDGE_RESPONSE_ERROR_CODE: &str = "ERR_LATE_BRIDGE_RESPONSE";
+const LATE_TERMINATE_EXECUTION_ERROR_CODE: &str = "ERR_LATE_TERMINATE_EXECUTION";
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct WarmPoolKey {
     snapshot_key_digest: SnapshotCacheKey,
@@ -651,8 +652,8 @@ struct PrecreatedIsolate {
     // must share the process-wide lifecycle lock with isolate creation.
     isolate: Option<crate::owned_microtasks::SessionIsolate>,
     context: Option<v8::Global<v8::Context>>,
-    bridge_code: String,
-    userland_code: String,
+    bridge_code: Arc<str>,
+    userland_code: Arc<str>,
 }
 
 #[cfg(not(test))]
@@ -813,8 +814,8 @@ impl WarmWorkerPool {
         self: &Arc<Self>,
         runtime: DriverHandle,
         snapshot_cache: Arc<SnapshotCache>,
-        bridge_code: String,
-        userland_code: String,
+        bridge_code: Arc<str>,
+        userland_code: Arc<str>,
         heap_limit_mb: Option<u32>,
         requested_count: usize,
     ) {
@@ -869,8 +870,8 @@ impl WarmWorkerPool {
         &self,
         snapshot_cache: Arc<SnapshotCache>,
         key: WarmPoolKey,
-        bridge_code: String,
-        userland_code: String,
+        bridge_code: Arc<str>,
+        userland_code: Arc<str>,
         heap_limit_mb: Option<u32>,
         target_count: usize,
     ) {
@@ -929,8 +930,8 @@ impl WarmWorkerPool {
             let worker = spawn_warm_worker(
                 Arc::clone(&snapshot_cache),
                 key.clone(),
-                bridge_code.clone(),
-                userland_code.clone(),
+                Arc::clone(&bridge_code),
+                Arc::clone(&userland_code),
                 heap_limit_mb,
             );
             let mut state = self.state.lock().expect("warm worker pool lock poisoned");
@@ -972,14 +973,14 @@ impl WarmWorkerPool {
 fn spawn_warm_worker(
     snapshot_cache: Arc<SnapshotCache>,
     key: WarmPoolKey,
-    bridge_code: String,
-    userland_code: String,
+    bridge_code: Arc<str>,
+    userland_code: Arc<str>,
     heap_limit_mb: Option<u32>,
 ) -> Option<ParkedWorker> {
     let (assignment_tx, assignment_rx) = crossbeam_channel::bounded::<SessionAssignment>(1);
     let (ready_tx, ready_rx) = crossbeam_channel::bounded::<Result<(), String>>(1);
-    let worker_bridge_code = bridge_code.clone();
-    let worker_userland_code = userland_code.clone();
+    let worker_bridge_code = Arc::clone(&bridge_code);
+    let worker_userland_code = Arc::clone(&userland_code);
     // AGENTOS_THREAD_SITE: bounded-v8-warm-worker
     let join_handle = match thread::Builder::new()
         .name(String::from("agentos-v8-warm-worker"))
@@ -1045,8 +1046,8 @@ fn spawn_warm_worker(
 fn spawn_warm_worker(
     _snapshot_cache: Arc<SnapshotCache>,
     _key: WarmPoolKey,
-    _bridge_code: String,
-    _userland_code: String,
+    _bridge_code: Arc<str>,
+    _userland_code: Arc<str>,
     _heap_limit_mb: Option<u32>,
 ) -> Option<ParkedWorker> {
     None
@@ -1055,21 +1056,21 @@ fn spawn_warm_worker(
 #[cfg(not(test))]
 fn precreate_warm_isolate(
     snapshot_cache: Arc<SnapshotCache>,
-    bridge_code: String,
-    userland_code: String,
+    bridge_code: Arc<str>,
+    userland_code: Arc<str>,
     heap_limit_mb: Option<u32>,
 ) -> Result<PrecreatedIsolate, String> {
     isolate::init_v8_platform();
     let snapshot_blob = snapshot_cache.get_or_create_with_userland(
         &bridge_code,
-        (!userland_code.is_empty()).then_some(userland_code.as_str()),
+        (!userland_code.is_empty()).then_some(&*userland_code),
     )?;
     // Parked workers are bounded by MAX_PROCESS_WARM_WORKERS and do not execute
     // guest code until they receive a slot-owning SessionAssignment. Building
     // one must not wait for every active session to exit: long-lived parents
     // need the pool to replenish while short-lived child commands come and go.
     let mut isolate = crate::owned_microtasks::SessionIsolate::new(
-        snapshot::create_isolate_from_shared_snapshot(snapshot_blob, heap_limit_mb),
+        snapshot::create_isolate_from_cached_snapshot(&snapshot_blob, heap_limit_mb),
     );
     isolate.set_host_import_module_dynamically_callback(execution::dynamic_import_callback);
     isolate.set_host_initialize_import_meta_object_callback(execution::import_meta_object_callback);
@@ -1405,8 +1406,8 @@ impl SessionManager {
 
     pub fn pre_warm_workers(
         &self,
-        bridge_code: String,
-        userland_code: String,
+        bridge_code: Arc<str>,
+        userland_code: Arc<str>,
         heap_limit_mb: Option<u32>,
         count: usize,
     ) {
@@ -2303,11 +2304,22 @@ fn handle_late_session_message(
             payload,
         }) => {
             // Timer and socket-readiness events are wake hints, not data.
-            // `stdin_end` is likewise an idempotent teardown notification. All
-            // three can race execution completion by design and carry no data
-            // to recover, so classify them as expected stale control events
-            // instead of writing a false error into the guest's stderr.
-            if event_type == "timer" || event_type == "net_socket" || event_type == "stdin_end" {
+            // `stdin_end` is likewise an idempotent teardown notification. They
+            // race execution completion by design and carry no data to
+            // recover, so classify them as expected stale control events
+            // instead of writing a false error into the guest's stderr. Stdin
+            // bytes that reach a finished execution are discarded, as Linux
+            // discards a pipe's unread bytes when its reader exits.
+            if matches!(event_type.as_str(), "timer" | "net_socket" | "stdin_end") {
+                return;
+            }
+            if event_type == "stdin" {
+                tracing::debug!(
+                    code = LATE_STREAM_EVENT_ERROR_CODE,
+                    session_id,
+                    payload_len = payload.len(),
+                    "dropping stdin after execution completed"
+                );
                 return;
             }
             send_late_message_warning(
@@ -2321,14 +2333,12 @@ fn handle_late_session_message(
                 ),
             )
         }
-        // Termination is idempotent. The executor can complete after the
-        // out-of-band isolate/abort signal succeeds but before this queued
-        // control message is observed. The requested terminal state has
-        // already been reached, so this is expected stale control—not a guest
-        // execution error. Keep it host-visible without contaminating stderr
-        // inside the VM.
-        SessionMessage::TerminateExecution => eprintln!(
-            "INFO_AGENTOS_STALE_TERMINATE_EXECUTION: session={session_id} generation={output_generation:?} execution already completed"
+        // Termination is idempotent; a kill that races the execution's own
+        // completion has nothing left to stop, like kill() on an exited process.
+        SessionMessage::TerminateExecution => tracing::debug!(
+            code = LATE_TERMINATE_EXECUTION_ERROR_CODE,
+            session_id,
+            "dropping TerminateExecution after execution completed"
         ),
         SessionMessage::InjectGlobals { .. } | SessionMessage::Execute { .. } => {}
     }
@@ -2476,6 +2486,7 @@ fn session_thread(
         &ready_broker,
         &runtime,
         bridge_call_timeout,
+        serialization_limit_bytes,
     );
 
     // Capture THIS session thread's per-thread CPU clock once. The clock id is
@@ -2491,6 +2502,10 @@ fn session_thread(
     // Isolate creation is normally deferred to first Execute (when bridge code is
     // known for snapshot cache lookup). A claimed warm worker enters here with
     // the snapshot isolate already created on this same thread.
+    // A session starts with a fresh or a never-run warm isolate, so no guest
+    // code has run in it yet, whatever this thread ran before.
+    crate::module_code_cache::isolate_started();
+    crate::module_code_cache::set_session_executor(Some(runtime.blocking().clone()));
     #[cfg(not(test))]
     let (
         mut v8_isolate,
@@ -2503,11 +2518,30 @@ fn session_thread(
             precreated.isolate.take(),
             precreated.context.take(),
             true,
-            Some(std::mem::take(&mut precreated.bridge_code)),
-            Some(std::mem::take(&mut precreated.userland_code)),
+            Some(Arc::clone(&precreated.bridge_code)),
+            Some(Arc::clone(&precreated.userland_code)),
         ),
         None => (None, None, false, None, None),
     };
+    // A claimed warm isolate came from the cached snapshot for its bridge and
+    // userland code; record jobs restore the same one.
+    #[cfg(not(test))]
+    if v8_isolate.is_some() {
+        let blob = isolate_bridge_code.as_deref().and_then(|bridge| {
+            let userland = isolate_userland_code
+                .as_deref()
+                .filter(|code| !code.is_empty());
+            snapshot_cache.try_get_with_userland(bridge, userland)
+        });
+        crate::module_code_cache::set_session_isolate_factory(
+            blob.map(snapshot::pristine_isolate_factory),
+        );
+    }
+    // True while `_v8_context` has never been handed to an execution. A claimed
+    // warm worker built it off the critical path; the first ordinary Execute
+    // takes it instead of deserializing a second context from the snapshot.
+    #[cfg(not(test))]
+    let mut context_pristine = _v8_context.is_some();
 
     #[cfg(not(test))]
     let mut retained_bridge_fns_installed = false;
@@ -2526,10 +2560,10 @@ fn session_thread(
 
     // Cached bridge code string to skip resending over IPC
     #[cfg(not(test))]
-    let mut last_bridge_code: Option<String> = None;
+    let mut last_bridge_code: Option<Arc<str>> = None;
     // Cached agent-SDK userland bundle (same 0-length = use cached convention).
     #[cfg(not(test))]
-    let mut last_userland_code: Option<String> = None;
+    let mut last_userland_code: Option<Arc<str>> = None;
 
     // A session can reuse its isolate across Executes only while the effective
     // bridge code stays the same. Fresh contexts cloned from a snapshot inherit
@@ -2590,6 +2624,7 @@ fn session_thread(
                     post_restore_script,
                     userland_code,
                     high_resolution_time,
+                    runtime_shim,
                     user_code,
                     wasm_module_bytes,
                     guest_bridge_policy,
@@ -2651,14 +2686,14 @@ fn session_thread(
                         // Use cached bridge code when host sends empty (0-length = use cached)
                         let should_update_cached_bridge_code = !bridge_code.is_empty();
                         let effective_bridge_code = if bridge_code.is_empty() {
-                            last_bridge_code.as_deref().unwrap_or("").to_string()
+                            last_bridge_code.clone().unwrap_or_else(|| Arc::from(""))
                         } else {
                             bridge_code
                         };
                         // Same 0-length = use-cached convention for the userland bundle.
                         let should_update_cached_userland_code = !userland_code.is_empty();
                         let effective_userland_code = if userland_code.is_empty() {
-                            last_userland_code.as_deref().unwrap_or("").to_string()
+                            last_userland_code.clone().unwrap_or_else(|| Arc::from(""))
                         } else {
                             userland_code
                         };
@@ -2684,23 +2719,22 @@ fn session_thread(
                         }
 
                         if should_update_cached_bridge_code {
-                            last_bridge_code = Some(effective_bridge_code.clone());
+                            last_bridge_code = Some(Arc::clone(&effective_bridge_code));
                         }
                         if should_update_cached_userland_code {
-                            last_userland_code = Some(effective_userland_code.clone());
+                            last_userland_code = Some(Arc::clone(&effective_userland_code));
                         }
 
                         if v8_isolate.is_some()
-                            && (isolate_bridge_code.as_deref()
-                                != Some(effective_bridge_code.as_str())
-                                || isolate_userland_code.as_deref()
-                                    != Some(effective_userland_code.as_str()))
+                            && (isolate_bridge_code.as_ref() != Some(&effective_bridge_code)
+                                || isolate_userland_code.as_ref() != Some(&effective_userland_code))
                         {
                             *isolate_handle
                                 .lock()
                                 .expect("session isolate handle lock poisoned") = None;
                             // Operation-owned resolver Globals have already been dropped.
                             drop(_v8_context.take());
+                            context_pristine = false;
                             drop(v8_isolate.take());
                             from_snapshot = false;
                             retained_bridge_fns_installed = false;
@@ -2718,7 +2752,7 @@ fn session_thread(
                             let snapshot_blob = match snapshot_cache.get_or_create_with_userland(
                                 &effective_bridge_code,
                                 (!effective_userland_code.is_empty())
-                                    .then_some(effective_userland_code.as_str()),
+                                    .then_some(&*effective_userland_code),
                             ) {
                                 Ok(blob) => Some(blob),
                                 Err(message) => {
@@ -2740,8 +2774,11 @@ fn session_thread(
                                         from_snapshot = true;
                                         tracing::debug!("restored session isolate from snapshot");
                                         let phase_start = Instant::now();
-                                        let isolate = snapshot::create_isolate_from_shared_snapshot(
-                                            blob,
+                                        crate::module_code_cache::set_session_isolate_factory(
+                                            Some(snapshot::pristine_isolate_factory(blob.clone())),
+                                        );
+                                        let isolate = snapshot::create_isolate_from_cached_snapshot(
+                                            &blob,
                                             heap_limit_mb,
                                         );
                                         record_v8_session_phase(
@@ -2752,6 +2789,10 @@ fn session_thread(
                                     }
                                     None => {
                                         from_snapshot = false;
+                                        crate::module_code_cache::set_session_isolate_factory(Some(
+                                        Arc::new(|| isolate::create_isolate(None))
+                                            as crate::module_code_cache::PristineIsolateFactory,
+                                    ));
                                         let phase_start = Instant::now();
                                         let isolate = isolate::create_isolate(heap_limit_mb);
                                         record_v8_session_phase(
@@ -2775,9 +2816,11 @@ fn session_thread(
                             let ctx = crate::owned_microtasks::create_root(&mut iso)
                                 .expect("first session realm is below family capacity");
                             _v8_context = Some(ctx);
+                            context_pristine = true;
+                            crate::module_code_cache::isolate_started();
                             v8_isolate = Some(iso);
-                            isolate_bridge_code = Some(effective_bridge_code.clone());
-                            isolate_userland_code = Some(effective_userland_code.clone());
+                            isolate_bridge_code = Some(Arc::clone(&effective_bridge_code));
+                            isolate_userland_code = Some(Arc::clone(&effective_userland_code));
                         }
 
                         let iso = &mut **v8_isolate.as_mut().unwrap();
@@ -2806,14 +2849,25 @@ fn session_thread(
                         // their entry evaluation settles, not when the event
                         // loop drains; leftover handles are released instead.
                         let complete_on_settle = mode & 6 != 0;
-                        let exec_context = if retain_context {
-                            _v8_context
-                                .as_ref()
-                                .expect("session context exists after isolate creation")
-                                .clone()
+                        let exec_context = if let (true, Some(context)) =
+                            (retain_context, _v8_context.as_ref())
+                        {
+                            context_pristine = false;
+                            context.clone()
+                        } else if context_pristine {
+                            // Never-run context: equivalent to a fresh one, and
+                            // it leaves the session so a later retained Execute
+                            // cannot observe this execution's globals.
+                            context_pristine = false;
+                            _v8_context.take().expect("pristine session context exists")
                         } else {
                             match crate::owned_microtasks::create_root(iso) {
-                                Ok(context) => context,
+                                Ok(context) => {
+                                    if retain_context {
+                                        _v8_context = Some(context.clone());
+                                    }
+                                    context
+                                }
                                 Err(admission_error) => {
                                     let message = admission_error.to_string();
                                     // Admission collection never cancels a stop. Preserve
@@ -3241,8 +3295,17 @@ fn session_thread(
                             }) {
                                 Err(error) => Some(error),
                                 Ok(()) => {
+                                    let init_script =
+                                        match (runtime_shim.as_str(), post_restore_script.as_str())
+                                        {
+                                            ("", prelude) => std::borrow::Cow::Borrowed(prelude),
+                                            (shim, "") => std::borrow::Cow::Borrowed(shim),
+                                            (shim, prelude) => std::borrow::Cow::Owned(format!(
+                                                "{shim}\n{prelude}"
+                                            )),
+                                        };
                                     let (code, error) =
-                                        execution::run_init_script(scope, &post_restore_script);
+                                        execution::run_init_script(scope, &init_script);
                                     if code == 0 {
                                         None
                                     } else {
@@ -3288,10 +3351,11 @@ fn session_thread(
                                 let ctx = v8::Local::new(scope, &exec_context);
                                 let scope = &mut v8::ContextScope::new(scope, ctx);
                                 crate::async_context::clear_async_context(scope);
-                                execution::execute_module(
+                                execution::execute_module_in_context(
                                     scope,
                                     &bridge_ctx,
                                     bridge_code_for_exec,
+                                    !runtime_shim.is_empty(),
                                     &user_code,
                                     file_path_opt,
                                     &mut bridge_cache,
@@ -3849,7 +3913,14 @@ fn session_thread(
                     }
                     #[cfg(test)]
                     {
-                        let _ = (mode, file_path, bridge_code, post_restore_script, user_code);
+                        let _ = (
+                            mode,
+                            file_path,
+                            bridge_code,
+                            post_restore_script,
+                            runtime_shim,
+                            user_code,
+                        );
                     }
                 }
                 SessionMessage::BridgeResponse(_)
@@ -3868,6 +3939,8 @@ fn session_thread(
             .lock()
             .expect("session isolate handle lock poisoned") = None;
         // Each operation dropped its resolver Globals before returning here.
+        crate::module_code_cache::set_session_executor(None);
+        crate::module_code_cache::set_session_isolate_factory(None);
         drop(_v8_context.take());
         drop(v8_isolate.take());
     }
@@ -4113,6 +4186,8 @@ fn run_event_loop_with_readiness(
         exit,
     } = sources;
     let mut bridge_lane_open = bridge_rx.is_some();
+    let mut platform_pump_wait = PLATFORM_PUMP_MIN_WAIT;
+    let mut idle_heap = IdleHeapReduction::new();
     loop {
         // An out-of-band isolate termination may arrive between event-loop
         // passes. Check the durable abort lane before any V8 API call; querying
@@ -4279,10 +4354,10 @@ fn run_event_loop_with_readiness(
                     }
                 }
             }
-            // All externally driven work must be registered with the blocking
-            // selector. The 1 ms timeout exists only to pump V8 platform work;
-            // it must not become the delivery cadence for direct bridge
-            // responses, readiness, ordinary commands, or abort.
+            // All externally driven work (timers, readiness, commands, bridge
+            // responses, abort) must be registered with the blocking selector.
+            // The timeout exists only to pump V8 platform work; see
+            // `next_platform_pump_wait`.
             let mut selector = Select::new();
             let ordinary_index = selector.recv(rx);
             let ready_index = selector.recv(ready_rx);
@@ -4292,7 +4367,7 @@ fn run_event_loop_with_readiness(
                 None
             };
             let abort_selection = abort_rx.map(|abort| (selector.recv(abort), abort));
-            let recv_result = match selector.select_timeout(Duration::from_millis(1)) {
+            let recv_result = match selector.select_timeout(platform_pump_wait) {
                 Ok(operation) => {
                     let index = operation.index();
                     if index == ordinary_index {
@@ -4354,10 +4429,11 @@ fn run_event_loop_with_readiness(
             if let Some((code, error)) = crate::terminal_callback::result(scope) {
                 return EventLoopStatus::Failed(code, error);
             }
-            pump_v8_message_loop(scope);
-            if let Some((code, error)) = crate::terminal_callback::result(scope) {
-                return EventLoopStatus::Failed(code, error);
-            }
+            let ran_platform_task = pump_v8_message_loop(scope);
+            platform_pump_wait = next_platform_pump_wait(
+                platform_pump_wait,
+                ran_platform_task || scope.has_pending_background_tasks(),
+            );
             if let Some((code, error)) = crate::terminal_callback::result(scope) {
                 return EventLoopStatus::Failed(code, error);
             }
@@ -4368,14 +4444,85 @@ fn run_event_loop_with_readiness(
             if event_loop_can_exit(scope, pending, exit) {
                 return EventLoopStatus::Completed;
             }
+            idle_heap.on_idle_tick(scope);
         };
+        idle_heap.on_activity();
 
+        // Guest JavaScript is about to run and may post V8 platform work.
+        platform_pump_wait = PLATFORM_PUMP_MIN_WAIT;
         let status = dispatch_session_command(scope, cmd, pending, ready_broker);
         if !matches!(status, EventLoopStatus::Completed) {
             return status;
         }
     }
     EventLoopStatus::Completed
+}
+
+/// Shrink an idle guest heap.
+///
+/// A guest that starts, loads its code, and then waits for work rarely
+/// allocates enough to trigger a full GC, so V8 keeps its startup garbage and
+/// partly used pages for the life of the session. Once the event loop has
+/// received nothing for `IDLE_HEAP_REDUCTION_DELAY`, ask V8 for a
+/// memory-reducing GC.
+///
+/// That GC is a full mark-compact that also drops compiled code, so a guest
+/// that serves requests with idle gaps must not get one per gap. After the
+/// first, another one runs only when the heap has doubled since the last one
+/// (and grown by at least `IDLE_HEAP_REDUCTION_REARM_MIN_GROWTH_BYTES`), and
+/// never within `IDLE_HEAP_REDUCTION_MIN_INTERVAL` of the last one.
+struct IdleHeapReduction {
+    idle_since: Instant,
+    checked_this_idle_period: bool,
+    last_reduction: Option<(Instant, usize)>,
+}
+
+const IDLE_HEAP_REDUCTION_DELAY: Duration = Duration::from_secs(1);
+const IDLE_HEAP_REDUCTION_MIN_INTERVAL: Duration = Duration::from_secs(30);
+const IDLE_HEAP_REDUCTION_REARM_MIN_GROWTH_BYTES: usize = 8 * 1024 * 1024;
+
+impl IdleHeapReduction {
+    fn new() -> Self {
+        Self {
+            idle_since: Instant::now(),
+            checked_this_idle_period: false,
+            last_reduction: None,
+        }
+    }
+
+    fn on_activity(&mut self) {
+        self.idle_since = Instant::now();
+        self.checked_this_idle_period = false;
+    }
+
+    fn on_idle_tick(&mut self, scope: &mut v8::HandleScope) {
+        if self.checked_this_idle_period || self.idle_since.elapsed() < IDLE_HEAP_REDUCTION_DELAY {
+            return;
+        }
+        self.checked_this_idle_period = true;
+        if let Some((at, used_after)) = self.last_reduction {
+            if at.elapsed() < IDLE_HEAP_REDUCTION_MIN_INTERVAL {
+                return;
+            }
+            let rearm_at = used_after
+                .saturating_mul(2)
+                .max(used_after.saturating_add(IDLE_HEAP_REDUCTION_REARM_MIN_GROWTH_BYTES));
+            if used_heap_bytes(scope) < rearm_at {
+                return;
+            }
+        }
+        // One memory-reducing full GC. `low_memory_notification` runs up to
+        // seven, which costs more CPU than the extra memory it returns.
+        scope.memory_pressure_notification(v8::MemoryPressureLevel::Critical);
+        scope.memory_pressure_notification(v8::MemoryPressureLevel::None);
+        self.last_reduction = Some((Instant::now(), used_heap_bytes(scope)));
+    }
+}
+
+fn used_heap_bytes(scope: &mut v8::HandleScope) -> usize {
+    let mut statistics = v8::HeapStatistics::default();
+    scope.get_heap_statistics(&mut statistics);
+    statistics.used_heap_size()
 }
 
 fn execution_abort_requested(abort: &crossbeam_channel::Receiver<()>) -> bool {
@@ -4739,13 +4886,39 @@ fn drain_guest_immediates(scope: &mut v8::HandleScope) -> EventLoopStatus {
     EventLoopStatus::Completed
 }
 
-fn pump_v8_message_loop(scope: &mut v8::HandleScope) {
+/// Drain runnable V8 foreground tasks. Returns whether any task ran.
+fn pump_v8_message_loop(scope: &mut v8::HandleScope) -> bool {
     let platform = v8::V8::get_current_platform();
+    let mut ran = false;
     while v8::Platform::pump_message_loop(&platform, scope, false) {
+        ran = true;
         crate::owned_microtasks::checkpoint(scope);
         if crate::terminal_callback::pending(scope) {
-            return;
+            return ran;
         }
+    }
+    ran
+}
+
+/// Idle wait between V8 platform pumps when no session event arrives.
+///
+/// The V8 default platform has no hook that wakes this thread when a
+/// background thread posts a foreground task (async Wasm compile completion,
+/// GC finalization, `Atomics.waitAsync` timeouts). The idle wait therefore
+/// keeps a timeout, but a fixed 1 ms tick woke every idle guest ~1,000 times a
+/// second. Poll fast only while V8 reports background work or a pump just ran
+/// a task; otherwise back off exponentially so an idle guest sleeps until a
+/// real event. Every dispatched session event resets the wait to the minimum,
+/// so a task posted by guest code is never delayed by more than the time since
+/// that code last ran (capped at the maximum idle wait).
+const PLATFORM_PUMP_MIN_WAIT: Duration = Duration::from_millis(1);
+const PLATFORM_PUMP_MAX_IDLE_WAIT: Duration = Duration::from_millis(250);
+
+fn next_platform_pump_wait(current: Duration, platform_busy: bool) -> Duration {
+    if platform_busy {
+        PLATFORM_PUMP_MIN_WAIT
+    } else {
+        current.saturating_mul(2).min(PLATFORM_PUMP_MAX_IDLE_WAIT)
     }
 }
 
@@ -5121,8 +5294,8 @@ mod tests {
         pool.ensure_count(
             vm.clone(),
             Arc::clone(&snapshot_cache),
-            String::from("bridge"),
-            String::from("app"),
+            Arc::from("bridge"),
+            Arc::from("app"),
             None,
             1,
         );
@@ -5143,8 +5316,8 @@ mod tests {
         pool.ensure_count(
             vm,
             snapshot_cache,
-            String::from("bridge"),
-            String::from("app"),
+            Arc::from("bridge"),
+            Arc::from("app"),
             None,
             1,
         );
@@ -5738,21 +5911,26 @@ mod tests {
     }
 
     #[test]
-    fn late_stdin_end_is_an_expected_stale_control_event() {
+    fn late_stdin_and_terminate_are_expected_stale_control_events() {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
-        handle_late_session_message(
-            &RuntimeEventSender::from(event_tx),
-            "completed-session",
-            Some(7),
+        let event_tx = RuntimeEventSender::from(event_tx);
+        for message in [
             SessionMessage::StreamEvent(StreamEvent {
                 event_type: String::from("stdin_end"),
                 payload: Vec::new(),
             }),
-        );
+            SessionMessage::StreamEvent(StreamEvent {
+                event_type: String::from("stdin"),
+                payload: vec![0x61],
+            }),
+            SessionMessage::TerminateExecution,
+        ] {
+            handle_late_session_message(&event_tx, "completed-session", Some(7), message);
+        }
 
         assert!(
             event_rx.try_recv().is_err(),
-            "an idempotent stdin EOF racing process exit must not become guest stderr"
+            "stdin and a kill racing process exit must not become guest stderr"
         );
     }
 

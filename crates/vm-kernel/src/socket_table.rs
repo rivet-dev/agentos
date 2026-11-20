@@ -2573,10 +2573,13 @@ impl SocketTable {
                     .buffered_bytes
                     .push_back(retained);
             }
-            ((was_empty && (!data.is_empty() || message_oriented)).then_some(SocketReadiness {
-                socket_id: peer_socket_id,
-                kind: SocketReadinessKind::Data,
-            }), data.len())
+            (
+                (was_empty && (!data.is_empty() || message_oriented)).then_some(SocketReadiness {
+                    socket_id: peer_socket_id,
+                    kind: SocketReadinessKind::Data,
+                }),
+                data.len(),
+            )
         };
         self.emit_readiness(readiness);
         Ok(written)
@@ -2975,7 +2978,11 @@ impl SocketTable {
             let records = socket_ids
                 .into_iter()
                 .filter_map(|socket_id| {
-                    if table.sockets.get(&socket_id).is_some_and(SocketRecord::is_vm_owned) {
+                    if table
+                        .sockets
+                        .get(&socket_id)
+                        .is_some_and(SocketRecord::is_vm_owned)
+                    {
                         table.by_owner.entry(0).or_default().insert(socket_id);
                         return None;
                     }

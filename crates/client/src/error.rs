@@ -199,8 +199,15 @@ impl ClientError {
     pub(crate) fn from_rejection(
         rejection: agentos_sidecar_client::wire::RejectedResponse,
     ) -> Self {
+        // A full or timed-out sidecar request queue is a retryable limit that
+        // names the setting to raise; it keeps its typed details.
+        let limit_rejection = matches!(
+            rejection.code.as_str(),
+            "ERR_AGENTOS_REQUEST_QUEUE_LIMIT" | "ERR_AGENTOS_REQUEST_QUEUE_TIMEOUT"
+        );
         if rejection.code == "ERR_AGENTOS_RESOURCE_LIMIT"
             || rejection.code == "ERR_AGENTOS_OVERLOADED"
+            || limit_rejection
             || rejection.code == "timeout"
             || matches!(
                 rejection.operation.as_deref(),
@@ -230,6 +237,7 @@ impl ClientError {
             }
             if rejection.code == "ERR_AGENTOS_RESOURCE_LIMIT"
                 || rejection.code == "ERR_AGENTOS_OVERLOADED"
+                || limit_rejection
             {
                 return Self::ResourceLimit {
                     code: rejection.code,

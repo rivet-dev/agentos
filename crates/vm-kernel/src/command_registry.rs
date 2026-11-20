@@ -1,5 +1,6 @@
 use crate::vfs::{resolve_path_for_creation, VfsError, VfsResult, VirtualFileSystem};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub(crate) const COMMAND_STUB: &[u8] = b"#!/bin/sh\n# kernel command stub\n";
 
@@ -41,7 +42,10 @@ impl CommandDriver {
 
 #[derive(Debug, Default, Clone)]
 pub struct CommandRegistry {
-    commands: BTreeMap<String, CommandDriver>,
+    /// Every command of one driver shares that driver. A VM registers a few
+    /// hundred package commands on the sidecar router thread, and a copy of
+    /// the driver per command made registration quadratic.
+    commands: BTreeMap<String, Arc<CommandDriver>>,
     warnings: Vec<String>,
 }
 
@@ -52,6 +56,7 @@ impl CommandRegistry {
 
     pub fn register(&mut self, driver: CommandDriver) -> VfsResult<()> {
         driver.validate_commands()?;
+        let driver = Arc::new(driver);
 
         // Registering one logical driver is replacement, not an append. This is
         // required for transactional registries (for example host callbacks):
@@ -69,7 +74,7 @@ impl CommandRegistry {
                 ));
             }
 
-            self.commands.insert(command.clone(), driver.clone());
+            self.commands.insert(command.clone(), Arc::clone(&driver));
         }
 
         Ok(())
@@ -82,6 +87,7 @@ impl CommandRegistry {
     /// removed package command cannot remain authoritative in the kernel.
     pub fn replace(&mut self, driver: CommandDriver) -> VfsResult<Vec<String>> {
         driver.validate_commands()?;
+        let driver = Arc::new(driver);
         let driver_name = driver.name().to_owned();
         let replacement = driver
             .commands()
@@ -119,7 +125,7 @@ impl CommandRegistry {
     }
 
     pub fn resolve(&self, command: &str) -> Option<&CommandDriver> {
-        self.commands.get(command)
+        self.commands.get(command).map(Arc::as_ref)
     }
 
     pub fn list(&self) -> BTreeMap<String, String> {

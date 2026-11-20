@@ -183,10 +183,12 @@ pub(super) struct PendingProcessIpc {
     metadata_limit: usize,
 }
 
+type IpcStartupFuture = Pin<Box<dyn Future<Output = Result<Value, VmError>>>>;
+
 /// Drop the startup future (and all its VM borrows) before rolling descriptors
 /// back. This order also applies when an admitted startup is cancelled.
 struct IpcStartup {
-    future: Option<Pin<Box<dyn Future<Output = Result<Value, VmError>>>>>,
+    future: Option<IpcStartupFuture>,
     guard: Rc<RefCell<PendingProcessIpc>>,
 }
 
@@ -229,9 +231,9 @@ impl Drop for IpcStartup {
 }
 
 pub(super) fn finish_startup(
-    future: Pin<Box<dyn Future<Output = Result<Value, VmError>>>>,
+    future: IpcStartupFuture,
     guard: Rc<RefCell<PendingProcessIpc>>,
-) -> Pin<Box<dyn Future<Output = Result<Value, VmError>>>> {
+) -> IpcStartupFuture {
     Box::pin(IpcStartup {
         future: Some(future),
         guard,

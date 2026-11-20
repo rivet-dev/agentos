@@ -1,30 +1,62 @@
 import { spawnSync } from "node:child_process";
 import { afterEach, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
-import { compressionLifecycleProbe, crossRealmCryptoProbe } from "./fixtures/node-compression-crypto-probes.js";
-import { timingSafeViewMetadataProbe, randomIntCallbackShapeProbe, compressionInvalidWriteProbe, compressionCrossRealmInputProbe } from "./fixtures/node-api-review-probes.js";
+import {
+	compressionCrossRealmInputProbe,
+	compressionInvalidWriteProbe,
+	randomIntCallbackShapeProbe,
+	timingSafeViewMetadataProbe,
+} from "./fixtures/node-api-review-probes.js";
+import {
+	compressionLifecycleProbe,
+	crossRealmCryptoProbe,
+} from "./fixtures/node-compression-crypto-probes.js";
 
 let vm: AgentOs | undefined;
-afterEach(async () => { await vm?.dispose(); vm = undefined; });
+afterEach(async () => {
+	await vm?.dispose();
+	vm = undefined;
+});
 
-async function compareProbe(source: string, requirePrelude = true): Promise<void> {
-  const probe = requirePrelude ? `import {createRequire} from 'node:module';const require=createRequire(import.meta.url);${source}` : source;
-  const host = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {encoding:"utf8",timeout:10_000});
-  expect(host.status, host.stderr).toBe(0);
-  const expected = JSON.parse(host.stdout);
-  vm = await AgentOs.create({defaultSoftware:false, permissions:{network:"deny"}});
-  let stdout = "", stderr = "";
-  const proc = await vm.process.spawn("node", ["--input-type=module", "-e", probe], {
-    timeoutMs: 10_000,
-    onStdout: c => { stdout += Buffer.from(c).toString(); },
-    onStderr: c => { stderr += Buffer.from(c).toString(); },
-  });
-  expect((await vm.process.wait(proc.pid)).exitCode, stderr).toBe(0);
-  expect(JSON.parse(stdout)).toEqual(expected);
+async function compareProbe(
+	source: string,
+	requirePrelude = true,
+): Promise<void> {
+	const probe = requirePrelude
+		? `import {createRequire} from 'node:module';const require=createRequire(import.meta.url);${source}`
+		: source;
+	const host = spawnSync(
+		process.execPath,
+		["--input-type=module", "-e", probe],
+		{ encoding: "utf8", timeout: 10_000 },
+	);
+	expect(host.status, host.stderr).toBe(0);
+	const expected = JSON.parse(host.stdout);
+	vm = await AgentOs.create({
+		defaultSoftware: false,
+		permissions: { network: "deny" },
+	});
+	let stdout = "",
+		stderr = "";
+	const proc = await vm.process.spawn(
+		"node",
+		["--input-type=module", "-e", probe],
+		{
+			timeoutMs: 10_000,
+			onStdout: (c) => {
+				stdout += Buffer.from(c).toString();
+			},
+			onStderr: (c) => {
+				stderr += Buffer.from(c).toString();
+			},
+		},
+	);
+	expect((await vm.process.wait(proc.pid)).exitCode, stderr).toBe(0);
+	expect(JSON.parse(stdout)).toEqual(expected);
 }
 
 test("Web Streams globals share the CJS and ESM module constructors", async () => {
-  await compareProbe(`
+	await compareProbe(`
 const web = await import('node:stream/web');
 const cjsWeb = require('node:stream/web');
 const names = ['ByteLengthQueuingStrategy','CountQueuingStrategy','ReadableStreamDefaultReader','ReadableStreamBYOBReader','ReadableStreamBYOBRequest','ReadableStreamDefaultController','ReadableByteStreamController','WritableStreamDefaultWriter','WritableStreamDefaultController','TransformStreamDefaultController'];
@@ -35,7 +67,7 @@ console.log(JSON.stringify({shape, reader:reader instanceof ReadableStreamDefaul
 }, 20_000);
 
 test("crypto timingSafeEqual compares byte views and preserves Node errors", async () => {
-  await compareProbe(`
+	await compareProbe(`
 const crypto = await import('node:crypto');
 const cjsCrypto = require('node:crypto');
 const error = (fn) => { try { fn(); return null; } catch (e) { return [e.name, e.code]; } };
@@ -46,7 +78,7 @@ console.log(JSON.stringify({sameExport:compare === cjsCrypto.timingSafeEqual, sa
 }, 20_000);
 
 test("compression globals stream all standard formats and reject malformed input", async () => {
-  await compareProbe(`
+	await compareProbe(`
 const web = await import('node:stream/web');
 const results=[];
 for(const format of ['gzip','deflate','deflate-raw']) {
@@ -64,7 +96,7 @@ console.log(JSON.stringify({results,invalid,corrupt}));`);
 }, 20_000);
 
 test("net.Server uses normal EventEmitter listener removal and ordering", async () => {
-  await compareProbe(`
+	await compareProbe(`
 const {createServer}=require('node:net');const {EventEmitter}=require('node:events');
 const server=createServer();const calls=[];
 const same=()=>calls.push('same');
@@ -75,22 +107,36 @@ console.log(JSON.stringify({calls,isEmitter:server instanceof EventEmitter,alias
 }, 20_000);
 
 test("node --test executes an explicitly named file without a discovery suffix", async () => {
-  vm = await AgentOs.create({defaultSoftware:false, permissions:{network:"deny"}});
-  await vm.writeFile("/tmp/explicit-entry.mjs", `import test from 'node:test'; import assert from 'node:assert/strict'; test('explicit case',()=>assert.equal(2+2,4));`);
-  let stdout = "", stderr = "";
-  const proc = await vm.process.spawn("node", ["--test", "/tmp/explicit-entry.mjs"], {
-    timeoutMs: 10_000,
-    onStdout: c => { stdout += Buffer.from(c).toString(); },
-    onStderr: c => { stderr += Buffer.from(c).toString(); },
-  });
-  expect((await vm.process.wait(proc.pid)).exitCode, stderr).toBe(0);
-  expect(stdout).toContain("ok 1 - explicit case");
-  expect(stdout).toContain("# tests 1");
+	vm = await AgentOs.create({
+		defaultSoftware: false,
+		permissions: { network: "deny" },
+	});
+	await vm.writeFile(
+		"/tmp/explicit-entry.mjs",
+		`import test from 'node:test'; import assert from 'node:assert/strict'; test('explicit case',()=>assert.equal(2+2,4));`,
+	);
+	let stdout = "",
+		stderr = "";
+	const proc = await vm.process.spawn(
+		"node",
+		["--test", "/tmp/explicit-entry.mjs"],
+		{
+			timeoutMs: 10_000,
+			onStdout: (c) => {
+				stdout += Buffer.from(c).toString();
+			},
+			onStderr: (c) => {
+				stderr += Buffer.from(c).toString();
+			},
+		},
+	);
+	expect((await vm.process.wait(proc.pid)).exitCode, stderr).toBe(0);
+	expect(stdout).toContain("ok 1 - explicit case");
+	expect(stdout).toContain("# tests 1");
 }, 20_000);
 
-
 test("Performance exposes its runtime-owned clock through global, CJS and ESM constructors", async () => {
-  await compareProbe(`
+	await compareProbe(`
 const cjs = require('node:perf_hooks');
 const esm = await import('node:perf_hooks');
 let illegal;try{new Performance();}catch(e){illegal=[e.name,e.code];}
@@ -101,7 +147,7 @@ performance.clearMarks('constructor-probe');`);
 }, 20_000);
 
 test("crypto.randomInt exposes unbiased bounded sync and asynchronous callback APIs", async () => {
-  await compareProbe(`
+	await compareProbe(`
 const cjs=require('node:crypto');const esm=await import('node:crypto');
 const error=(args)=>{try{cjs.randomInt(...args);return null;}catch(e){return [e.name,e.code];}};
 const ranges=[[0,1],[-8,8],[0,1e11],[Number.MAX_SAFE_INTEGER-3,Number.MAX_SAFE_INTEGER]];
@@ -111,25 +157,25 @@ console.log(JSON.stringify({identity:cjs.randomInt===esm.randomInt,valid,deferre
 }, 20_000);
 
 test("compression cancellation and abort settle both sides before cleanup", async () => {
-  await compareProbe(compressionLifecycleProbe);
+	await compareProbe(compressionLifecycleProbe);
 }, 20_000);
 
 test("timingSafeEqual accepts genuine buffers and views from another realm", async () => {
-  await compareProbe(crossRealmCryptoProbe);
+	await compareProbe(crossRealmCryptoProbe);
 }, 20_000);
 
 test("timingSafeEqual reads genuine view slots without invoking shadowed metadata", async () => {
-  await compareProbe(timingSafeViewMetadataProbe, false);
+	await compareProbe(timingSafeViewMetadataProbe, false);
 }, 20_000);
 
 test("randomInt preserves callback success arguments and validation precedence", async () => {
-  await compareProbe(randomIntCallbackShapeProbe, false);
+	await compareProbe(randomIntCallbackShapeProbe, false);
 }, 20_000);
 
 test("invalid compression writes settle both sides before explicit cleanup", async () => {
-  await compareProbe(compressionInvalidWriteProbe, false);
+	await compareProbe(compressionInvalidWriteProbe, false);
 }, 20_000);
 
 test("compression accepts a genuine ArrayBuffer from another realm", async () => {
-  await compareProbe(compressionCrossRealmInputProbe, false);
+	await compareProbe(compressionCrossRealmInputProbe, false);
 }, 20_000);

@@ -1,17 +1,52 @@
-import {spawnSync} from 'node:child_process';
-import {expect,test} from 'vitest';
-import {AgentOs} from '../src/index.js';
-async function compare(source:string){
- const host=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',timeout:5000,maxBuffer:16384});expect(host.status,host.stderr).toBe(0);
- const sidecar=await AgentOs.createSidecar();let vm:AgentOs|undefined;
- try{vm=await AgentOs.create({sidecar:{kind:'explicit',handle:sidecar},defaultSoftware:false,permissions:{network:'deny'}});let stdout='',stderr='';const p=await vm.process.spawn('node',['--input-type=module','-e',source],{timeoutMs:5000,onStdout:b=>stdout+=Buffer.from(b).toString(),onStderr:b=>stderr+=Buffer.from(b).toString()});expect((await vm.process.wait(p.pid)).exitCode,stderr).toBe(0);expect(JSON.parse(stdout)).toEqual(JSON.parse(host.stdout));}finally{await vm?.dispose();await sidecar.dispose();}
+import { spawnSync } from "node:child_process";
+import { expect, test } from "vitest";
+import { AgentOs } from "../src/index.js";
+
+async function compare(source: string) {
+	const host = spawnSync(
+		process.execPath,
+		["--input-type=module", "-e", source],
+		{ encoding: "utf8", timeout: 5000, maxBuffer: 16384 },
+	);
+	expect(host.status, host.stderr).toBe(0);
+	const sidecar = await AgentOs.createSidecar();
+	let vm: AgentOs | undefined;
+	try {
+		vm = await AgentOs.create({
+			sidecar: { kind: "explicit", handle: sidecar },
+			defaultSoftware: false,
+			permissions: { network: "deny" },
+		});
+		let stdout = "",
+			stderr = "";
+		const p = await vm.process.spawn(
+			"node",
+			["--input-type=module", "-e", source],
+			{
+				timeoutMs: 5000,
+				onStdout: (b) => (stdout += Buffer.from(b).toString()),
+				onStderr: (b) => (stderr += Buffer.from(b).toString()),
+			},
+		);
+		expect((await vm.process.wait(p.pid)).exitCode, stderr).toBe(0);
+		expect(JSON.parse(stdout)).toEqual(JSON.parse(host.stdout));
+	} finally {
+		await vm?.dispose();
+		await sidecar.dispose();
+	}
 }
-test('HTTP Server construction preserves subclasses and custom IncomingMessage',async()=>{
- await compare(`import http from 'node:http'; class Request extends http.IncomingMessage{constructor(socket){super(socket);this.custom=true;}}class Server extends http.Server{listen(...args){this.called=true;return super.listen(...args);}emit(event,...args){if(event==='request')args[1].setHeader('x-override','yes');return super.emit(event,...args);}}const server=new Server({IncomingMessage:Request},(req,res)=>res.end(JSON.stringify({custom:req.custom,instance:req instanceof Request,base:req instanceof http.IncomingMessage,response:res instanceof http.ServerResponse})));await new Promise(r=>server.listen(0,'127.0.0.1',r));try{const value=await new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port:server.address().port,agent:false},res=>{let body='';res.on('data',b=>body+=b);res.on('end',()=>resolve({called:server.called,override:res.headers['x-override'],body:JSON.parse(body)}));}).on('error',reject);});console.log(JSON.stringify(value));}finally{await new Promise(r=>server.close(r));}`);
-},10000);
-test('HTTP Server parses connections supplied by an in-memory Duplex pair',async()=>{
- await compare(`import http from 'node:http';import{Duplex}from'node:stream';const peers=[];class Side extends Duplex{_read(){this.peer.resumeWrite?.();this.peer.resumeWrite=null;}_write(b,e,done){if(this.peer.push(b))done();else this.resumeWrite=done;}_final(done){this.peer.push(null);done();}}const client=new Side(),socket=new Side();client.peer=socket;socket.peer=client;const server=http.createServer((req,res)=>res.end('virtual:'+req.url));let text='';const done=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('HTTP parser never attached')),1000);client.on('data',b=>{text+=b;if(text.includes('virtual:/pair')){clearTimeout(timer);resolve();}});client.on('error',reject);socket.on('error',reject);});server.emit('connection',socket);client.write('GET /pair HTTP/1.1\\r\\nHost: test\\r\\nConnection: close\\r\\n\\r\\n');try{await done;console.log(JSON.stringify({response:text.includes('200 OK')&&text.includes('virtual:/pair')}));}finally{client.destroy();socket.destroy();server.close();}`);
-},10000);
-test('HTTP ClientRequest accepts a supplied Duplex with no TCP connect event',async()=>{
- await compare(`import http from 'node:http';import{Duplex}from'node:stream';class Side extends Duplex{_read(){this.peer.resumeWrite?.();this.peer.resumeWrite=null;}_write(b,e,done){if(this.peer.push(b))done();else this.resumeWrite=done;}_final(done){this.peer.push(null);done();}}const client=new Side(),socket=new Side();client.peer=socket;socket.peer=client;client.on('error',()=>{});socket.on('error',()=>{});const server=http.createServer((req,res)=>res.end('virtual:'+req.url));server.emit('connection',socket);try{const value=await new Promise((resolve,reject)=>{const request=http.request({host:'test',path:'/pair',createConnection:()=>client},response=>{let body='';response.on('data',b=>body+=b);response.on('error',reject);response.on('end',()=>{clearTimeout(timer);resolve({status:response.statusCode,body});});});const timer=setTimeout(()=>request.destroy(Error('Duplex HTTP client waited for connect')),1000);request.on('error',e=>{clearTimeout(timer);reject(e);});request.end();});console.log(JSON.stringify(value));}finally{client.destroy();socket.destroy();server.close();}`);
-},10000);
+test("HTTP Server construction preserves subclasses and custom IncomingMessage", async () => {
+	await compare(
+		`import http from 'node:http'; class Request extends http.IncomingMessage{constructor(socket){super(socket);this.custom=true;}}class Server extends http.Server{listen(...args){this.called=true;return super.listen(...args);}emit(event,...args){if(event==='request')args[1].setHeader('x-override','yes');return super.emit(event,...args);}}const server=new Server({IncomingMessage:Request},(req,res)=>res.end(JSON.stringify({custom:req.custom,instance:req instanceof Request,base:req instanceof http.IncomingMessage,response:res instanceof http.ServerResponse})));await new Promise(r=>server.listen(0,'127.0.0.1',r));try{const value=await new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port:server.address().port,agent:false},res=>{let body='';res.on('data',b=>body+=b);res.on('end',()=>resolve({called:server.called,override:res.headers['x-override'],body:JSON.parse(body)}));}).on('error',reject);});console.log(JSON.stringify(value));}finally{await new Promise(r=>server.close(r));}`,
+	);
+}, 10000);
+test("HTTP Server parses connections supplied by an in-memory Duplex pair", async () => {
+	await compare(
+		`import http from 'node:http';import{Duplex}from'node:stream';const peers=[];class Side extends Duplex{_read(){this.peer.resumeWrite?.();this.peer.resumeWrite=null;}_write(b,e,done){if(this.peer.push(b))done();else this.resumeWrite=done;}_final(done){this.peer.push(null);done();}}const client=new Side(),socket=new Side();client.peer=socket;socket.peer=client;const server=http.createServer((req,res)=>res.end('virtual:'+req.url));let text='';const done=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('HTTP parser never attached')),1000);client.on('data',b=>{text+=b;if(text.includes('virtual:/pair')){clearTimeout(timer);resolve();}});client.on('error',reject);socket.on('error',reject);});server.emit('connection',socket);client.write('GET /pair HTTP/1.1\\r\\nHost: test\\r\\nConnection: close\\r\\n\\r\\n');try{await done;console.log(JSON.stringify({response:text.includes('200 OK')&&text.includes('virtual:/pair')}));}finally{client.destroy();socket.destroy();server.close();}`,
+	);
+}, 10000);
+test("HTTP ClientRequest accepts a supplied Duplex with no TCP connect event", async () => {
+	await compare(
+		`import http from 'node:http';import{Duplex}from'node:stream';class Side extends Duplex{_read(){this.peer.resumeWrite?.();this.peer.resumeWrite=null;}_write(b,e,done){if(this.peer.push(b))done();else this.resumeWrite=done;}_final(done){this.peer.push(null);done();}}const client=new Side(),socket=new Side();client.peer=socket;socket.peer=client;client.on('error',()=>{});socket.on('error',()=>{});const server=http.createServer((req,res)=>res.end('virtual:'+req.url));server.emit('connection',socket);try{const value=await new Promise((resolve,reject)=>{const request=http.request({host:'test',path:'/pair',createConnection:()=>client},response=>{let body='';response.on('data',b=>body+=b);response.on('error',reject);response.on('end',()=>{clearTimeout(timer);resolve({status:response.statusCode,body});});});const timer=setTimeout(()=>request.destroy(Error('Duplex HTTP client waited for connect')),1000);request.on('error',e=>{clearTimeout(timer);reject(e);});request.end();});console.log(JSON.stringify(value));}finally{client.destroy();socket.destroy();server.close();}`,
+	);
+}, 10000);

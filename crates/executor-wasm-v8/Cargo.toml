@@ -14,7 +14,7 @@ agentos-vm-host-interface = { workspace = true }
 agentos-executor-contract = { workspace = true }
 agentos-resource-accounting = { workspace = true }
 agentos-driver-tokio = { workspace = true }
-agentos-executor-v8-runtime = { workspace = true }
+agentos-executor-v8-runtime = { workspace = true, features = ["wasm-exnref"] }
 agentos-executor-wasm-abi = { workspace = true }
 base64 = "0.22"
 serde_json = "1"

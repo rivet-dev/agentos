@@ -7010,6 +7010,111 @@ console.log(outcome);
     );
 }
 
+// Rust `panic=unwind` Wasm (for example Cloudflare's Kitesurf) uses the exnref
+// form of exception handling. V8 reads flags once per process, so each case
+// runs in a fresh copy of this test binary with its own environment.
+#[test]
+fn javascript_execution_v8_wasm_exnref_is_opt_in() {
+    let current_exe = std::env::current_exe().expect("current test binary path");
+    for (case, knob) in [("enabled", Some("1")), ("default", None)] {
+        let mut command = Command::new(&current_exe);
+        command
+            .args(["--exact", "__wasm_exnref_case_runner", "--nocapture"])
+            .env("AGENTOS_TEST_WASM_EXNREF_CASE", case)
+            .env("AGENTOS_V8_WARM_ISOLATES", "0")
+            .env_remove("AGENTOS_V8_WASM_EXNREF");
+        if let Some(value) = knob {
+            command.env("AGENTOS_V8_WASM_EXNREF", value);
+        }
+        let output = command
+            .output()
+            .unwrap_or_else(|error| panic!("spawn wasm exnref case {case}: {error}"));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // A filter that matches nothing also exits 0, so require the run.
+        assert!(
+            output.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "wasm exnref case {case} failed: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status
+        );
+    }
+}
+
+#[test]
+fn __wasm_exnref_case_runner() {
+    let Ok(case) = std::env::var("AGENTOS_TEST_WASM_EXNREF_CASE") else {
+        return;
+    };
+
+    // The inner `catch_ref` captures the exception as an exnref, `throw_ref`
+    // rethrows it, and the outer `catch` returns its payload to JS.
+    let wasm = wat::parse_str(
+        r#"
+(module
+  (tag $boom (param i32))
+  (func (export "rethrowCaught") (result i32)
+    (block $outer (result i32)
+      (try_table (result i32) (catch $boom $outer)
+        (block $caught (result i32 exnref)
+          (try_table (catch_ref $boom $caught)
+            (throw $boom (i32.const 42)))
+          (unreachable))
+        (throw_ref)))))
+"#,
+    )
+    .expect("assemble exnref module");
+
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            argv0: None,
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: Some(format!(
+                r#"
+let outcome;
+try {{
+  const module = new WebAssembly.Module(new Uint8Array({wasm:?}));
+  const instance = new WebAssembly.Instance(module, {{}});
+  outcome = String(instance.exports.rethrowCaught());
+}} catch (error) {{
+  outcome = `${{error.name}}: ${{error.message}}`;
+}}
+console.log(outcome);
+"#
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stdout = String::from_utf8(result.stdout).expect("stdout utf8");
+    let stderr = String::from_utf8(result.stderr).expect("stderr utf8");
+    assert_eq!(result.exit_code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+    let outcome = stdout.trim();
+    match case.as_str() {
+        "enabled" => assert_eq!(outcome, "42"),
+        "default" => assert!(
+            outcome.starts_with("CompileError"),
+            "exnref Wasm must not compile without the opt-in: {outcome}"
+        ),
+        other => panic!("unknown wasm exnref case {other}"),
+    }
+}
+
 fn javascript_execution_v8_structured_clone_rebinds_to_sandbox_realm() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = support::javascript_engine();

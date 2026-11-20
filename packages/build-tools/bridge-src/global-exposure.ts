@@ -1,11 +1,21 @@
 // .agent/recovery/agentos/shared/global-exposure.ts
 var NODE_CUSTOM_GLOBAL_INVENTORY = [
-    {name:"process.nextTickScheduled",classification:"hardened",rationale:"Marks a context-owned nextTick phase; no host resource access."},
-    {name:"__agentOSNextTickHooks",classification:"hardened",rationale:"Bootstrap-only hooks captured privately by V8 before guest entry."},
+	{
+		name: "process.nextTickScheduled",
+		classification: "hardened",
+		rationale: "Marks a context-owned nextTick phase; no host resource access.",
+	},
+	{
+		name: "__agentOSNextTickHooks",
+		classification: "hardened",
+		rationale:
+			"Bootstrap-only hooks captured privately by V8 before guest entry.",
+	},
 	{
 		name: "__agentOsDomainToASCII",
 		classification: "hardened",
-		rationale: "Pure URL host parser retained from bootstrap; no host resource access.",
+		rationale:
+			"Pure URL host parser retained from bootstrap; no host resource access.",
 	},
 	{
 		name: "_processConfig",
@@ -38,7 +48,8 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 	{
 		name: "v8.collectGarbage",
 		classification: "hardened",
-		rationale: "Explicit collection of the current guest isolate; no host resource access.",
+		rationale:
+			"Explicit collection of the current guest isolate; no host resource access.",
 	},
 	{
 		name: "v8.getHeapStatistics",
@@ -48,77 +59,92 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 	{
 		name: "v8.deserializer.create",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.readHeader",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.readValue",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.readUint32",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.readUint64",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.readDouble",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.readRawBytes",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.getWireFormatVersion",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.transferArrayBuffer",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "v8.deserializer.readHostObject",
 		classification: "hardened",
-		rationale: "Bounded isolate-owned V8 reader operation; no host resource access.",
+		rationale:
+			"Bounded isolate-owned V8 reader operation; no host resource access.",
 	},
 	{
 		name: "uint8array.encode",
 		classification: "hardened",
-		rationale: "Isolate-local ASCII encoding bounded by the VM external-memory budget; no host resources.",
+		rationale:
+			"Isolate-local ASCII encoding bounded by the VM external-memory budget; no host resources.",
 	},
 	{
 		name: "v8.serialize",
 		classification: "hardened",
-		rationale: "Current-isolate native V8 value serialization; no host resource access.",
+		rationale:
+			"Current-isolate native V8 value serialization; no host resource access.",
 	},
 	{
 		name: "zlib.brotliCompressSync",
 		classification: "hardened",
-		rationale: "Bounded current-isolate Brotli encoding; no host resource access.",
+		rationale:
+			"Bounded current-isolate Brotli encoding; no host resource access.",
 	},
 	{
 		name: "zlib.brotliDecompressSync",
 		classification: "hardened",
-		rationale: "Bounded current-isolate Brotli decoding; no host resource access.",
+		rationale:
+			"Bounded current-isolate Brotli decoding; no host resource access.",
 	},
 	{
 		name: "v8.deserialize",
 		classification: "hardened",
-		rationale: "Current-isolate native V8 value deserialization; no host resource access.",
+		rationale:
+			"Current-isolate native V8 value deserialization; no host resource access.",
 	},
 	{
 		name: "process.resourceUsage",
@@ -442,7 +468,8 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 	{
 		name: "__agentOsGetEventTargetListeners",
 		classification: "hardened",
-		rationale: "Event listener reader captured and removed during bootstrap; no host RPC or registration option.",
+		rationale:
+			"Event listener reader captured and removed during bootstrap; no host RPC or registration option.",
 	},
 	{
 		name: "__agentOsAddProtectedEventListener",
@@ -1849,7 +1876,8 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 	{
 		name: "gc",
 		classification: "mutable-runtime-state",
-		rationale: "Optional per-process explicit guest-isolate collector, enabled by Node options.",
+		rationale:
+			"Optional per-process explicit guest-isolate collector, enabled by Node options.",
 	},
 	{
 		name: "fetch",

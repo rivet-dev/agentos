@@ -13,14 +13,42 @@ await new Promise((resolve,reject)=>{output.once('error',reject);output.end(Buff
 let canceled=false;const abandoned=Readable.fromWeb(new ReadableStream({cancel(){canceled=true;}}));
 await new Promise(resolve=>{abandoned.once('close',resolve);abandoned.destroy();});
 console.log(JSON.stringify({equal,rejected,read:[...Buffer.concat(chunks)],written,closed,canceled}));`;
-	const host = spawnSync(process.execPath, ["--input-type=module", "-e", source], { encoding: "utf8", timeout: 5000, maxBuffer: 16384 });
+	const host = spawnSync(
+		process.execPath,
+		["--input-type=module", "-e", source],
+		{ encoding: "utf8", timeout: 5000, maxBuffer: 16384 },
+	);
 	expect(host.status, host.stderr).toBe(0);
-	const sidecar = await AgentOs.createSidecar(); let vm: AgentOs | undefined;
+	const sidecar = await AgentOs.createSidecar();
+	let vm: AgentOs | undefined;
 	try {
-		vm = await AgentOs.create({ sidecar: { kind: "explicit", handle: sidecar }, defaultSoftware: false, permissions: { network: "deny" } });
-		let stdout = "", stderr = "";
-		const process = await vm.process.spawn("node", ["--input-type=module", "-e", source], { timeoutMs: 5000, onStdout: c => { stdout += Buffer.from(c).toString(); }, onStderr: c => { stderr += Buffer.from(c).toString(); } });
+		vm = await AgentOs.create({
+			sidecar: { kind: "explicit", handle: sidecar },
+			defaultSoftware: false,
+			permissions: { network: "deny" },
+		});
+		let stdout = "",
+			stderr = "";
+		const process = await vm.process.spawn(
+			"node",
+			["--input-type=module", "-e", source],
+			{
+				timeoutMs: 5000,
+				onStdout: (c) => {
+					stdout += Buffer.from(c).toString();
+				},
+				onStderr: (c) => {
+					stderr += Buffer.from(c).toString();
+				},
+			},
+		);
 		expect((await vm.process.wait(process.pid)).exitCode, stderr).toBe(0);
 		expect(JSON.parse(stdout)).toEqual(JSON.parse(host.stdout));
-	} finally { try { await vm?.dispose(); } finally { await sidecar.dispose(); } }
+	} finally {
+		try {
+			await vm?.dispose();
+		} finally {
+			await sidecar.dispose();
+		}
+	}
 }, 10000);

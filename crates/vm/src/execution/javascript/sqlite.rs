@@ -71,9 +71,9 @@ pub(in crate::execution) fn service_javascript_sqlite_sync_rpc(
         "sqlite.isTransaction" => {
             let id =
                 javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.isTransaction database id")?;
-            Ok(json!(
-                !sqlite_database(process, id)?.connection.is_autocommit()
-            ))
+            Ok(json!(!sqlite_database(process, id)?
+                .connection
+                .is_autocommit()))
         }
         "sqlite.checkpoint" => {
             let database_id =
@@ -313,9 +313,10 @@ fn sqlite_exec_database(
     // statement is read-only, and schema changes do not increment total_changes.
     database.dirty = true;
     sqlite_sync_database(kernel, kernel_pid, database, false)?;
-    Ok(json!(
-        database.connection.total_changes().saturating_sub(before)
-    ))
+    Ok(json!(database
+        .connection
+        .total_changes()
+        .saturating_sub(before)))
 }
 
 fn sqlite_query_database(
@@ -895,7 +896,11 @@ fn sqlite_sync_database(
     } else {
         ensure_vm_parent_dir(kernel, kernel_pid, vm_path)?;
     }
-    let source_path = if needs_backup { &snapshot_path } else { host_path };
+    let source_path = if needs_backup {
+        &snapshot_path
+    } else {
+        host_path
+    };
     let contents = fs::read(source_path).map_err(|error| {
         VmError::Io(format!(
             "failed to read committed sqlite image {}: {error}",

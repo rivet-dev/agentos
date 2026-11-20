@@ -1,5 +1,8 @@
-export function forkIpcOwnershipProbe(mode:"direct"|"disconnect"|"nested"|"context"):string {
-  if(mode==="context")return `
+export function forkIpcOwnershipProbe(
+	mode: "direct" | "disconnect" | "nested" | "context",
+): string {
+	if (mode === "context")
+		return `
 import {fork} from 'node:child_process';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
@@ -25,8 +28,13 @@ try {
  let exit;try{exit=await closed;}finally{clearTimeout(timer);}
  console.log(JSON.stringify({contexts,errors,stderr,timedOut,exit}));
 }finally{rmSync(directory,{recursive:true,force:true});}`;
-  const prefix="\x1eAGENTOS_IPC:"+Buffer.from(JSON.stringify({ordinary:true})).toString("base64")+"\n";
-  const child=mode==="direct" ? `
+	const prefix =
+		"\x1eAGENTOS_IPC:" +
+		Buffer.from(JSON.stringify({ ordinary: true })).toString("base64") +
+		"\n";
+	const child =
+		mode === "direct"
+			? `
 import {read,closeSync} from 'node:fs';
 const buffers=[];
 process.stdout.write(${JSON.stringify(prefix)});
@@ -37,14 +45,17 @@ function pull(){read(0,Buffer.alloc(8),0,8,null,(error,size,buffer)=>{
 });}
 process.on('message',message=>{if(message.kind==='first')process.send({kind:'first-reply'});if(message.kind==='second')process.send({kind:'second-reply'},()=>process.exit(0));});
 pull();process.send({kind:'ready'});
-` : mode==="disconnect" ? `
+`
+			: mode === "disconnect"
+				? `
 const buffers=[];
 process.stdin.on('data',chunk=>buffers.push(Buffer.from(chunk)));
 process.stdin.on('end',()=>{process.stdout.write(JSON.stringify({data:Buffer.concat(buffers).toString('base64')})+'\\n');process.exit(0);});
 process.stdin.resume();
 process.on('message',message=>{if(message.kind==='first')process.send({kind:'first-reply'},()=>process.disconnect());});
 process.send({kind:'ready'});
-` : `
+`
+				: `
 import {fork} from 'node:child_process';
 import {writeFileSync} from 'node:fs';
 const path=process.argv[1]+'.grandchild.mjs';
@@ -54,7 +65,7 @@ child.on('error',error=>process.send({kind:'nested-error',code:error.code,messag
 child.on('message',message=>{if(message.kind==='grand-ready')process.send({kind:'ready'});else process.send({kind:'nested-reply',value:message.value},()=>process.exit(0));});
 process.on('message',message=>child.send(message));
 `;
-  return `
+	return `
 import {fork} from 'node:child_process';import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';
 const directory=mkdtempSync(tmpdir()+'/fork-owner-'),path=directory+'/child.mjs';writeFileSync(path,${JSON.stringify(child)});
 const messages=[],errors=[];let stdout='',stderr='',timedOut=false,disconnected=false;

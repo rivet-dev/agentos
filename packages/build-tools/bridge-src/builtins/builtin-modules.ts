@@ -693,7 +693,10 @@ const urlDomainToUnicode = unwrapStdlibModule(punycodeStdlibModuleNs).toUnicode;
 
 function domainToASCII2(domain) {
 	if (arguments.length === 0) {
-		throw withNodeErrorCode(new TypeError('The "domain" argument must be specified'), "ERR_MISSING_ARGS");
+		throw withNodeErrorCode(
+			new TypeError('The "domain" argument must be specified'),
+			"ERR_MISSING_ARGS",
+		);
 	}
 	// Use the host parser rather than parsing an entire authority, which
 	// would incorrectly accept userinfo or a port as part of a domain.
@@ -702,7 +705,10 @@ function domainToASCII2(domain) {
 
 function domainToUnicode2(domain) {
 	if (arguments.length === 0) {
-		throw withNodeErrorCode(new TypeError('The "domain" argument must be specified'), "ERR_MISSING_ARGS");
+		throw withNodeErrorCode(
+			new TypeError('The "domain" argument must be specified'),
+			"ERR_MISSING_ARGS",
+		);
 	}
 	return urlDomainToUnicode(domainToASCII2(domain));
 }
@@ -887,11 +893,14 @@ function loadBuiltinModule(request) {
 				ReadableStreamDefaultReader: globalThis.ReadableStreamDefaultReader,
 				ReadableStreamBYOBReader: globalThis.ReadableStreamBYOBReader,
 				ReadableStreamBYOBRequest: globalThis.ReadableStreamBYOBRequest,
-				ReadableStreamDefaultController: globalThis.ReadableStreamDefaultController,
+				ReadableStreamDefaultController:
+					globalThis.ReadableStreamDefaultController,
 				ReadableByteStreamController: globalThis.ReadableByteStreamController,
 				WritableStreamDefaultWriter: globalThis.WritableStreamDefaultWriter,
-				WritableStreamDefaultController: globalThis.WritableStreamDefaultController,
-				TransformStreamDefaultController: globalThis.TransformStreamDefaultController,
+				WritableStreamDefaultController:
+					globalThis.WritableStreamDefaultController,
+				TransformStreamDefaultController:
+					globalThis.TransformStreamDefaultController,
 
 				ReadableStream: globalThis.ReadableStream,
 				WritableStream: globalThis.WritableStream,

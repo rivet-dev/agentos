@@ -165,7 +165,6 @@ fn record_js_phase_stats(
 
 const DEFAULT_V8_CPU_TIME_LIMIT_MS: u32 = 30_000;
 const DEFAULT_V8_WALL_CLOCK_LIMIT_MS: u32 = 0;
-const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS: u64 = 30_000;
 const NODE_SYNC_RPC_DEFAULT_DATA_BYTES: usize = 4 * 1024 * 1024;
 const NODE_SYNC_RPC_DEFAULT_WAIT_TIMEOUT_MS: u64 = 30_000;
 const NODE_SYNC_RPC_RESPONSE_QUEUE_CAPACITY: usize = 1;
@@ -501,7 +500,8 @@ pub struct JavascriptExecutionLimits {
     /// JavaScript wall-clock backstop in ms. `None` keeps the engine default;
     /// `Some(0)` disables the wall-clock watchdog.
     pub wall_clock_limit_ms: Option<u32>,
-    /// Timeout for materializing the per-VM Node import cache.
+    /// Accepted for wire compatibility; JavaScript executions no longer
+    /// materialize an import cache, so this limit has no effect.
     pub import_cache_materialize_timeout_ms: Option<u64>,
     /// Maximum live JavaScript timers in this execution. `None` keeps the
     /// engine default. The sidecar supplies the VM-scoped configured value.
@@ -519,13 +519,6 @@ pub struct JavascriptExecutionLimits {
     pub limit_external_memory: bool,
 }
 
-/// Per-execution guest-runtime config carried as typed fields rather than
-/// `AGENTOS_*` env vars. The sidecar populates these from kernel state
-/// (`user_profile()`, `resource_limits()`) and `CreateVmConfig`; the runtime
-/// shim interpolates them into a `_processConfig` object the guest reads, so the
-/// guest's virtual identity no longer rides the ambient env channel. `None`
-/// keeps the guest-runtime default. See the env-vs-wire rule in
-/// `crates/sidecar/CLAUDE.md`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartJavascriptExecutionRequest {
     pub vm_id: String,
@@ -2334,16 +2327,14 @@ struct JavascriptTerminalEnqueue(Arc<JavascriptTerminalDelivery>);
 
 impl Drop for JavascriptTerminalEnqueue {
     fn drop(&mut self) {
-        match self.0.state.compare_exchange(
+        // A committed or already received delivery leaves this guard with no
+        // remaining ownership, so an unsuccessful comparison needs no action.
+        let _ = self.0.state.compare_exchange(
             JavascriptTerminalState::Pending as u8,
             JavascriptTerminalState::Uncommitted as u8,
             Ordering::AcqRel,
             Ordering::Acquire,
-        ) {
-            Ok(_) => {}
-            // Committed or already received: this guard has no remaining ownership.
-            Err(_) => {}
-        }
+        );
     }
 }
 
@@ -2551,7 +2542,7 @@ pub struct JavascriptExecution {
     lifecycle: Arc<JavascriptExecutionLifecycle>,
     termination_requested: AtomicBool,
     kernel_stdin: Arc<LocalKernelStdinBridge>,
-    _import_cache_guard: Arc<NodeImportCacheCleanup>,
+    _import_cache_guard: Option<Arc<NodeImportCacheCleanup>>,
     v8_session: V8SessionHandle,
     // The session pins this initial owner and limits across every retained call.
     guest_bridge_policy: crate::runtime_protocol::GuestBridgePolicy,
@@ -2572,10 +2563,11 @@ pub struct JavascriptExecution {
 struct PreparedJavascriptExecute {
     mode: u8,
     file_path: String,
-    bridge_code: String,
+    bridge_code: Arc<str>,
     post_restore_script: String,
-    userland_code: String,
+    userland_code: Arc<str>,
     high_resolution_time: bool,
+    runtime_shim: String,
     user_code: String,
     wasm_module_bytes: Option<Arc<Vec<u8>>>,
 }
@@ -2664,10 +2656,11 @@ impl JavascriptExecution {
             .execute_with_guest_bridge_policy(
                 2 | u8::from(module),
                 file_path,
+                Arc::from(""),
                 String::new(),
-                String::new(),
-                String::new(),
+                Arc::from(""),
                 false,
+                String::new(),
                 user_code,
                 None,
                 Some(self.guest_bridge_policy.clone()),
@@ -2693,6 +2686,7 @@ impl JavascriptExecution {
                 prepared.post_restore_script,
                 prepared.userland_code,
                 prepared.high_resolution_time,
+                prepared.runtime_shim,
                 prepared.user_code,
                 prepared.wasm_module_bytes,
                 Some(self.guest_bridge_policy.clone()),
@@ -3646,13 +3640,14 @@ impl JavascriptExecutionEngine {
 
     #[doc(hidden)]
     pub fn set_import_cache_base_dir(&mut self, vm_id: impl Into<String>, base_dir: PathBuf) {
-        self.import_caches
-            .insert(vm_id.into(), NodeImportCache::new_in(base_dir));
+        self.import_caches.insert(
+            vm_id.into(),
+            NodeImportCache::new_in(base_dir).without_pyodide(),
+        );
     }
 
     pub fn create_context(&mut self, request: CreateJavascriptContextRequest) -> JavascriptContext {
         self.next_context_id += 1;
-        self.import_caches.entry(request.vm_id.clone()).or_default();
 
         let context = JavascriptContext {
             context_id: format!("js-ctx-{}", self.next_context_id),
@@ -3767,23 +3762,20 @@ impl JavascriptExecutionEngine {
         Ok(())
     }
 
-    /// Like [`start_execution`](Self::start_execution) but with an optional
-    /// read-only VFS reader over the mounted `node_modules` tree. When supplied,
-    /// the bridge thread resolves module-resolution RPCs inline against this
-    /// reader (off the service loop, concurrently with it) instead of routing
-    /// them through the service loop. The reader must be `Send` because it is
-    /// moved onto the bridge thread; it must read the same mount the guest sees.
+    /// Start an execution with optional module RPC and snapshot readers.
+    /// The snapshot reader must contain only kernel-authorized read-only
+    /// sources and is never installed on the live V8 session.
     pub fn start_execution_with_module_reader(
         &mut self,
         request: StartJavascriptExecutionRequest,
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
-        guest_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
+        snapshot_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
         let runtime = self.runtime_context()?.clone();
         self.create_execution_with_module_reader_and_runtime(
             request,
             module_reader,
-            guest_reader,
+            snapshot_reader,
             runtime,
             false,
         )
@@ -3796,13 +3788,13 @@ impl JavascriptExecutionEngine {
         &mut self,
         request: StartJavascriptExecutionRequest,
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
-        guest_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
+        snapshot_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
         let runtime = self.runtime_context()?.clone();
         self.create_execution_with_module_reader_and_runtime(
             request,
             module_reader,
-            guest_reader,
+            snapshot_reader,
             runtime,
             true,
         )
@@ -3812,13 +3804,13 @@ impl JavascriptExecutionEngine {
         &mut self,
         request: StartJavascriptExecutionRequest,
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
-        guest_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
+        snapshot_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
         runtime: DriverHandle,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
         self.create_execution_with_module_reader_and_runtime(
             request,
             module_reader,
-            guest_reader,
+            snapshot_reader,
             runtime,
             false,
         )
@@ -3828,13 +3820,13 @@ impl JavascriptExecutionEngine {
         &mut self,
         request: StartJavascriptExecutionRequest,
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
-        guest_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
+        snapshot_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
         runtime: DriverHandle,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
         self.create_execution_with_module_reader_and_runtime(
             request,
             module_reader,
-            guest_reader,
+            snapshot_reader,
             runtime,
             true,
         )
@@ -3844,7 +3836,9 @@ impl JavascriptExecutionEngine {
         &mut self,
         request: StartJavascriptExecutionRequest,
         module_reader: Option<Box<dyn ModuleFsReader + Send>>,
-        guest_reader: Option<Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>>,
+        mut snapshot_reader: Option<
+            Box<dyn agentos_executor_v8_runtime::execution::GuestModuleReader>,
+        >,
         runtime: DriverHandle,
         defer_execute: bool,
     ) -> Result<JavascriptExecution, JavascriptExecutionError> {
@@ -3865,20 +3859,23 @@ impl JavascriptExecutionEngine {
         if request.argv.is_empty() {
             return Err(JavascriptExecutionError::EmptyArgv);
         }
+        let import_cache_guard = self
+            .import_caches
+            .get(&request.vm_id)
+            .map(|cache| {
+                cache.ensure_materialized_with_timeout_and_runtime(
+                    &runtime,
+                    request
+                        .limits
+                        .import_cache_materialize_timeout_ms
+                        .map_or_else(|| runtime.blocking_job_timeout(), Duration::from_millis),
+                )?;
+                Ok::<_, std::io::Error>(cache.cleanup_guard())
+            })
+            .transpose()
+            .map_err(JavascriptExecutionError::PrepareImportCache)?;
         let reactor_work_quantum = javascript_reactor_work_quantum(&request, &runtime)?;
         let bridge_call_timeout = javascript_bridge_call_timeout(&request, &runtime)?;
-
-        let phase_start = Instant::now();
-        // Ensure import cache is materialized (still needed for module resolution)
-        let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
-        import_cache
-            .ensure_materialized_with_timeout_and_runtime(
-                &process_runtime,
-                javascript_import_cache_materialize_timeout(&request),
-            )
-            .map_err(JavascriptExecutionError::PrepareImportCache)?;
-        let import_cache_guard = import_cache.cleanup_guard();
-        record_js_start_phase("js_start_import_cache", phase_start.elapsed());
 
         self.next_execution_id += 1;
         let execution_id = format!("exec-{}", self.next_execution_id);
@@ -3897,26 +3894,39 @@ impl JavascriptExecutionEngine {
         let heap_limit_mb = javascript_heap_limit_mb(&request);
         let cpu_time_limit_ms = javascript_cpu_time_limit_ms(&request);
         let wall_clock_limit_ms = javascript_wall_clock_limit_ms(&request);
-        let snapshot_userland_code = request
-            .guest_runtime
-            .snapshot_userland_code
-            .clone()
-            .unwrap_or_default();
-        let policy_bridge_code = crate::guest_bridge_policy::bridge_code_with_limits(
-            V8RuntimeHost::bridge_code(),
-            &request.guest_runtime.bridge_limits,
-        )
-        .map_err(JavascriptExecutionError::InvalidLimit)?;
+        let default_bridge_limits = request.guest_runtime.bridge_limits == Default::default();
+        let policy_bridge_code = if default_bridge_limits {
+            V8RuntimeHost::shared_bridge_code()
+        } else {
+            crate::guest_bridge_policy::bridge_code_with_limits(
+                V8RuntimeHost::bridge_code(),
+                &request.guest_runtime.bridge_limits,
+            )
+            .map(Arc::<str>::from)
+            .map_err(JavascriptExecutionError::InvalidLimit)?
+        };
+        let phase_start_snapshot = Instant::now();
+        let snapshot_userland_code: Arc<str> =
+            match request.guest_runtime.snapshot_userland_code.as_deref() {
+                Some(code) => code.into(),
+                None if default_bridge_limits => module_snapshot_for_launch(
+                    v8_host,
+                    &runtime,
+                    &request,
+                    snapshot_reader.as_deref_mut(),
+                    heap_limit_mb,
+                )
+                .unwrap_or_default()
+                .into(),
+                None => Arc::from(""),
+            };
+        record_js_start_phase("js_start_module_snapshot", phase_start_snapshot.elapsed());
         let warm_hint = Some(WarmSessionHint {
             bridge_code: policy_bridge_code.clone(),
             userland_code: snapshot_userland_code.clone(),
             heap_limit_mb: (heap_limit_mb > 0).then_some(heap_limit_mb),
         });
-        if snapshot_userland_code.is_empty()
-            && heap_limit_mb == 0
-            && request.guest_runtime.bridge_limits
-                == agentos_executor_contract::GuestBridgeLimits::default()
-        {
+        if snapshot_userland_code.is_empty() && heap_limit_mb == 0 && default_bridge_limits {
             v8_host.seed_default_warm_workers_async();
         }
         let PendingV8SessionRegistration {
@@ -4052,7 +4062,7 @@ impl JavascriptExecutionEngine {
         } else {
             build_v8_user_code(&guest_entrypoint, &request.env)
         };
-        let mut post_restore_script = build_v8_runtime_init_script(
+        let runtime_shim = build_v8_runtime_shim(
             &guest_entrypoint,
             &process_argv,
             request.argv0.as_deref(),
@@ -4061,10 +4071,11 @@ impl JavascriptExecutionEngine {
             heap_limit_mb,
             &request.guest_runtime,
         );
-        if let Some(prelude) = &request.guest_runtime.prelude_script {
-            post_restore_script.push('\n');
-            post_restore_script.push_str(prelude);
-        }
+        let post_restore_script = request
+            .guest_runtime
+            .prelude_script
+            .clone()
+            .unwrap_or_default();
         record_js_start_phase("js_start_build_user_code", phase_start.elapsed());
 
         let phase_start = Instant::now();
@@ -4128,18 +4139,6 @@ impl JavascriptExecutionEngine {
         record_js_start_phase("js_start_event_bridge", phase_start.elapsed());
 
         let phase_start = Instant::now();
-        // Install the direct module reader on the session thread BEFORE the Execute
-        // frame so the SetModuleReader command (routed through the same dispatch
-        // queue) arrives first; module loads then read source directly on the V8
-        // thread instead of round-tripping the bridge.
-        if let Some(guest_reader) = guest_reader {
-            v8_session
-                .set_module_reader(guest_reader)
-                .map_err(JavascriptExecutionError::Spawn)?;
-        }
-        record_js_start_phase("js_start_install_module_reader", phase_start.elapsed());
-
-        let phase_start = Instant::now();
         let env_flag = |key: &str| {
             request
                 .env
@@ -4161,6 +4160,7 @@ impl JavascriptExecutionEngine {
             post_restore_script,
             userland_code: snapshot_userland_code,
             high_resolution_time: request.guest_runtime.high_resolution_time,
+            runtime_shim,
             user_code,
             wasm_module_bytes: request.wasm_module_bytes.clone(),
         };
@@ -4175,6 +4175,7 @@ impl JavascriptExecutionEngine {
                     prepared_execute.post_restore_script,
                     prepared_execute.userland_code,
                     prepared_execute.high_resolution_time,
+                    prepared_execute.runtime_shim,
                     prepared_execute.user_code,
                     prepared_execute.wasm_module_bytes,
                     Some(guest_bridge_policy.clone()),
@@ -4242,7 +4243,10 @@ impl JavascriptExecutionEngine {
             .ok_or_else(|| std::io::Error::other(
                 "ERR_AGENTOS_RUNTIME_NOT_INJECTED: JavascriptExecutionEngine requires a process DriverHandle",
             ))?;
-        let import_cache = self.import_caches.entry(vm_id.to_owned()).or_default();
+        let import_cache = self
+            .import_caches
+            .entry(vm_id.to_owned())
+            .or_insert_with(|| NodeImportCache::default().without_pyodide());
         import_cache.ensure_materialized_with_runtime(runtime)?;
         Ok(import_cache.cache_path())
     }
@@ -4321,17 +4325,6 @@ fn javascript_heap_limit_mb(request: &StartJavascriptExecutionRequest) -> u32 {
         .v8_heap_limit_mb
         .filter(|value| *value > 0)
         .unwrap_or(0)
-}
-
-fn javascript_import_cache_materialize_timeout(
-    request: &StartJavascriptExecutionRequest,
-) -> Duration {
-    let timeout_ms = request
-        .limits
-        .import_cache_materialize_timeout_ms
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS);
-    Duration::from_millis(timeout_ms)
 }
 
 fn javascript_max_timers(request: &StartJavascriptExecutionRequest) -> usize {
@@ -4525,6 +4518,71 @@ fn build_v8_user_code(entrypoint: &str, env: &BTreeMap<String, String>) -> Strin
             entrypoint
         )
     }
+}
+
+/// The module snapshot token for a guest `node <entry>` launch whose entry the
+/// VM named in `jsRuntime.snapshotEntrypoints`, or `None` to load normally.
+///
+/// Snapshot modules are evaluated against the default Node surface, so a VM
+/// that restricts builtins, module resolution, or the platform, and language
+/// executions that retain their context, never use one.
+fn module_snapshot_for_launch(
+    v8_host: &V8RuntimeHost,
+    runtime: &DriverHandle,
+    request: &StartJavascriptExecutionRequest,
+    reader: Option<&mut (dyn agentos_executor_v8_runtime::execution::GuestModuleReader + 'static)>,
+    heap_limit_mb: u32,
+) -> Option<String> {
+    let entrypoints = &request.guest_runtime.snapshot_entrypoints;
+    if entrypoints.is_empty() {
+        return None;
+    }
+    let entry = request
+        .env
+        .get(NODE_GUEST_ENTRYPOINT_ENV)
+        .filter(|entry| entrypoints.iter().any(|candidate| candidate == *entry))?;
+    let env_flag = |key: &str| {
+        request
+            .env
+            .get(key)
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    };
+    if request.env.contains_key("AGENTOS_JS_BUILTIN_ALLOWLIST")
+        || request.env.contains_key("AGENTOS_JS_MODULE_RESOLUTION")
+        || request
+            .env
+            .get("AGENTOS_JS_PLATFORM")
+            .is_some_and(|platform| platform != "node")
+        || request
+            .env
+            .get("NODE_OPTIONS")
+            .is_some_and(|options| !options.trim().is_empty())
+        || (request
+            .env
+            .contains_key(NODE_GUEST_ENTRYPOINT_MODULE_MODE_ENV)
+            && !env_flag(NODE_GUEST_ENTRYPOINT_MODULE_MODE_ENV))
+        || env_flag(NODE_RETAIN_CONTEXT_ENV)
+        || env_flag(NODE_COMPLETE_ON_SETTLE_ENV)
+    {
+        return None;
+    }
+    let reader = reader?;
+    if reader.module_format(entry)
+        != Some(agentos_executor_v8_runtime::execution::ResolvedModuleFormat::Module)
+    {
+        return None;
+    }
+    // The entry must come from a read-only host mount too, so guest code can
+    // neither change it nor make the sidecar discover new graphs.
+    let source = strip_javascript_hashbang(&reader.read_module_source(entry)?);
+    if request
+        .inline_code
+        .as_deref()
+        .is_some_and(|code| strip_javascript_hashbang(code) != source)
+    {
+        return None;
+    }
+    v8_host.select_module_snapshot(runtime, entry, &source, reader, heap_limit_mb)
 }
 
 fn host_entrypoint_uses_module_mode(entrypoint: &Path) -> bool {
@@ -4789,7 +4847,10 @@ fn resolve_v8_entrypoint(cwd: &Path, entrypoint: &str) -> String {
 // Keep each injected process/runtime value explicit at this one serialization
 // boundary; grouping them would duplicate the already-typed guest config.
 #[allow(clippy::too_many_arguments)]
-fn build_v8_runtime_init_script(
+/// The per-process classic script that sets up `process` (argv, env, identity)
+/// before guest code runs. It travels in the Execute frame's `runtime_shim`
+/// field, separate from the guest's own code.
+fn build_v8_runtime_shim(
     entrypoint: &str,
     argv: &[String],
     argv0: Option<&str>,
@@ -4872,6 +4933,11 @@ fn build_v8_runtime_init_script(
       typeof globalThis._processConfig === "object" && globalThis._processConfig !== null
         ? globalThis._processConfig
         : {{}};
+    const performanceTimeOrigin = Date.now() - (
+      typeof globalThis.__agentOsHrNowUs === "function"
+        ? globalThis.__agentOsHrNowUs() / 1000
+        : 0
+    );
     Object.defineProperty(globalThis, "_processConfig", {{
       configurable: true,
       enumerable: false,
@@ -4881,6 +4947,7 @@ fn build_v8_runtime_init_script(
         env: visibleEnv,
         argv: nextArgv,
         argv0: nextArgv0,
+        performanceTimeOrigin,
         high_resolution_time: nextHighResolutionTime,
       }}),
       writable: false,
@@ -9287,11 +9354,6 @@ mod tests {
             500,
             "wall-clock budget must come from the typed wire limit, not env"
         );
-        assert_eq!(
-            javascript_import_cache_materialize_timeout(&request),
-            std::time::Duration::from_millis(125),
-            "import-cache timeout must come from the typed wire limit, not env"
-        );
         assert_eq!(javascript_max_timers(&request), 321);
         assert_eq!(
             javascript_reactor_work_quantum(
@@ -9375,10 +9437,6 @@ mod tests {
             DEFAULT_V8_WALL_CLOCK_LIMIT_MS
         );
         assert_eq!(javascript_max_timers(&request), MAX_TIMERS_PER_EXECUTION);
-        assert_eq!(
-            javascript_import_cache_materialize_timeout(&request),
-            std::time::Duration::from_millis(DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS)
-        );
     }
 
     #[test]

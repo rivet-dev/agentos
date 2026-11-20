@@ -1019,6 +1019,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let permissions = config.permissions.clone();
         let users = UserManager::from_config(config.user);
         let process_table = ProcessTable::with_zombie_ttl(config.zombie_ttl);
+        // The PTY manager is reachable from the table's exit callback, so a
+        // strong handle here would form a cycle that keeps every disposed VM's
+        // process, fd, pipe, PTY and socket tables alive.
         let process_table_for_pty = process_table.downgrade();
         let max_open_fds = config
             .resources
@@ -7652,7 +7655,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                     return Err(KernelError::new(
                         "EEXIST",
                         format!("file already exists, open '{path}'"),
-                    ))
+                    ));
                 }
                 Err(error) if error.code() == "ENOENT" => {}
                 Err(error) => return Err(error.into()),
@@ -7796,9 +7799,12 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             if let Some((base, inheriting)) = requested_rights {
                 let unavailable = (base | inheriting) & !parent.rights_inheriting;
                 if unavailable != 0 {
-                    return Err(KernelError::new("EACCES", format!(
-                        "path_open requested rights {unavailable:#x} outside parent fd {parent_fd} inheriting rights"
-                    )));
+                    return Err(KernelError::new(
+                        "EACCES",
+                        format!(
+                            "path_open requested rights {unavailable:#x} outside parent fd {parent_fd} inheriting rights"
+                        ),
+                    ));
                 }
             }
 
@@ -7806,9 +7812,12 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 .realpath_internal(Some(pid), &self.fd_path(requester_driver, pid, parent_fd)?)?;
             let candidate = normalize_path(path);
             if !path_is_within(&capability_root, &candidate) {
-                return Err(KernelError::new("EACCES", format!(
-                    "path_open target '{candidate}' escapes directory capability '{capability_root}'"
-                )));
+                return Err(KernelError::new(
+                    "EACCES",
+                    format!(
+                        "path_open target '{candidate}' escapes directory capability '{capability_root}'"
+                    ),
+                ));
             }
             let resolved_candidate = if self.exists_internal(Some(pid), &candidate)? {
                 self.realpath_internal(Some(pid), &candidate)?
@@ -7821,9 +7830,12 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 ))
             };
             if !path_is_within(&capability_root, &resolved_candidate) {
-                return Err(KernelError::new("EACCES", format!(
-                    "path_open resolved target '{resolved_candidate}' escapes directory capability '{capability_root}'"
-                )));
+                return Err(KernelError::new(
+                    "EACCES",
+                    format!(
+                        "path_open resolved target '{resolved_candidate}' escapes directory capability '{capability_root}'"
+                    ),
+                ));
             }
         }
 
@@ -12466,7 +12478,7 @@ impl KernelVm<MountTable> {
     pub fn mount_filesystem(
         &mut self,
         path: &str,
-        filesystem: impl VirtualFileSystem + 'static,
+        filesystem: impl VirtualFileSystem + Send + 'static,
         options: MountOptions,
     ) -> KernelResult<()> {
         self.assert_not_terminated()?;

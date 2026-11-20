@@ -295,10 +295,10 @@ fn per_vm_output_limit_keeps_real_engine_peers(pressure: Option<bool>) {
                                                     return Err(format!("peer output changed/duplicated: {value:?}"));
                                                 }
                                             }
-                                            wire::EventPayload::ProcessExitedEvent(value) if value.process_id == *process => {
-                                                if value.exit_code != 0 || value.exit_signal.is_some() || !exits.insert(*byte) {
-                                                    return Err(format!("peer exit changed/duplicated: {value:?}"));
-                                                }
+                                            wire::EventPayload::ProcessExitedEvent(value)
+                                                if value.process_id == *process
+                                                    && (value.exit_code != 0 || value.exit_signal.is_some() || !exits.insert(*byte)) => {
+                                                return Err(format!("peer exit changed/duplicated: {value:?}"));
                                             }
                                             _ => {}
                                         }

@@ -255,7 +255,10 @@ export class SidecarProtocolClient {
 	}): Promise<LiveResponseFrame> {
 		if (this.closedError) throw this.closedError;
 		const original = this.hostFrameFactory.createRequestFrame(input);
-		const retainedBytes = encodeProtocolFramePayload(original, this.payloadCodec).byteLength;
+		const retainedBytes = encodeProtocolFramePayload(
+			original,
+			this.payloadCodec,
+		).byteLength;
 		// Preserve the exact logical request, including binary arguments, while
 		// retrying only a typed refusal issued before ordinary ingress admission.
 		const request = structuredClone(original);
@@ -264,41 +267,75 @@ export class SidecarProtocolClient {
 			for (let attempt = 0; ; attempt++) {
 				if (this.closedError) throw this.closedError;
 				let response: LiveResponseFrame;
-				try { response = await this.frameTransport.sendFrame(request.request_id, request); }
-				catch (error) {
+				try {
+					response = await this.frameTransport.sendFrame(
+						request.request_id,
+						request,
+					);
+				} catch (error) {
 					const fatal = this.failOnFatalWrite(error);
 					if (fatal) throw fatal;
 					throw error;
 				}
 				if (response.payload.type !== "rejected") {
-					if (response.payload.type === "authenticated") this.maxFrameBytes = response.payload.max_frame_bytes;
+					if (response.payload.type === "authenticated")
+						this.maxFrameBytes = response.payload.max_frame_bytes;
 					return response;
 				}
 				const detail = response.payload;
-				const ingressPressure = detail.code === "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT" || detail.code === "ERR_AGENTOS_PROTOCOL_BYTE_LIMIT";
-				const canRetry = ingressPressure && detail.retryable === true && detail.errno === "EAGAIN"
-					&& detail.operation === "stdio.requestAdmission" && detail.limit_name === "stdio ordinary ingress"
-					&& (detail.configuration_path === "runtime.protocol.maxIngressFrames" || detail.configuration_path === "runtime.protocol.maxIngressBytes")
-					&& detail.requested !== null && detail.configured_limit !== null && detail.requested <= detail.configured_limit;
-				if (!canRetry || attempt >= 32) throw new SidecarRejectedError(request.request_id, detail);
+				const ingressPressure =
+					detail.code === "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT" ||
+					detail.code === "ERR_AGENTOS_PROTOCOL_BYTE_LIMIT";
+				const canRetry =
+					ingressPressure &&
+					detail.retryable === true &&
+					detail.errno === "EAGAIN" &&
+					detail.operation === "stdio.requestAdmission" &&
+					detail.limit_name === "stdio ordinary ingress" &&
+					(detail.configuration_path === "runtime.protocol.maxIngressFrames" ||
+						detail.configuration_path === "runtime.protocol.maxIngressBytes") &&
+					detail.requested !== null &&
+					detail.configured_limit !== null &&
+					detail.requested <= detail.configured_limit;
+				if (!canRetry || attempt >= 32)
+					throw new SidecarRejectedError(request.request_id, detail);
 				if (!retryReserved) {
 					// Admission retries cannot create an unbounded host timer/payload
 					// queue. Exhaustion preserves the original typed refusal.
-					if (this.ingressRetryRequests >= 4096 || retainedBytes > 64 * 1024 * 1024 - this.ingressRetryBytes) throw new SidecarRejectedError(request.request_id, detail);
-					this.ingressRetryRequests++; this.ingressRetryBytes += retainedBytes; retryReserved = true;
+					if (
+						this.ingressRetryRequests >= 4096 ||
+						retainedBytes > 64 * 1024 * 1024 - this.ingressRetryBytes
+					)
+						throw new SidecarRejectedError(request.request_id, detail);
+					this.ingressRetryRequests++;
+					this.ingressRetryBytes += retainedBytes;
+					retryReserved = true;
 				}
-				await this.waitForIngressRetry(Math.min(2 ** Math.min(attempt + 1, 7), 100) + request.request_id % 17);
+				await this.waitForIngressRetry(
+					Math.min(2 ** Math.min(attempt + 1, 7), 100) +
+						(request.request_id % 17),
+				);
 			}
 		} finally {
-			if (retryReserved) { this.ingressRetryRequests--; this.ingressRetryBytes -= retainedBytes; }
+			if (retryReserved) {
+				this.ingressRetryRequests--;
+				this.ingressRetryBytes -= retainedBytes;
+			}
 		}
 	}
 
 	private waitForIngressRetry(milliseconds: number): Promise<void> {
 		return new Promise((resolve, reject) => {
 			let unsubscribe = () => {};
-			const timer = setTimeout(() => { unsubscribe(); resolve(); }, milliseconds);
-			unsubscribe = this.onClose(error => { clearTimeout(timer); unsubscribe(); reject(error); });
+			const timer = setTimeout(() => {
+				unsubscribe();
+				resolve();
+			}, milliseconds);
+			unsubscribe = this.onClose((error) => {
+				clearTimeout(timer);
+				unsubscribe();
+				reject(error);
+			});
 		});
 	}
 

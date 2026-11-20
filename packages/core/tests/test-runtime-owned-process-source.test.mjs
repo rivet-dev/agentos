@@ -37,11 +37,11 @@ function fixture({failurePhase,allowExit=true,exitCode=null,signal='SIGKILL',sha
   async shutdown(){shutdowns++;throw shutdownError;},failPermanently(error){closeListener?.(error);},dispose(){},onClose(handler){closeListener=handler;return ()=>{};},onEvent(){return ()=>{};},setSidecarRequestHandler(){},
   async sendRequest({payload}){
    if(payload.type===failurePhase)throw initializationError;
-   if(payload.type==='authenticate')return {payload:{type:'authenticated',connection_id:'conn-fixture'}};
+   if(payload.type==='authenticate')return {payload:{type:'authenticated',connection_id:'conn-fixture',max_frame_bytes:16777216,max_write_files_entries:16}};
    if(payload.type==='open_session')return {payload:{type:'session_opened',session_id:'session-fixture'}};
    if(payload.type==='create_vm')return {payload:{type:'vm_created',vm_id:'vm-fixture'}};
    if(payload.type==='configure_vm')return {payload:{type:'vm_configured',applied_mounts:[],applied_software:[],projected_commands:[]}};
-   if(payload.type==='dispose_vm'){deletes++;if(state.failVm)throw vmError;return {payload:{type:'vm_disposed'}};}
+   if(payload.type==='dispose_vm'){deletes++;if(state.failVm)throw vmError;return {payload:{type:'vm_disposed',completed_executions:[]}};}
    throw new Error('unexpected injected protocol request '+payload.type);
   },
   waitForEvent(matcher,_timeout,options){

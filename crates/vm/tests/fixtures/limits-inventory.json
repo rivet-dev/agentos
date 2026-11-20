@@ -423,12 +423,6 @@
 		"rationale": "Fixed AbortSignal.any input count guard in the guest polyfill; no sidecar-provided operator override."
 	},
 	{
-		"name": "MAX_BLOB_BYTES",
-		"path": "packages/build-tools/bridge-src/polyfills/blob-file.ts",
-		"class": "policy-deferred",
-		"rationale": "Fixed aggregate input byte ceiling per guest Blob/File construction; no sidecar-provided Blob budget."
-	},
-	{
 		"name": "MAX_BLOB_PARTS",
 		"path": "packages/build-tools/bridge-src/polyfills/blob-file.ts",
 		"class": "policy-deferred",
@@ -524,13 +518,6 @@
 		"path": "crates/executor-conformance/src/benchmark.rs",
 		"class": "invariant",
 		"rationale": "Dev benchmarking harness only."
-	},
-	{
-		"name": "DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT_MS",
-		"path": "crates/executor-v8-runtime/src/javascript.rs",
-		"class": "policy",
-		"rationale": "Execution-layer Node import-cache materialization fallback; normal VM executions receive the wired sidecar value.",
-		"wired": "VmLimits.js_runtime.import_cache_materialize_timeout_ms"
 	},
 	{
 		"name": "DEFAULT_V8_CPU_TIME_LIMIT_MS",
@@ -3206,33 +3193,15 @@
 	},
 	{
 		"name": "MAX_ARGUMENTS",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor language argv-count ceiling; no actor argument-count limit option."
-	},
-	{
-		"name": "MAX_ARGUMENTS",
 		"path": "crates/actor/src/process.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed actor process argument-count ceiling; no actor argv-count validation override."
 	},
 	{
 		"name": "MAX_ARGUMENT_BYTES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed language argument/module/package-spec/index-URL/error-name byte-validation ceiling; no actor per-string budget override."
-	},
-	{
-		"name": "MAX_ARGUMENT_BYTES",
 		"path": "crates/actor/src/process.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed per-argument and process/terminal cwd byte-validation ceiling; not exposed through actor limits."
-	},
-	{
-		"name": "MAX_BATCH_OBSERVATIONS_HARD",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed coordinator max_batch_observations and process max_observation_entries upper ceiling; both typed options are bounded at or below it."
 	},
 	{
 		"name": "MAX_BATCH_PATHS",
@@ -3247,40 +3216,10 @@
 		"rationale": "Fixed decoded binary action-tag byte ceiling and matching base64 precheck; no contract binary-size override."
 	},
 	{
-		"name": "MAX_CANDIDATES_HARD",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed coordinator max_candidates validation ceiling; PreloadCoordinatorConfigInput.max_candidates selects a lower effective budget only."
-	},
-	{
-		"name": "MAX_CANDIDATE_SCORE",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed candidate score acceptance/saturation ceiling; not the u64 representation bound or a configurable score maximum."
-	},
-	{
-		"name": "MAX_COMMAND_BYTES",
-		"path": "crates/actor/src/process.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor process command string byte-validation ceiling; no command-size policy option."
-	},
-	{
-		"name": "MAX_CONTEXTS",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor execution-context listing response-count ceiling; engine context admission options do not raise this reply guard."
-	},
-	{
 		"name": "MAX_CONTEXT_ID_BYTES",
 		"path": "crates/actor/src/language.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed actor language execution-context identifier byte ceiling; no context-ID validation budget option."
-	},
-	{
-		"name": "MAX_CRON_ARGUMENT_BYTES",
-		"path": "crates/actor/src/cron.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed encoded scheduled-action argument byte ceiling; no actor cron payload-budget field."
 	},
 	{
 		"name": "MAX_CRON_ERROR_BYTES",
@@ -3289,136 +3228,10 @@
 		"rationale": "Fixed retained cron error text truncation budget; no actor cron-error retention-size option."
 	},
 	{
-		"name": "MAX_CRON_EXPRESSION_BYTES",
-		"path": "crates/actor/src/cron.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor cron-expression byte-validation ceiling; not a cron grammar encoding limit or configurable actor policy."
-	},
-	{
-		"name": "MAX_CRON_HISTORY",
-		"path": "crates/actor/src/cron.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed cron maxHistory upper ceiling; callers may lower retained history but cannot raise this hard cap."
-	},
-	{
-		"name": "MAX_CRON_JOBS",
-		"path": "crates/actor/src/cron.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor cron schedule/list count ceiling; no actor cron capacity field."
-	},
-	{
-		"name": "MAX_CRON_NAME_BYTES",
-		"path": "crates/actor/src/cron.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor cron-name string byte ceiling; no actor cron-name validation budget."
-	},
-	{
-		"name": "MAX_DIAGNOSTICS",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed TypeScript diagnostics response-count ceiling at the actor boundary; no actor diagnostic-capacity setting."
-	},
-	{
-		"name": "MAX_DIAGNOSTIC_BYTES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed aggregate TypeScript diagnostic category/message/path byte ceiling; no actor diagnostics-byte option."
-	},
-	{
-		"name": "MAX_DIRECTORY_ENTRIES",
-		"path": "crates/actor/src/filesystem.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed directory listing result-count ceiling at the actor boundary; no actor listing-capacity override."
-	},
-	{
-		"name": "MAX_DIRECTORY_RESULT_BYTES",
-		"path": "crates/actor/src/filesystem.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed encoded actor directory listing byte ceiling; no listing-result byte override."
-	},
-	{
-		"name": "MAX_ENVIRONMENT_BYTES",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed aggregate actor environment configuration byte ceiling; no validation-budget override."
-	},
-	{
-		"name": "MAX_ENVIRONMENT_BYTES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor language aggregate environment byte ceiling; no actor validation-byte limit field."
-	},
-	{
-		"name": "MAX_ENVIRONMENT_BYTES",
-		"path": "crates/actor/src/process.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed aggregate actor process environment byte ceiling; no actor validation-byte override."
-	},
-	{
 		"name": "MAX_ENVIRONMENT_ENTRIES",
 		"path": "crates/actor/src/config.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed actor configuration environment entry-count ceiling; no environment-validation capacity field."
-	},
-	{
-		"name": "MAX_ENVIRONMENT_ENTRIES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor language environment entry-count ceiling; no actor environment validation-capacity option."
-	},
-	{
-		"name": "MAX_ENVIRONMENT_ENTRIES",
-		"path": "crates/actor/src/process.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor process environment entry-count ceiling; no actor process environment-capacity field."
-	},
-	{
-		"name": "MAX_ENVIRONMENT_KEY_BYTES",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor environment key byte-validation ceiling; not a variable-size wire encoding bound or configurable key-size limit."
-	},
-	{
-		"name": "MAX_ENVIRONMENT_VALUE_BYTES",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor environment value byte ceiling; no actor environment-value size override."
-	},
-	{
-		"name": "MAX_EXEC_OUTPUT_BYTES",
-		"path": "crates/actor/src/process.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor captured exec-result byte ceiling; core execution settings cannot raise this actor reply guard."
-	},
-	{
-		"name": "MAX_FILESYSTEM_NAMESPACE_BYTES",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor-sqlite namespace string byte-validation ceiling; not a storage-key encoding maximum or configurable namespace-size budget."
-	},
-	{
-		"name": "MAX_FILESYSTEM_PATH_BYTES",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed hosted filesystem mount-path byte validation ceiling; actor configuration has no path-limit override."
-	},
-	{
-		"name": "MAX_HISTORY_SIZE",
-		"path": "packages/build-tools/bridge-src/builtins/readline-terminal.ts",
-		"class": "policy-deferred",
-		"rationale": "Fixed readline historySize upper ceiling; the public option may lower retained history but cannot raise this bridge hard cap."
-	},
-	{
-		"name": "MAX_HOSTED_MOUNTS",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed hosted filesystem mount-collection admission ceiling; not exposed as an actor mount-count policy field."
-	},
-	{
-		"name": "MAX_HTTP_BODY_BYTES",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor HTTP body validation/read budget per action; no actor HTTP transfer-byte ceiling override."
 	},
 	{
 		"name": "MAX_HTTP_CHUNK_EXTENSION_BYTES",
@@ -3427,136 +3240,10 @@
 		"rationale": "Pinned Node24.18.0 parser chunk-extension compatibility maximum; not an HTTP-format width proof or arbitrary operator budget."
 	},
 	{
-		"name": "MAX_HTTP_CHUNK_SIZE_LINE_BYTES",
-		"path": "packages/build-tools/bridge-src/builtins/http.ts",
-		"class": "policy-deferred",
-		"rationale": "Fixed chunk-size line buffer ceiling derived from the extension cap plus 32 framing bytes; this parser policy is not a protocol representation maximum."
-	},
-	{
-		"name": "MAX_HTTP_HEADERS",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor HTTP header-count validation ceiling; no actor header-count override."
-	},
-	{
-		"name": "MAX_HTTP_HEADER_BYTES",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed aggregate actor HTTP request/response header byte-validation ceiling; not exposed through actor configuration."
-	},
-	{
-		"name": "MAX_HTTP_METHOD_BYTES",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor HTTP method string byte ceiling; not an HTTP wire-format maximum or configurable actor method-size limit."
-	},
-	{
-		"name": "MAX_HTTP_PATH_BYTES",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor HTTP request path byte ceiling; no actor HTTP path-validation budget option."
-	},
-	{
-		"name": "MAX_HTTP_PENDING_RESPONSE_BYTES",
-		"path": "packages/build-tools/bridge-src/builtins/http.ts",
-		"class": "policy-deferred",
-		"rationale": "Fixed retained raw-HTTP response pending-buffer budget under backpressure; no typed bridge pending-byte override."
-	},
-	{
-		"name": "MAX_HTTP_RESPONSE_BYTES",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor HTTP response/result byte ceiling before returning an action reply; no actor response-size limit field."
-	},
-	{
-		"name": "MAX_INDEX_URLS",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed Python extra-index URL count ceiling at the actor boundary; no actor index-list limit option."
-	},
-	{
-		"name": "MAX_JSON_BYTES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed serialized language JSON/error-value byte-validation ceiling; not a JSON encoding invariant or configurable actor limit."
-	},
-	{
-		"name": "MAX_OBSERVATION_CLOCK_SKEW_MS",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed tolerated future observation clock skew; no coordinator clock-skew policy field."
-	},
-	{
-		"name": "MAX_OBSERVATION_WINDOW_MS",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed maximum accepted preload usage observation window; no coordinator observation-window limit option."
-	},
-	{
-		"name": "MAX_PACKAGES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor package-result/request collection count ceiling; no actor package-list validation-capacity option."
-	},
-	{
-		"name": "MAX_PATH_BYTES",
-		"path": "crates/actor/src/filesystem.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor filesystem action path byte-validation ceiling; no actor action path-size override."
-	},
-	{
-		"name": "MAX_PATH_BYTES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor language path string byte-validation ceiling; no actor path-size override."
-	},
-	{
-		"name": "MAX_PERMISSION_CONFIG_BYTES",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed serialized actor permission configuration byte ceiling; no actor validation-byte budget option."
-	},
-	{
 		"name": "MAX_PERMISSION_RULES_PER_DOMAIN",
 		"path": "crates/actor/src/config.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed actor permission rule-count ceiling per domain; no actor permission-validation limit override."
-	},
-	{
-		"name": "MAX_PERMISSION_VALUES_PER_RULE",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed values-per-permission-rule ceiling in actor configuration validation; not operator-tunable."
-	},
-	{
-		"name": "MAX_PERMISSION_VALUE_BYTES",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed permission-rule value byte ceiling in actor validation; no value-size limit field."
-	},
-	{
-		"name": "MAX_PLAN_BYTES_HARD",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed coordinator/process plan-byte and artifact-size upper ceiling; typed max_plan_bytes cannot raise the shared hard cap."
-	},
-	{
-		"name": "MAX_PLAN_ENTRIES_HARD",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed coordinator/process plan-entry upper ceiling, also bounding warm concurrency; typed max_plan_entries/warm_concurrency may lower effective values but cannot raise this maximum."
-	},
-	{
-		"name": "MAX_PLAN_TTL_MS",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed plan lifetime acceptance/validation ceiling; coordinator plan_ttl_ms may lower TTL but cannot raise the shared maximum."
-	},
-	{
-		"name": "MAX_PREVIEW_TOKEN_BYTES",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed accepted preview-token byte ceiling; not the UUID generation width or a configurable token-validation budget."
 	},
 	{
 		"name": "MAX_PREVIEW_TTL_MS",
@@ -3565,88 +3252,10 @@
 		"rationale": "Fixed upper ceiling/default for PreviewPolicy.max_ttl_ms; preview.maxTtlMs can lower the policy but cannot raise the hard ceiling."
 	},
 	{
-		"name": "MAX_PROCESS_ACTION_TIMEOUT_MS",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed PreloadProcessOptions.action_timeout_ms upper ceiling; callers may lower action timeout but cannot raise this hard maximum."
-	},
-	{
-		"name": "MAX_PROCESS_FLUSH_INTERVAL_MS",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed PreloadProcessOptions.flush_interval_ms upper ceiling; selecting a shorter flush interval does not make this maximum tunable."
-	},
-	{
-		"name": "MAX_PROCESS_ID_BYTES",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed preload process identifier byte-validation ceiling; not a wire integer width or configurable identifier budget."
-	},
-	{
-		"name": "MAX_PROCESS_LIST_ENTRIES",
-		"path": "crates/actor/src/process.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor process/terminal listing result-count ceiling; not the kernel process admission limit or a configurable actor response cap."
-	},
-	{
-		"name": "MAX_PROCESS_PLAN_READ_TIMEOUT_MS",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed PreloadProcessOptions.plan_read_timeout_ms upper ceiling; typed process options cannot raise this hard maximum."
-	},
-	{
-		"name": "MAX_PROCESS_STARTUP_DEADLINE_MS",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed PreloadProcessOptions.startup_deadline_ms validation ceiling; callers may lower the deadline but cannot raise this hard maximum."
-	},
-	{
-		"name": "MAX_RECURSION_DEPTH",
-		"path": "crates/actor/src/filesystem.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor readdirRecursive maxDepth ceiling; callers may choose a lower depth but cannot raise the hard maximum."
-	},
-	{
-		"name": "MAX_REMOTE_SOFTWARE",
-		"path": "crates/actor/src/config.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor remote package-source collection ceiling; no source-count limit override."
-	},
-	{
-		"name": "MAX_RESULT_BYTES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor language output/encoded result reply byte ceiling; no actor reply-size budget option."
-	},
-	{
-		"name": "MAX_RUNTIME_ISSUES",
-		"path": "crates/actor/src/runtime.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor runtime issue deque capacity with oldest-entry eviction; no runtime issue-retention configuration field."
-	},
-	{
 		"name": "MAX_SOURCE_BYTES",
 		"path": "crates/actor/src/language.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed actor source/module-source string byte ceiling; no actor source-validation limit option."
-	},
-	{
-		"name": "MAX_STATE_BYTES",
-		"path": "crates/preload/src/coordinator_store.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed encoded coordinator-state persistence byte ceiling; reducing candidate/process/plan counts reduces usage but no state-byte limit option raises it."
-	},
-	{
-		"name": "MAX_STDIN_BYTES",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor language stdin byte ceiling per action; no actor stdin-transfer budget override."
-	},
-	{
-		"name": "MAX_STDIN_BYTES",
-		"path": "crates/actor/src/process.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed per-action stdin and terminal-write byte ceiling; not a total lifetime stdin limit and not configurable."
 	},
 	{
 		"name": "MAX_STDIO_WRITE_CHUNK_BYTES",
@@ -3661,70 +3270,16 @@
 		"rationale": "Fixed actor fetch-stream maxBytes ceiling; per-read maxBytes can lower the request but cannot raise this cap."
 	},
 	{
-		"name": "MAX_STREAM_ID_BYTES",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor fetch-stream identifier byte-validation ceiling; no stream-ID size override."
-	},
-	{
-		"name": "MAX_STREAM_LIFETIME_MS",
-		"path": "crates/actor/src/network.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed absolute lifetime installed in actor fetch-stream handles; no stream-lifetime policy field."
-	},
-	{
-		"name": "MAX_SUPPORTED_FORMATS",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed accepted supported-package-format list length; not the count of representable format versions or a configurable negotiation budget."
-	},
-	{
-		"name": "MAX_TERMINAL_DIMENSION",
-		"path": "crates/actor/src/language.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor language PTY dimension ceiling of 4096; not the u16 representation maximum or a configurable actor limit."
-	},
-	{
-		"name": "MAX_TERMINAL_DIMENSION",
-		"path": "crates/actor/src/process.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor PTY dimension validation ceiling of 4096; narrower than u16 representation and not configurable."
-	},
-	{
 		"name": "MAX_TIMEOUT_MS",
 		"path": "crates/actor/src/language.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed actor language timeout upper ceiling and omitted-value default; action timeoutMs may lower it but cannot raise the maximum."
 	},
 	{
-		"name": "MAX_TIMEZONE_BYTES",
-		"path": "crates/actor/src/cron.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed actor cron timezone string byte-validation ceiling; no actor timezone-size override."
-	},
-	{
-		"name": "MAX_TRACKED_PROCESSES_HARD",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed coordinator max_tracked_processes validation ceiling; the typed field cannot raise this hard maximum."
-	},
-	{
 		"name": "MAX_TRANSFER_BYTES",
 		"path": "crates/actor/src/filesystem.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed actor filesystem content transfer ceiling; action maxBytes can lower a read/export budget but cannot raise this cap."
-	},
-	{
-		"name": "MAX_URL_BYTES",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed preload artifact URL byte-validation ceiling; coordinator/process options do not expose a URL-size override."
-	},
-	{
-		"name": "MAX_USAGE_COUNT_PER_OBSERVATION",
-		"path": "crates/preload/src/lib.rs",
-		"class": "policy-deferred",
-		"rationale": "Fixed per-observation/coalesced usage count ceiling with process-side clamping; flush_interval_ms can reduce counts but does not raise the cap."
 	},
 	{
 		"name": "MAX_WAIT_MS",
@@ -3743,5 +3298,203 @@
 		"path": "crates/executor-wasm-v8/src/lib.rs",
 		"class": "policy-deferred",
 		"rationale": "Fixed process-wide successful-profile digest cache entry budget with FIFO eviction; wasm.validatedProfileDigestEntries is a log label, not a typed configuration field."
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_MAX_IN_FLIGHT_PRIORITY_REQUESTS",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Lends a separate bounded operation and terminal-response lane to teardown and live process progress.",
+		"wired": "DriverConfig.protocol.max_in_flight_priority_requests"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_REQUEST_QUEUE_BYTES",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Bounds retained decoded request bytes separately for each waiting-request lane.",
+		"wired": "DriverConfig.protocol.request_queue_bytes"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_REQUEST_QUEUE_DEADLINE_MS",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Sets the ordinary admission wait and the configurable base wait for create and priority lanes.",
+		"wired": "DriverConfig.protocol.request_queue_deadline_ms"
+	},
+	{
+		"name": "DEFAULT_PROTOCOL_REQUEST_QUEUE_LIMIT",
+		"path": "crates/driver-tokio/src/lib.rs",
+		"class": "policy",
+		"rationale": "Bounds queued requests per lane, including a byte-bounded count exemption for teardown.",
+		"wired": "DriverConfig.protocol.request_queue_limit"
+	},
+	{
+		"name": "DEFAULT_REACTOR_OPERATION_DEADLINE_MS",
+		"path": "crates/vm/src/core/limits.rs",
+		"class": "policy",
+		"rationale": "Sets the configured guest reactor operation deadline.",
+		"wired": "VmLimits.reactor.operation_deadline_ms"
+	},
+	{
+		"name": "DEFAULT_REACTOR_SHUTDOWN_DEADLINE_MS",
+		"path": "crates/vm/src/core/limits.rs",
+		"class": "policy",
+		"rationale": "Sets the configured deadline for VM resource reconciliation during teardown.",
+		"wired": "VmLimits.reactor.shutdown_deadline_ms"
+	},
+	{
+		"name": "DEFAULT_SNAPSHOT_HELPER_TIMEOUT_MS",
+		"path": "crates/executor-v8-runtime/src/snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Process-wide default wall-clock deadline for a V8 snapshot helper build."
+	},
+	{
+		"name": "MAX_BYTES",
+		"path": "packages/build-tools/bridge-src/builtins/ipc-transport.ts",
+		"class": "policy-deferred",
+		"rationale": "Caps retained bytes of private process IPC message transport."
+	},
+	{
+		"name": "MAX_FAMILY_CONTEXTS",
+		"path": "crates/executor-v8-runtime/src/owned_microtasks.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounds V8-owned microtask queues per context family."
+	},
+	{
+		"name": "MAX_MESSAGES",
+		"path": "packages/build-tools/bridge-src/builtins/ipc-transport.ts",
+		"class": "policy-deferred",
+		"rationale": "Caps the number of retained private process IPC messages."
+	},
+	{
+		"name": "MAX_MODULE_CODE_CACHE_BYTES",
+		"path": "crates/executor-v8-runtime/src/module_code_cache.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounds reusable V8 module code-cache bytes across sessions in one process."
+	},
+	{
+		"name": "MAX_MODULE_SNAPSHOT_GRAPH_MODULES",
+		"path": "crates/executor-v8-runtime/src/module_snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounds the number of modules parsed in one static launch graph."
+	},
+	{
+		"name": "MAX_MODULE_SNAPSHOT_GRAPH_SOURCE_BYTES",
+		"path": "crates/executor-v8-runtime/src/module_snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounds JavaScript source retained for one static launch graph."
+	},
+	{
+		"name": "MAX_MODULE_SNAPSHOT_JOBS",
+		"path": "crates/executor-v8-runtime/src/adapter_host.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounds concurrent process-wide module snapshot build or discovery jobs."
+	},
+	{
+		"name": "MAX_MODULE_SOURCE_BYTES",
+		"path": "crates/executor-v8-runtime/src/execution.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounds a single module source before V8 compilation."
+	},
+	{
+		"name": "MAX_PRISTINE_RECORD_JOBS",
+		"path": "crates/executor-v8-runtime/src/module_code_cache.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounds work admitted to build reusable module code from pristine contexts."
+	},
+	{
+		"name": "MAX_RECLAIMED_TEMP_ENTRIES_PER_START",
+		"path": "crates/vm/src/temp_reclaim.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps crash-orphan removals and reported failures in a startup sweep."
+	},
+	{
+		"name": "MAX_REGISTERED_MODULE_GRAPHS",
+		"path": "crates/executor-v8-runtime/src/module_snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps registered content-addressed module graphs for the process."
+	},
+	{
+		"name": "MAX_SCANNED_TEMP_ENTRIES_PER_START",
+		"path": "crates/vm/src/temp_reclaim.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps directory entries inspected by the startup orphan sweeper."
+	},
+	{
+		"name": "MAX_SHARED_SOURCE_BYTES",
+		"path": "crates/executor-v8-runtime/src/shared_source.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps reusable V8 source buffers held in the process cache."
+	},
+	{
+		"name": "MAX_SNAPSHOT_CACHE_FILES",
+		"path": "crates/executor-v8-runtime/src/snapshot_disk_cache.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps persisted V8 snapshot cache file count."
+	},
+	{
+		"name": "MAX_SNAPSHOT_FS_OPERATIONS",
+		"path": "crates/vm/src/filesystem/module_snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps process-authorized VFS work during one opt-in static module capture."
+	},
+	{
+		"name": "MAX_SNAPSHOT_HELPER_STDERR_BYTES",
+		"path": "crates/executor-v8-runtime/src/snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Bounds diagnostic stderr retained from one snapshot helper."
+	},
+	{
+		"name": "MAX_VALIDATED_GRAPH_FINGERPRINTS",
+		"path": "crates/executor-v8-runtime/src/module_snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps cached graph validation fingerprints."
+	},
+	{
+		"name": "MAX_VERIFIED_SOURCE_IDENTITIES",
+		"path": "crates/executor-v8-runtime/src/module_snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps cached source digests by host identity."
+	},
+	{
+		"name": "MAX_VM_SNAPSHOT_ENTRYPOINTS",
+		"path": "crates/vm-config/src/lib.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps the length of the explicit snapshot entrypoint list in VM create configuration."
+	},
+	{
+		"name": "PLATFORM_PUMP_MAX_IDLE_WAIT",
+		"path": "crates/executor-v8-runtime/src/session.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps the idle latency before V8 platform work is checked in the absence of explicit runtime progress."
+	},
+	{
+		"name": "PROCESS_STDIN_QUEUE_LIMIT",
+		"path": "crates/client/src/process.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps client-side stdin work retained until the execution request is acknowledged."
+	},
+	{
+		"name": "PROCESS_STDIN_QUEUE_LIMIT",
+		"path": "packages/core/src/sidecar/rpc-client.ts",
+		"class": "policy-deferred",
+		"rationale": "Caps client-side stdin work retained until the execution request is acknowledged."
+	},
+	{
+		"name": "QUEUE_LIMIT_PATH",
+		"path": "crates/sidecar/src/transport/request_queue.rs",
+		"class": "invariant",
+		"rationale": "Diagnostic configuration path for a full admission queue."
+	},
+	{
+		"name": "REQUEST_QUEUE_LIMIT_CODE",
+		"path": "crates/sidecar/src/transport/request_queue.rs",
+		"class": "invariant",
+		"rationale": "Typed error code for a full sidecar admission queue."
+	},
+	{
+		"name": "SNAPSHOT_HELPER_HEAP_LIMIT_MB",
+		"path": "crates/executor-v8-runtime/src/snapshot.rs",
+		"class": "policy-deferred",
+		"rationale": "Caps the V8 heap admitted to a one-shot snapshot helper."
 	}
 ]

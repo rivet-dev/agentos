@@ -501,6 +501,13 @@ fn module_utf8(path: &str, bytes: Vec<u8>) -> Result<String, HostServiceError> {
     })
 }
 
+// A launch snapshot captures only what the kernel-authorized resolver read.
+#[cfg(feature = "node-v8")]
+#[path = "filesystem/module_snapshot.rs"]
+mod module_snapshot;
+#[cfg(feature = "node-v8")]
+pub(crate) use module_snapshot::capture_launch_module_snapshot;
+
 /// Resolve / load / format / batch-resolve module requests against the kernel
 /// VFS. Routed here from `service_javascript_sync_rpc` for the
 /// `__resolve_module` / `__load_file` / `__module_format` /

@@ -52,6 +52,55 @@ Guest V8 execution is deliberately different:
 There is therefore no "Tokio task running a Node.js process." Trusted I/O runs
 as Tokio tasks; untrusted JavaScript runs on a V8 executor thread.
 
+## Process start
+
+Every guest Node process gets its own isolate. Three mechanisms keep that
+cheap without sharing guest state:
+
+- **Warm executors.** The sidecar normally keeps two executor threads with an
+  isolate and a context already restored from the bridge snapshot.
+  `AGENTOS_V8_WARM_ISOLATES` selects the requested count, with at most four
+  parked workers process-wide. A new
+  process claims one and runs in that never-used context.
+- **Module loading and permissions.** Ordinary module loads use the live
+  kernel-authorized filesystem path. They do not share a process-wide module
+  bytecode cache. Opt-in module snapshots can share compiled module graphs
+  after the sidecar checks the launching process's access to every source.
+- **Persisted bridge snapshot.** Building the bridge snapshot takes a helper
+  process ~400 ms. The sidecar stores each built snapshot blob under
+  `$XDG_CACHE_HOME/agentos/v8-snapshots` (or `~/.cache/...`), so later sidecar
+  processes load it instead. Files are keyed by a fingerprint of the V8 runtime
+  sources and the bridge, checked with SHA-256 on load, and bounded to 16
+  files. Set `AGENTOS_V8_SNAPSHOT_CACHE_DIR` to another directory, or to `off`
+  to disable it.
+- **Shared sources.** V8 keeps a script's source text for lazy compilation and
+  `Function#toString`. A snapshot compiles the bridge and large userland
+  sources from process-lifetime external strings, whose addresses are in the
+  isolate's external reference table. Every restored isolate then points at
+  the one copy instead of deserializing its own. Isolates also share the
+  snapshot blob instead of copying it.
+- **Module snapshots.** For a `snapshotEntrypoints` entry, the sidecar
+  evaluates the entry's static import graph once in the snapshot helper, with
+  stub bridge functions, and attaches the evaluated module records to the
+  snapshot context. A restored context hands them to the module loader, so an
+  import of one of their paths returns the evaluated instance. Before each
+  launch the sidecar captures a bounded graph through the launching process's
+  kernel-authorized resolver and read operations. Sources must remain on
+  read-only mounts, and the graph is checked by exact source digests and import
+  edges. Ineligible graphs load normally through the live filesystem. Only
+  immutable captured sources reach the snapshot helper; the helper never reads
+  host files directly. While the graph evaluates, time and random sources throw,
+  so no per-process value is frozen into the snapshot. The helper runs under
+  a wall-clock deadline, a CPU-time cap, and a 1 GiB heap cap, so guest
+  top-level code cannot hold a blocking worker or the snapshot build lock.
+- **Bounded teardown.** Executor retirement retains its admission slot until
+  teardown finishes. A timed-out termination keeps the execution generation
+  quarantined instead of returning an unconfirmed isolate to service.
+
+The per-process `process` setup (argv, env, identity) runs before any guest
+module evaluates, so imported modules see the real `process.argv` and
+`process.env` at their top level, as in Node.
+
 ## One TCP read, end to end
 
 [![Sequence from OS readiness through Tokio, durable readiness, the V8 executor, and the guest JavaScript socket read pump.](/images/architecture/javascript-executor-wakeup-sequence-dark.svg)](/images/architecture/javascript-executor-wakeup-sequence-dark.svg)
@@ -293,3 +342,12 @@ The main pieces are:
   resource classes, queue bounds, warnings, and typed overload failures.
 - [Security Model](/agentos/docs/security-model): why the sidecar owns capabilities and
   the executor is untrusted.
+
+## Embedded API
+
+Configure module snapshots on the VM that runs the application:
+
+<CodeSnippet file="examples/embedded/snapshot-entrypoints.ts" title="Module snapshots" />
+
+Read more in the
+[embedded API quickstart](/agentos/docs/quickstart-embedded).

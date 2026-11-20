@@ -939,10 +939,6 @@ type VmConfigComparedResponse struct {
   equivalent: bool
 }
 
-type VmDisposedResponse struct {
-  vmId: str
-}
-
 type RootFilesystemBootstrappedResponse struct {
   entryCount: u32
 }
@@ -1329,6 +1325,23 @@ type ExecutionOutputPageResponse struct {
   truncated: bool
 }
 
+type ExecutionCompletedEvent struct {
+  executionId: str
+  generation: u64
+  outcome: ExecutionOutcome
+  exitCode: optional<i32>
+  exitSignal: optional<u32>
+  error: optional<ExecutionErrorData>
+}
+
+# `completedExecutions` holds the completion of every public execution that
+# had already finished when the dispose began. An execution absent from it was
+# still running, so the dispose terminated it.
+type VmDisposedResponse struct {
+  vmId: str
+  completedExecutions: list<ExecutionCompletedEvent>
+}
+
 type ResponsePayload union {
   AuthenticatedResponse |
   SessionOpenedResponse |
@@ -1416,15 +1429,6 @@ type ProcessExitedEvent struct {
   processId: str
   exitCode: i32
   exitSignal: optional<u32>
-}
-
-type ExecutionCompletedEvent struct {
-  executionId: str
-  generation: u64
-  outcome: ExecutionOutcome
-  exitCode: optional<i32>
-  exitSignal: optional<u32>
-  error: optional<ExecutionErrorData>
 }
 
 type StructuredEvent struct {

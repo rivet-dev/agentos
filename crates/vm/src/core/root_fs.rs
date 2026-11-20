@@ -247,7 +247,7 @@ pub(crate) fn complete_agentos_root_directories(
         .ok_or_else(|| {
             SidecarCoreError::new("agentOS root filesystem unavailable during bootstrap")
         })?;
-    for path in AGENTOS_BOOTSTRAP_DIRECTORIES {
+    for (path, default_mode, default_uid, default_gid) in agentos_bootstrap_directories() {
         match root.lstat(path) {
             Ok(_) => continue, // Preserve all existing nodes, including dangling symlinks.
             Err(error) if error.code() == "ENOENT" => {}
@@ -255,11 +255,10 @@ pub(crate) fn complete_agentos_root_directories(
         }
         let seed = config.lowers.iter().find_map(|lower| match lower {
             vm_config::RootFilesystemLowerDescriptor::Snapshot { entries } => {
-                entries.iter().find(|entry| entry.path == *path)
+                entries.iter().find(|entry| entry.path == path)
             }
             vm_config::RootFilesystemLowerDescriptor::BundledBaseFilesystem => None,
         });
-        let (default_mode, default_uid, default_gid) = agentos_directory_metadata(path);
         let mode = seed
             .filter(|entry| entry.kind == vm_config::RootFilesystemEntryKind::Directory)
             .and_then(|entry| entry.mode)
@@ -274,6 +273,14 @@ pub(crate) fn complete_agentos_root_directories(
             .map_err(|error| SidecarCoreError::typed(error.code(), error.to_string()))?;
     }
     Ok(())
+}
+
+pub(crate) fn agentos_bootstrap_directories() -> impl Iterator<Item = (&'static str, u32, u32, u32)>
+{
+    AGENTOS_BOOTSTRAP_DIRECTORIES.iter().map(|&path| {
+        let (mode, uid, gid) = agentos_directory_metadata(path);
+        (path, mode, uid, gid)
+    })
 }
 
 fn agentos_directory_metadata(path: &str) -> (u32, u32, u32) {

@@ -97,7 +97,13 @@ impl Stream for ByteStream {
             self.inner.set(recv_bytes(rx));
             match result {
                 Ok(bytes) => return Poll::Ready(Some(bytes)),
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(
+                        skipped,
+                        "ERR_AGENTOS_OUTPUT_LAGGED: output stream skipped {skipped} chunks; recover with read_process_output"
+                    );
+                    continue;
+                }
                 Err(broadcast::error::RecvError::Closed) => return Poll::Ready(None),
             }
         }

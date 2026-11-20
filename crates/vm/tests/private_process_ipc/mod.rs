@@ -605,40 +605,41 @@ fn ipc_retained_metadata_warning_tracks_threshold_and_rearms_after_close() {
     let baseline = kernel.resource_snapshot();
     let mut parent = active(parent);
     let mut child = active(child);
-    let mut add = |id: &str, parent: &mut ActiveProcess| {
-        let mut pending = PendingProcessIpc::new(None);
-        pending
-            .install(&mut kernel, parent.kernel_pid, child.kernel_pid, &options())
-            .unwrap();
-        pending.commit(parent, &mut child, id).unwrap();
-        let endpoint = parent.ipc.children[id].clone();
-        // Free actual FDs while retaining the parent's metadata. The ordinary
-        // FD gauge cannot warn about these retained records.
-        kernel
-            .fd_close(EXECUTION_DRIVER_NAME, parent.kernel_pid, endpoint.fd)
-            .unwrap();
-        execute_operation(
-            &mut kernel,
-            &mut child,
-            ProcessIpcOperation::Close {
-                target: ProcessIpcTarget {
-                    child_id: None,
-                    generation: endpoint.generation,
+    {
+        let mut add = |id: &str, parent: &mut ActiveProcess| {
+            let mut pending = PendingProcessIpc::new(None);
+            pending
+                .install(&mut kernel, parent.kernel_pid, child.kernel_pid, &options())
+                .unwrap();
+            pending.commit(parent, &mut child, id).unwrap();
+            let endpoint = parent.ipc.children[id].clone();
+            // Free actual FDs while retaining the parent's metadata. The ordinary
+            // FD gauge cannot warn about these retained records.
+            kernel
+                .fd_close(EXECUTION_DRIVER_NAME, parent.kernel_pid, endpoint.fd)
+                .unwrap();
+            execute_operation(
+                &mut kernel,
+                &mut child,
+                ProcessIpcOperation::Close {
+                    target: ProcessIpcTarget {
+                        child_id: None,
+                        generation: endpoint.generation,
+                    },
                 },
-            },
-        )
-        .unwrap();
-        assert_eq!(kernel.resource_snapshot(), baseline);
-    };
-    for index in 0..9 {
-        add(&format!("retained-{index}"), &mut parent);
+            )
+            .unwrap();
+            assert_eq!(kernel.resource_snapshot(), baseline);
+        };
+        for index in 0..9 {
+            add(&format!("retained-{index}"), &mut parent);
+        }
+        assert_eq!(warning_count(), 0);
+        add("retained-9", &mut parent);
+        assert_eq!(warning_count(), 1);
+        add("retained-10", &mut parent);
+        assert_eq!(warning_count(), 1, "warn once while above the threshold");
     }
-    assert_eq!(warning_count(), 0);
-    add("retained-9", &mut parent);
-    assert_eq!(warning_count(), 1);
-    add("retained-10", &mut parent);
-    assert_eq!(warning_count(), 1, "warn once while above the threshold");
-    drop(add);
     for id in ["retained-9", "retained-10"] {
         let endpoint = parent.ipc.children[id].clone();
         execute_operation(

@@ -25,7 +25,7 @@ use crate::service::{
     normalize_path, plugin_error, root_filesystem_error, validate_permissions_policy, vfs_error,
 };
 use crate::state::{
-    BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
+    ActiveExecutionEvent, BridgeError, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
     KernelSocketReadinessTarget, QuarantinedVmGeneration, VmConfiguration, VmDnsConfig,
     VmExecutionEngines, VmHandle, VmListenPolicy, VmPendingByteBudget, VmQuarantineReason,
     VmReconciliationSnapshot, VmState, DISPOSE_VM_SIGKILL_GRACE, DISPOSE_VM_SIGTERM_GRACE,
@@ -77,55 +77,6 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const ROOT_BOOTSTRAP_DIRS: &[(&str, u32, u32, u32)] = &[
-    ("/dev", 0o755, 0, 0),
-    ("/proc", 0o755, 0, 0),
-    ("/tmp", 0o1777, 0, 0),
-    ("/bin", 0o755, 0, 0),
-    ("/lib", 0o755, 0, 0),
-    ("/sbin", 0o755, 0, 0),
-    ("/boot", 0o755, 0, 0),
-    ("/etc", 0o755, 0, 0),
-    // agentOS retains `/root/node_modules` as a compatibility projection.
-    // Permit traversal without allowing the default guest to list `/root`.
-    ("/root", 0o711, 0, 0),
-    ("/run", 0o755, 0, 0),
-    ("/srv", 0o755, 0, 0),
-    ("/sys", 0o555, 0, 0),
-    ("/opt", 0o755, 0, 0),
-    ("/mnt", 0o755, 0, 0),
-    ("/media", 0o755, 0, 0),
-    ("/home", 0o755, 0, 0),
-    ("/home/agentos", 0o2755, 1000, 1000),
-    ("/usr", 0o755, 0, 0),
-    ("/usr/bin", 0o755, 0, 0),
-    ("/usr/games", 0o755, 0, 0),
-    ("/usr/include", 0o755, 0, 0),
-    ("/usr/lib", 0o755, 0, 0),
-    ("/usr/libexec", 0o755, 0, 0),
-    ("/usr/man", 0o755, 0, 0),
-    ("/usr/local", 0o755, 0, 0),
-    ("/usr/local/bin", 0o755, 0, 0),
-    ("/usr/sbin", 0o755, 0, 0),
-    ("/usr/share", 0o755, 0, 0),
-    ("/usr/share/man", 0o755, 0, 0),
-    ("/var", 0o755, 0, 0),
-    ("/var/cache", 0o755, 0, 0),
-    ("/var/empty", 0o555, 0, 0),
-    ("/var/lib", 0o755, 0, 0),
-    ("/var/lock", 0o777, 0, 0),
-    ("/var/log", 0o755, 0, 0),
-    ("/var/run", 0o777, 0, 0),
-    ("/var/spool", 0o755, 0, 0),
-    ("/var/tmp", 0o1777, 0, 0),
-    ("/etc/agentos", 0o755, 0, 0),
-    // Non-Alpine default agent working directory (also present in the base
-    // filesystem snapshot); scaffold it here so it exists even when the
-    // default base layer is disabled. It is the default cwd and mount root,
-    // kept separate from $HOME (/home/agentos).
-    ("/workspace", 0o755, 1000, 1000),
-];
-
 #[cfg(test)]
 thread_local! {
     static COMMAND_PROJECTION_FAIL_SOCKET_NAMESPACE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -148,7 +99,16 @@ fn create_vm_unix_socket_host_dir() -> Result<PathBuf, VmError> {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        let path = std::env::temp_dir().join(format!("agentos-uds-{suffix}"));
+        let name = if crate::temp_reclaim::has_process_liveness_lock() {
+            format!(
+                "{}{}-{suffix}",
+                crate::temp_reclaim::VM_UNIX_SOCKET_DIR_PID_PREFIX,
+                std::process::id(),
+            )
+        } else {
+            format!("agentos-uds-{suffix}")
+        };
+        let path = std::env::temp_dir().join(name);
         let mut builder = fs::DirBuilder::new();
         builder.mode(0o700);
         match builder.create(&path) {
@@ -514,6 +474,9 @@ impl PreparedImportCacheRetirement {
 // Paths become eligible only at the existing host cleanup boundary.
 pub(crate) struct HostPathCleanup {
     paths: VmHostPaths,
+    // Retained on rejected worker admission. A Failed cleanup record is
+    // neither activated nor pruned during normal operation.
+    detached_kernel: Mutex<Option<crate::state::SidecarKernel>>,
     cache_retirements: Mutex<ImportCacheRetirements>,
     phase: Mutex<HostPathCleanupPhase>,
     changed: tokio::sync::Notify,
@@ -710,6 +673,7 @@ impl HostPathCleanupTicket {
         Self::check_retained_bytes(runtime, bytes)?;
         let cleanup = Arc::new(HostPathCleanup {
             paths,
+            detached_kernel: Mutex::new(None),
             cache_retirements: Mutex::new(ImportCacheRetirements::default()),
             phase: Mutex::new(HostPathCleanupPhase::Prepared),
             changed: tokio::sync::Notify::new(),
@@ -835,14 +799,14 @@ impl Drop for HostPathCleanupTicket {
     }
 }
 
-fn release_vm_import_cache_owners(vm: &VmState) -> Result<(), VmError> {
+fn release_vm_import_cache_owners(engines: &VmExecutionEngines) -> Result<(), VmError> {
     #[cfg(any(
         feature = "node-v8",
         feature = "python-v8-pyodide",
         feature = "wasm-v8"
     ))]
     {
-        vm.execution_engines.release_import_caches()
+        engines.release_import_caches()
     }
     #[cfg(not(any(
         feature = "node-v8",
@@ -850,7 +814,7 @@ fn release_vm_import_cache_owners(vm: &VmState) -> Result<(), VmError> {
         feature = "wasm-v8"
     )))]
     {
-        let _ = vm;
+        let _ = engines;
         Ok(())
     }
 }
@@ -885,6 +849,7 @@ pub struct PreparedDisposeVm<B> {
     plan: DisposeVmPlan<B>,
     vm: VmState,
     cache_leases: ImportCacheRetirementLeases,
+    queued_exits: BTreeMap<String, ActiveExecutionEvent>,
 }
 
 /// Teardown result awaiting short central tracking/quarantine finalization.
@@ -894,6 +859,8 @@ pub struct CompletedDisposeVm {
     session_id: String,
     vm_id: String,
     events: Vec<EventFrame>,
+    /// Executions that had finished before teardown began, for the response.
+    completed_executions: Vec<crate::protocol::ExecutionCompletedEvent>,
     quarantine: Option<QuarantinedVmGeneration>,
     result: Result<(), VmError>,
 }
@@ -1071,7 +1038,7 @@ where
         let cleanup_cwd = vm.runtime_scratch_root.clone();
         let cleanup_socket_dir = vm.unix_socket_host_dir.clone();
         if let Err(error) = self.vms.insert(vm_id.clone(), vm) {
-            cleanup_path(&cleanup_cwd, "unpublished VM shadow root");
+            cleanup_path(&cleanup_cwd, "unpublished VM runtime scratch root");
             cleanup_path(&cleanup_socket_dir, "unpublished VM Unix socket namespace");
             if let Err(cleanup_error) = bridge.clear_vm_permissions(&vm_id) {
                 eprintln!(
@@ -1211,8 +1178,13 @@ where
             // Engine topology supplies at most five slots per family set. Check
             // before allocating retirement records, even if future engines grow.
             if guards.len() > MAX_VM_IMPORT_CACHE_RETIREMENTS {
-                return Err(VmError::host("ERR_AGENTOS_IMPORT_CACHE_RETIREMENT_TOPOLOGY",
-                    format!("VM {vm_id} has {} cache owners; expected at most {MAX_VM_IMPORT_CACHE_RETIREMENTS}", guards.len())));
+                return Err(VmError::host(
+                    "ERR_AGENTOS_IMPORT_CACHE_RETIREMENT_TOPOLOGY",
+                    format!(
+                        "VM {vm_id} has {} cache owners; expected at most {MAX_VM_IMPORT_CACHE_RETIREMENTS}",
+                        guards.len()
+                    ),
+                ));
             }
             let mut unique = Vec::with_capacity(guards.len());
             for guard in guards {
@@ -1300,7 +1272,9 @@ where
         if self.host_path_cleanups.len() >= limit {
             return Err(VmError::host(
                 "ERR_AGENTOS_VM_PATH_CLEANUP_LIMIT",
-                format!("host path cleanup records reached {limit}; raise runtime.resources.maxCapabilities"),
+                format!(
+                    "host path cleanup records reached {limit}; raise runtime.resources.maxCapabilities"
+                ),
             ));
         }
         let paths = VmHostPaths {
@@ -1359,7 +1333,9 @@ where
                 if result.is_ok() {
                     result = Err(error);
                 } else {
-                    eprintln!("ERR_AGENTOS_VM_PATH_CLEANUP_SHUTDOWN: generation={generation} error={error}");
+                    eprintln!(
+                        "ERR_AGENTOS_VM_PATH_CLEANUP_SHUTDOWN: generation={generation} error={error}"
+                    );
                 }
             }
         }
@@ -1378,6 +1354,7 @@ where
         // too early to inventory caches from an already-admitted startup.
         let cache_retirement =
             self.prepare_import_cache_retirement(&plan.vm_id, &plan.host_path_cleanup)?;
+        let queued_exits = self.take_queued_vm_exits(&plan.vm_id);
         self.cancel_in_process_services(&plan.vm_id);
         let cancellation_reason = match &plan.reason {
             DisposeVmCause::Requested(reason) => dispose_cancellation_reason(reason),
@@ -1405,12 +1382,55 @@ where
             plan,
             vm,
             cache_leases,
+            queued_exits,
         })
+    }
+
+    /// Exit statuses of `vm_id`'s root processes whose `Exited` event waits in
+    /// the sidecar's event queue, for example behind another process's output
+    /// flood. Receiver events move into the pending queue first, within its
+    /// capacity, so an exit still in transit is found too.
+    fn take_queued_vm_exits(&mut self, vm_id: &str) -> BTreeMap<String, ActiveExecutionEvent> {
+        while self.deferred_process_event_envelope.is_none()
+            && self.pending_process_event_capacity() > 0
+        {
+            let Some(receiver) = self.process_event_receiver.as_mut() else {
+                break;
+            };
+            let Ok(envelope) = receiver.try_recv() else {
+                break;
+            };
+            if let Err((error, envelope)) = self.try_queue_pending_process_event(envelope) {
+                self.deferred_process_event_envelope = Some(envelope);
+                eprintln!("ERR_AGENTOS_VM_DISPOSE_EXIT_SCAN: vm_id={vm_id} error={error}");
+                break;
+            }
+        }
+        self.pending_process_events
+            .vm_iter(vm_id)
+            .chain(
+                self.deferred_process_event_envelope
+                    .iter()
+                    .filter(|event| event.vm_id == vm_id),
+            )
+            .filter(|envelope| envelope.child_path.is_empty())
+            .filter_map(|envelope| {
+                use crate::executor::backend::ExecutionEvent;
+                let exit = match &envelope.event {
+                    ActiveExecutionEvent::Exited(code) => ActiveExecutionEvent::Exited(*code),
+                    ActiveExecutionEvent::Common(ExecutionEvent::Exited(exit)) => {
+                        ActiveExecutionEvent::Common(ExecutionEvent::Exited(*exit))
+                    }
+                    _ => return None,
+                };
+                Some((envelope.process_id.clone(), exit))
+            })
+            .collect()
     }
 
     pub fn complete_dispose_vm(
         &mut self,
-        completed: CompletedDisposeVm,
+        mut completed: CompletedDisposeVm,
     ) -> Result<DispatchResult, VmError> {
         let request = completed.request.clone().ok_or_else(|| {
             VmError::InvalidState(String::from(
@@ -1418,9 +1438,10 @@ where
             ))
         })?;
         let vm_id = completed.vm_id.clone();
+        let completed_executions = std::mem::take(&mut completed.completed_executions);
         let events = self.complete_owned_vm_disposal(completed)?;
         Ok(DispatchResult {
-            response: vm_disposed_response(&request, vm_id),
+            response: vm_disposed_response(&request, vm_id, completed_executions),
             events,
         })
     }
@@ -1438,6 +1459,7 @@ where
             session_id,
             vm_id,
             mut events,
+            completed_executions: _,
             quarantine,
             result,
         } = completed;
@@ -1780,15 +1802,13 @@ where
         self.bridge
             .set_vm_permissions(&vm_id, &permissions_policy)?;
 
-        self.bridge
-            .emit_lifecycle(&vm_id, LifecycleState::Starting)?;
-        self.bridge.emit_lifecycle(&vm_id, LifecycleState::Ready)?;
-        self.bridge.emit_log(
-            &vm_id,
-            format!("created VM {vm_id} for session {session_id}"),
-        )?;
-
         let unix_socket_host_dir = create_vm_unix_socket_host_dir()?;
+        let mut failed_socket_cleanup = FailedVmCreateCleanup {
+            cleanup: Some({
+                let directory = unix_socket_host_dir.clone();
+                move || cleanup_path(&directory, "unpublished VM Unix socket namespace")
+            }),
+        };
         let pending_stdin_bytes_budget = VmPendingByteBudget::new(
             limits.process.pending_stdin_bytes,
             agentos_resource_accounting::queue_tracker::TrackedLimit::PendingKernelStdinBytes,
@@ -1889,6 +1909,27 @@ where
                 unix_socket_host_dir,
             },
         )?;
+        let lifecycle = (|| {
+            self.bridge
+                .emit_lifecycle(&vm_id, LifecycleState::Starting)?;
+            self.bridge.emit_log(
+                &vm_id,
+                format!("created VM {vm_id} for session {session_id}"),
+            )?;
+            self.bridge.emit_lifecycle(&vm_id, LifecycleState::Ready)
+        })();
+        if let Err(error) = lifecycle {
+            if let Err(rollback) = self
+                .vms
+                .try_remove(&vm_id, "rollback failed VM publication")
+            {
+                eprintln!("ERR_AGENTOS_VM_CREATE_CLEANUP: vm_id={vm_id} phase=registry_rollback error={rollback}");
+                // A retained registry owner may still need its paths.
+                failed_socket_cleanup.cleanup = None;
+                failed_create_cleanup.cleanup = None;
+            }
+            return Err(error);
+        }
         self.sessions
             .get_mut(&session_id)
             .expect("owned session should exist")
@@ -1907,6 +1948,7 @@ where
         ];
 
         tracing::info!(target: "agentos_vm::perf", phase = "create_vm", elapsed_ms = __t.elapsed().as_millis() as u64, "vm phase");
+        failed_socket_cleanup.cleanup = None;
         failed_create_cleanup.cleanup = None;
         Ok((vm_id, events))
     }
@@ -2225,7 +2267,7 @@ where
         // steps' `?`, so any failure stranded the engine/extension maps (H1) and
         // the output-buffer map was never reclaimed at all (M6).
         self.reclaim_vm_tracking(session_id, vm_id);
-        let cache_release = release_vm_import_cache_owners(&vm);
+        let cache_release = release_vm_import_cache_owners(&vm.execution_engines);
         cache_leases.release();
         let cleanup_result = match cache_release {
             Ok(()) => {
@@ -2314,7 +2356,7 @@ where
                 runtime_context: vm.runtime_context.clone(),
                 capabilities: vm.capabilities.clone(),
                 reason,
-                sqlite_close_unconfirmed: sqlite_close_timed_out,
+                teardown_unconfirmed: sqlite_close_timed_out,
             })?;
             return Err(if teardown_deadline_expired {
                 VmError::VmTeardownDeadline {
@@ -2346,59 +2388,7 @@ where
     /// while logging later failures. Teardown must reach kernel disposal and
     /// permission reset even when snapshot or bridge work fails.
     async fn finish_vm_teardown(&mut self, vm_id: &str, vm: &mut VmState) -> Result<(), VmError> {
-        let mut first_error = None;
-        let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
-            match vm
-                .kernel
-                .snapshot_root_filesystem()
-                .map_err(kernel_error)
-                .and_then(|snapshot| encode_root_snapshot(&snapshot).map_err(root_filesystem_error))
-            {
-                Ok(bytes) => Some(FilesystemSnapshot {
-                    format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
-                    bytes,
-                }),
-                Err(error) => {
-                    record_vm_teardown_error(vm_id, "snapshot", error, &mut first_error);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        if let Err(error) = self
-            .bridge
-            .emit_lifecycle(vm_id, LifecycleState::Terminated)
-        {
-            record_vm_teardown_error(vm_id, "lifecycle", error, &mut first_error);
-        }
-        if let Err(error) = vm.kernel.dispose().map_err(kernel_error) {
-            record_vm_teardown_error(vm_id, "kernel", error, &mut first_error);
-        }
-        // Kernel disposal closes the sockets; release retained stream leases before
-        // reconciliation waits for their capabilities and resource charges to drain.
-        vm.vm_fetch_streams.clear();
-        if let Some(snapshot) = snapshot {
-            if let Err(error) = self.bridge.with_mut(|bridge| {
-                bridge.flush_filesystem_state(FlushFilesystemStateRequest {
-                    vm_id: vm_id.to_owned(),
-                    snapshot,
-                })
-            }) {
-                record_vm_teardown_error(vm_id, "filesystem_flush", error, &mut first_error);
-            }
-        }
-        if let Err(error) = self
-            .bridge
-            .with_mut(|bridge| bridge.release_filesystem_state(vm_id))
-        {
-            record_vm_teardown_error(vm_id, "filesystem_release", error, &mut first_error);
-        }
-        if let Err(error) = self.bridge.clear_vm_permissions(vm_id) {
-            record_vm_teardown_error(vm_id, "permission_reset", error, &mut first_error);
-        }
-        first_error.map_or(Ok(()), Err)
+        finish_vm_teardown_owned(&self.bridge, vm_id, vm)
     }
 
     pub(crate) async fn terminate_vm_processes(
@@ -2575,6 +2565,401 @@ where
     }
 }
 
+/// Reservation charged to the VM ledger for one control-plane blocking job.
+const CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
+
+/// Which control-plane admission a blocking job uses. Each kind passes its
+/// own gate before it waits for a worker, so neither kind can fill the
+/// worker queue: a create flood cannot delay teardown, and a dispose burst
+/// cannot delay creates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ControlPlaneJob {
+    /// VM create bootstrap.
+    Create,
+    /// VM teardown.
+    Dispose,
+}
+
+/// Process-wide control-plane admission over the fixed blocking workers.
+struct ControlPlanePermits {
+    /// Blocking workers that control-plane jobs may occupy at once.
+    workers: tokio::sync::Semaphore,
+    /// Creates that may hold or wait for a worker at once.
+    create_gate: tokio::sync::Semaphore,
+    /// Dispose jobs that may hold or wait for a worker at once.
+    dispose_gate: tokio::sync::Semaphore,
+}
+
+impl ControlPlanePermits {
+    /// All control-plane admission sizes, in one place. Control-plane jobs
+    /// use at most half of the blocking workers, so guest filesystem work
+    /// keeps the other half. Each kind's gate is as large as that share, so
+    /// the worker queue holds at most `share` creates and `share` disposes,
+    /// and a job of either kind waits behind at most `share` of the other.
+    fn new(blocking_workers: usize) -> Self {
+        let share = (blocking_workers / 2).max(1);
+        Self {
+            workers: tokio::sync::Semaphore::new(share),
+            create_gate: tokio::sync::Semaphore::new(share),
+            dispose_gate: tokio::sync::Semaphore::new(share),
+        }
+    }
+
+    fn gate(&self, kind: ControlPlaneJob) -> &tokio::sync::Semaphore {
+        match kind {
+            ControlPlaneJob::Create => &self.create_gate,
+            ControlPlaneJob::Dispose => &self.dispose_gate,
+        }
+    }
+}
+
+fn control_plane_permits(
+    runtime: &agentos_driver_tokio::DriverHandle,
+) -> &'static ControlPlanePermits {
+    static PERMITS: std::sync::OnceLock<ControlPlanePermits> = std::sync::OnceLock::new();
+    PERMITS.get_or_init(|| ControlPlanePermits::new(runtime.blocking().worker_count()))
+}
+
+/// A job's result handoff. The job keeps its result when the caller is still
+/// waiting, or cleans it up itself when the caller gave up at the deadline.
+enum ControlPlaneHandoff<T> {
+    Waiting,
+    Done(T),
+    Abandoned,
+}
+
+struct BlockingResult<T, A> {
+    handoff: ControlPlaneHandoff<T>,
+    abandoned: Option<A>,
+}
+
+struct BlockingWaiter<T, A: FnOnce(T)>(Arc<Mutex<BlockingResult<T, A>>>);
+
+impl<T, A: FnOnce(T)> Drop for BlockingWaiter<T, A> {
+    fn drop(&mut self) {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let handoff = std::mem::replace(&mut state.handoff, ControlPlaneHandoff::Abandoned);
+        if let ControlPlaneHandoff::Done(result) = handoff {
+            let cleanup = state.abandoned.take().expect("blocking result cleanup");
+            drop(state);
+            cleanup(result);
+        }
+    }
+}
+
+/// Run synchronous VM lifecycle work (create bootstrap, dispose cleanup) on
+/// the process's fixed blocking executor instead of the protocol router.
+///
+/// At most half of the blocking workers run control-plane jobs at once.
+/// A create flood then waits here, outside the shared queue, instead of
+/// queueing ahead of guest filesystem work that uses the same workers. Each
+/// kind passes its own gate first (see [`ControlPlanePermits::new`]), so a
+/// dispose waits behind a bounded number of creates however large a create
+/// flood is, and a create waits behind a bounded number of disposes.
+///
+/// The wait and the job together are bounded by
+/// `runtime.blocking.jobTimeoutMs`. A job that is still running at the
+/// deadline keeps its worker permit until it returns, then passes its result
+/// to `abandoned` because no caller will receive it.
+async fn run_control_plane_blocking<T, F>(
+    runtime: &agentos_driver_tokio::DriverHandle,
+    kind: ControlPlaneJob,
+    operation: &'static str,
+    job: F,
+    abandoned: impl FnOnce(T) + Send + 'static,
+) -> Result<T, VmError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let permits = control_plane_permits(runtime);
+    let timeout = runtime.blocking_job_timeout();
+    let waiter = BlockingWaiter(Arc::new(Mutex::new(BlockingResult {
+        handoff: ControlPlaneHandoff::Waiting,
+        abandoned: Some(abandoned),
+    })));
+    let job_handoff = Arc::clone(&waiter.0);
+    let admission_error = |error: tokio::sync::AcquireError| {
+        VmError::InvalidState(format!(
+            "ERR_AGENTOS_CONTROL_PLANE_ADMISSION: {operation} could not wait for a blocking worker: {error}"
+        ))
+    };
+    let admitted = tokio::time::timeout(timeout, async {
+        let gate_permit = permits.gate(kind).acquire().await.map_err(admission_error)?;
+        let worker_permit = permits.workers.acquire().await.map_err(admission_error)?;
+        // The gate covers only the wait for a worker.
+        drop(gate_permit);
+        runtime
+            .blocking()
+            .run(CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES, move || {
+                // The permit tracks the worker, not the caller, so a job that
+                // outlives its deadline still counts against the share.
+                let _worker_permit = worker_permit;
+                let result = job();
+                let mut handoff = job_handoff
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if matches!(handoff.handoff, ControlPlaneHandoff::Abandoned) {
+                    let cleanup = handoff.abandoned.take().expect("blocking result cleanup");
+                    drop(handoff);
+                    cleanup(result);
+                } else {
+                    handoff.handoff = ControlPlaneHandoff::Done(result);
+                }
+            })
+            .await
+            .map_err(|error| {
+                VmError::Execution(format!(
+                    "ERR_AGENTOS_CONTROL_PLANE_BLOCKING: {operation} could not run on the blocking executor: {error}"
+                ))
+            })
+    })
+    .await;
+    let mut handoff = waiter
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match std::mem::replace(&mut handoff.handoff, ControlPlaneHandoff::Abandoned) {
+        // The job can finish in the same instant the deadline fires.
+        ControlPlaneHandoff::Done(result) => Ok(result),
+        ControlPlaneHandoff::Waiting | ControlPlaneHandoff::Abandoned => match admitted {
+            Ok(Ok(())) => Err(VmError::InvalidState(format!(
+                "ERR_AGENTOS_CONTROL_PLANE_BLOCKING: {operation} finished without a result"
+            ))),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(VmError::Execution(format!(
+                "ERR_AGENTOS_CONTROL_PLANE_TIMEOUT: {operation} did not finish within {}ms; raise runtime.blocking.jobTimeoutMs",
+                timeout.as_millis()
+            ))),
+        },
+    }
+}
+
+struct VmBuildInput<B> {
+    connection_id: String,
+    session_id: String,
+    vm_id: String,
+    vm_generation: u64,
+    create_config: vm_config::CreateVmConfig,
+    root_filesystem: RootFilesystemDescriptor,
+    permissions_policy: vm_config::PermissionsPolicy,
+    resource_limits: agentos_vm_kernel::resource_accounting::ResourceLimits,
+    max_capabilities: usize,
+    vm_resources: Arc<ResourceLedger>,
+    vm_runtime_context: agentos_driver_tokio::DriverHandle,
+    bridge: crate::state::SharedBridge<B>,
+    dns: VmDnsConfig,
+    dns_resolver: agentos_vm_kernel::dns::SharedDnsResolver,
+    create_loopback_exempt_ports: BTreeSet<u16>,
+    database: Option<crate::vm_sqlite::SharedVmSqliteDatabase>,
+    sidecar_requests: crate::state::SharedSidecarRequestClient,
+    #[cfg(test)]
+    scratch_observer: Option<Arc<Mutex<Option<PathBuf>>>>,
+}
+
+struct BuiltVmKernel {
+    cwd: PathBuf,
+    guest_cwd: String,
+    host_cwd: PathBuf,
+    guest_env: BTreeMap<String, String>,
+    loaded_snapshot: Option<FilesystemSnapshot>,
+    kernel: crate::state::SidecarKernel,
+    kernel_socket_readiness: KernelSocketReadinessRegistry,
+    command_guest_paths: BTreeMap<String, String>,
+    unix_socket_host_dir: PathBuf,
+}
+
+fn build_vm_kernel<B>(input: VmBuildInput<B>) -> Result<BuiltVmKernel, VmError>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let VmBuildInput {
+        connection_id,
+        session_id,
+        vm_id,
+        vm_generation,
+        create_config,
+        root_filesystem,
+        permissions_policy,
+        resource_limits,
+        max_capabilities,
+        vm_resources,
+        vm_runtime_context,
+        bridge,
+        dns,
+        dns_resolver,
+        create_loopback_exempt_ports,
+        database,
+        sidecar_requests,
+        #[cfg(test)]
+        scratch_observer,
+    } = input;
+    #[cfg(test)]
+    let cwd = COMMAND_PROJECTION_SCRATCH_OBSERVER.with(|observer| {
+        let previous = observer.replace(scratch_observer);
+        let cwd = create_vm_runtime_scratch_root(&vm_id);
+        observer.replace(previous);
+        cwd
+    })?;
+    #[cfg(not(test))]
+    let cwd = create_vm_runtime_scratch_root(&vm_id)?;
+    let result = (|| {
+        let (guest_cwd, host_cwd) = resolve_vm_cwds(create_config.cwd.as_ref(), &cwd)?;
+        fs::create_dir_all(&host_cwd)
+            .map_err(|error| VmError::Io(format!("failed to create VM cwd: {error}")))?;
+        bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
+        let permissions = bridge_permissions(bridge.clone(), &vm_id);
+        let configured_env = create_vm_environment(&create_config)?;
+        let mut guest_env = filter_env(&vm_id, &configured_env, &permissions);
+        // Trusted bootstrap uses operator-only kernel paths; guest permission
+        // enforcement remains active throughout creation.
+        let native_root = native_root_plugin_from_config(create_config.native_root.as_ref())?;
+        let loaded_snapshot = if native_root.is_some() {
+            None
+        } else {
+            bridge.with_mut(|bridge| {
+                bridge.load_filesystem_state(LoadFilesystemStateRequest {
+                    vm_id: vm_id.clone(),
+                })
+            })?
+        };
+
+        let mut config = KernelVmConfig::new(vm_id.clone());
+        config.vm_generation = vm_generation;
+        config.cwd = guest_cwd.clone();
+        config.env = guest_env.clone();
+        if let Some(user) = create_config.user.as_ref() {
+            config.user = agentos_vm_kernel::user::UserConfig {
+                uid: user.uid,
+                gid: user.gid,
+                euid: user.euid,
+                egid: user.egid,
+                username: user.username.clone(),
+                homedir: user.homedir.clone(),
+                shell: user.shell.clone(),
+                gecos: user.gecos.clone(),
+                group_name: user.group_name.clone(),
+                supplementary_gids: user.supplementary_gids.clone().unwrap_or_default(),
+                accounts: user
+                    .accounts
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|account| agentos_vm_kernel::user::UserAccount {
+                        uid: account.uid,
+                        gid: account.gid,
+                        username: account.username.clone(),
+                        homedir: account.homedir.clone(),
+                        shell: account.shell.clone(),
+                        gecos: account.gecos.clone().unwrap_or_default(),
+                        supplementary_gids: account.supplementary_gids.clone(),
+                    })
+                    .collect(),
+                groups: user
+                    .groups
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|group| agentos_vm_kernel::user::GroupRecord {
+                        gid: group.gid,
+                        name: group.name.clone(),
+                        members: group.members.clone(),
+                    })
+                    .collect(),
+            };
+        }
+        config.permissions = permissions;
+        config.dns = agentos_vm_kernel::dns::DnsConfig {
+            name_servers: dns.name_servers.clone(),
+            overrides: dns.overrides.clone(),
+        };
+        config.dns_resolver = dns_resolver;
+        config.loopback_exempt_ports = create_loopback_exempt_ports.clone();
+        let mount_plugins = build_mount_plugin_registry::<B>()?;
+        let mut root_mount_table = if let Some(native_root) = native_root.as_ref() {
+            build_native_root_mount_table(
+                &mount_plugins,
+                native_root,
+                &root_filesystem,
+                MountPluginContext {
+                    bridge: bridge.clone(),
+                    runtime_context: vm_runtime_context.clone(),
+                    connection_id: connection_id.clone(),
+                    session_id: session_id.clone(),
+                    vm_id: vm_id.clone(),
+                    sidecar_requests,
+                    database: database.clone(),
+                    max_pread_bytes: resource_limits.max_pread_bytes,
+                    initial_root_metadata: None,
+                },
+            )?
+        } else {
+            crate::core::build_root_mount_table_with_loaded_snapshot(
+                &create_config.root_filesystem,
+                loaded_snapshot.as_ref(),
+                &resource_limits,
+            )
+            .map_err(|error| VmError::InvalidState(error.to_string()))?
+        };
+        crate::core::root_fs::complete_agentos_root_directories(
+            &mut root_mount_table,
+            &create_config.root_filesystem,
+            native_root.is_some(),
+        )
+        .map_err(|error| VmError::InvalidState(error.to_string()))?;
+        config.resources = resource_limits;
+        let mut kernel = KernelVm::new(root_mount_table, config);
+        kernel
+            .set_socket_resource_ledger(Arc::clone(&vm_resources))
+            .map_err(kernel_error)?;
+        let kernel_socket_readiness: KernelSocketReadinessRegistry = Arc::new(
+            crate::state::KernelSocketReadinessRegistryState::new(max_capabilities),
+        );
+        let readiness_targets = Arc::clone(&kernel_socket_readiness);
+        kernel.set_socket_readiness_sink(Some(move |readiness: SocketReadiness| {
+            for target in readiness_targets.targets(readiness.socket_id) {
+                send_kernel_socket_readiness_event(target, readiness);
+            }
+        }));
+        let command_guest_paths = discover_command_guest_paths(&mut kernel)?;
+        refresh_guest_command_path_env_from_map(&mut guest_env, &command_guest_paths);
+        let mut execution_commands = default_execution_commands(create_config.defaults_profile());
+        if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
+            execution_commands.extend(bootstrap_commands.iter().cloned());
+        }
+        execution_commands.extend(command_guest_paths.keys().cloned());
+        kernel
+            .register_driver_for_operator(CommandDriver::new(
+                EXECUTION_DRIVER_NAME,
+                execution_commands,
+            ))
+            .map_err(kernel_error)?;
+        kernel
+            .finish_root_filesystem_bootstrap()
+            .map_err(kernel_error)?;
+        let unix_socket_host_dir = create_vm_unix_socket_host_dir()?;
+        Ok(BuiltVmKernel {
+            cwd: cwd.clone(),
+            guest_cwd,
+            host_cwd,
+            guest_env,
+            loaded_snapshot,
+            kernel,
+            kernel_socket_readiness,
+            command_guest_paths,
+            unix_socket_host_dir,
+        })
+    })();
+    if result.is_err() {
+        cleanup_path(&cwd, "failed VM runtime scratch root");
+    }
+    result
+}
+
 impl<B> PreparedCreateVm<B>
 where
     B: VmManagerHost + Send + 'static,
@@ -2604,15 +2989,9 @@ where
             process_event_notify,
             extensions,
         } = self;
-        let cwd = create_vm_runtime_scratch_root(&vm_id)?;
         let cleanup_bridge = bridge.clone();
         let cleanup_vm_id = vm_id.clone();
-        let cleanup_cwd = cwd.clone();
         let result = async move {
-            let (guest_cwd, host_cwd) = resolve_vm_cwds(create_config.cwd.as_ref(), &cwd)?;
-            fs::create_dir_all(&host_cwd)
-                .map_err(|error| VmError::Io(format!("failed to create VM cwd: {error}")))?;
-            let resource_limits = limits.resources.clone();
             let database = match create_config.database.as_ref() {
                 Some(descriptor) => {
                     let database = crate::vm_sqlite::resolve_vm_sqlite(
@@ -2655,147 +3034,56 @@ where
                 None => None,
             };
             let capabilities = CapabilityRegistry::new(vm_generation, Arc::clone(&vm_resources));
-            bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
-            let permissions = bridge_permissions(bridge.clone(), &vm_id);
-            let configured_env = create_vm_environment(&create_config)?;
-            let mut guest_env = filter_env(&vm_id, &configured_env, &permissions);
-        // Trusted bootstrap uses operator-only kernel paths; guest permission
-        // enforcement remains active throughout creation.
-            let native_root = native_root_plugin_from_config(create_config.native_root.as_ref())?;
-            let loaded_snapshot = if native_root.is_some() {
-                None
-            } else {
-                bridge.with_mut(|bridge| {
-                    bridge.load_filesystem_state(LoadFilesystemStateRequest {
-                        vm_id: vm_id.clone(),
-                    })
-                })?
+            let defaults_profile = create_config.defaults_profile();
+            let js_runtime = create_config.js_runtime.clone();
+            let wasm_backend = create_config.wasm_backend.unwrap_or_default();
+            let root_filesystem_mode = protocol_root_filesystem_mode(root_filesystem.mode);
+            let build = VmBuildInput {
+                connection_id: connection_id.clone(),
+                session_id: session_id.clone(),
+                vm_id: vm_id.clone(),
+                vm_generation,
+                create_config,
+                root_filesystem,
+                permissions_policy: permissions_policy.clone(),
+                resource_limits: limits.resources.clone(),
+                max_capabilities: limits.reactor.max_capabilities,
+                vm_resources: Arc::clone(&vm_resources),
+                vm_runtime_context: vm_runtime_context.clone(),
+                bridge: bridge.clone(),
+                dns: dns.clone(),
+                dns_resolver,
+                create_loopback_exempt_ports: create_loopback_exempt_ports.clone(),
+                database: database.clone(),
+                sidecar_requests,
+                #[cfg(test)]
+                scratch_observer: COMMAND_PROJECTION_SCRATCH_OBSERVER.with(|observer| observer.borrow().clone()),
             };
-
-            let mut config = KernelVmConfig::new(vm_id.clone());
-            config.vm_generation = vm_generation;
-            config.cwd = guest_cwd.clone();
-            config.env = guest_env.clone();
-            if let Some(user) = create_config.user.as_ref() {
-                config.user = agentos_vm_kernel::user::UserConfig {
-                    uid: user.uid,
-                    gid: user.gid,
-                    euid: user.euid,
-                    egid: user.egid,
-                    username: user.username.clone(),
-                    homedir: user.homedir.clone(),
-                    shell: user.shell.clone(),
-                    gecos: user.gecos.clone(),
-                    group_name: user.group_name.clone(),
-                    supplementary_gids: user.supplementary_gids.clone().unwrap_or_default(),
-                    accounts: user
-                        .accounts
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|account| agentos_vm_kernel::user::UserAccount {
-                            uid: account.uid,
-                            gid: account.gid,
-                            username: account.username.clone(),
-                            homedir: account.homedir.clone(),
-                            shell: account.shell.clone(),
-                            gecos: account.gecos.clone().unwrap_or_default(),
-                            supplementary_gids: account.supplementary_gids.clone(),
-                        })
-                        .collect(),
-                    groups: user
-                        .groups
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|group| agentos_vm_kernel::user::GroupRecord {
-                            gid: group.gid,
-                            name: group.name.clone(),
-                            members: group.members.clone(),
-                        })
-                        .collect(),
-                };
-            }
-            config.permissions = permissions;
-            config.dns = agentos_vm_kernel::dns::DnsConfig {
-                name_servers: dns.name_servers.clone(),
-                overrides: dns.overrides.clone(),
-            };
-            config.dns_resolver = dns_resolver;
-            config.loopback_exempt_ports = create_loopback_exempt_ports.clone();
-            let mount_plugins = build_mount_plugin_registry::<B>()?;
-            let mut root_mount_table = if let Some(native_root) = native_root.as_ref() {
-                build_native_root_mount_table(
-                    &mount_plugins,
-                    native_root,
-                    &root_filesystem,
-                    MountPluginContext {
-                        bridge: bridge.clone(),
-                        runtime_context: vm_runtime_context.clone(),
-                        connection_id: connection_id.clone(),
-                        session_id: session_id.clone(),
-                        vm_id: vm_id.clone(),
-                        sidecar_requests,
-                        database: database.clone(),
-                        max_pread_bytes: resource_limits.max_pread_bytes,
-                        initial_root_metadata: None,
-                    },
-                )?
-            } else {
-                crate::core::build_root_mount_table_with_loaded_snapshot(
-                    &create_config.root_filesystem,
-                    loaded_snapshot.as_ref(),
-                    &resource_limits,
-                )
-                .map_err(|error| VmError::InvalidState(error.to_string()))?
-            };
-            crate::core::root_fs::complete_agentos_root_directories(
-                &mut root_mount_table,
-                &create_config.root_filesystem,
-                native_root.is_some(),
-            ).map_err(|error| VmError::InvalidState(error.to_string()))?;
-            config.resources = resource_limits;
-            let mut kernel = KernelVm::new(root_mount_table, config);
-            kernel
-                .set_socket_resource_ledger(Arc::clone(&vm_resources))
-                .map_err(kernel_error)?;
-            let kernel_socket_readiness: KernelSocketReadinessRegistry = Arc::new(
-                crate::state::KernelSocketReadinessRegistryState::new(
-                    limits.reactor.max_capabilities,
-                ),
-            );
-            let readiness_targets = Arc::clone(&kernel_socket_readiness);
-            kernel.set_socket_readiness_sink(Some(move |readiness: SocketReadiness| {
-                for target in readiness_targets.targets(readiness.socket_id) {
-                    send_kernel_socket_readiness_event(target, readiness);
-                }
-            }));
-            let command_guest_paths = discover_command_guest_paths(&mut kernel)?;
-            refresh_guest_command_path_env_from_map(&mut guest_env, &command_guest_paths);
-            let mut execution_commands =
-                default_execution_commands(create_config.defaults_profile());
-            if let Some(bootstrap_commands) = &create_config.bootstrap_commands {
-                execution_commands.extend(bootstrap_commands.iter().cloned());
-            }
-            execution_commands.extend(command_guest_paths.keys().cloned());
-            kernel
-                .register_driver_for_operator(CommandDriver::new(
-                    EXECUTION_DRIVER_NAME,
-                    execution_commands,
-                ))
-                .map_err(kernel_error)?;
-            kernel
-                .finish_root_filesystem_bootstrap()
-                .map_err(kernel_error)?;
-            bridge.set_vm_permissions(&vm_id, &permissions_policy)?;
-            bridge.emit_lifecycle(&vm_id, LifecycleState::Starting)?;
-            bridge.emit_lifecycle(&vm_id, LifecycleState::Ready)?;
-            bridge.emit_log(
-                &vm_id,
-                format!("created VM {vm_id} for session {session_id}"),
-            )?;
-
-            let unix_socket_host_dir = create_vm_unix_socket_host_dir()?;
+            let abandoned_bridge = bridge.clone();
+            let abandoned_vm_id = vm_id.clone();
+            let BuiltVmKernel {
+                cwd, guest_cwd, host_cwd, guest_env, loaded_snapshot, kernel,
+                kernel_socket_readiness, command_guest_paths, unix_socket_host_dir,
+            } = run_control_plane_blocking(
+                &vm_runtime_context,
+                ControlPlaneJob::Create,
+                "CreateVm",
+                move || build_vm_kernel(build),
+                move |late| {
+                    if let Ok(BuiltVmKernel { cwd, unix_socket_host_dir, mut kernel, .. }) = late {
+                        if let Err(error) = kernel.dispose() {
+                            eprintln!("ERR_AGENTOS_VM_CREATE_CLEANUP: vm_id={abandoned_vm_id} phase=kernel error={error}");
+                        }
+                        drop(kernel);
+                        cleanup_path(&unix_socket_host_dir, "abandoned VM socket directory");
+                        cleanup_path(&cwd, "abandoned VM runtime scratch root");
+                    }
+                    if let Err(error) = abandoned_bridge.clear_vm_permissions(&abandoned_vm_id) {
+                        eprintln!("ERR_AGENTOS_VM_CREATE_CLEANUP: vm_id={abandoned_vm_id} phase=permission_reset error={error}");
+                    }
+                },
+            )
+            .await??;
             let pending_stdin_bytes_budget = VmPendingByteBudget::new(
                 limits.process.pending_stdin_bytes,
                 agentos_resource_accounting::queue_tracker::TrackedLimit::PendingKernelStdinBytes,
@@ -2837,13 +3125,13 @@ where
                 create_loopback_exempt_ports,
                 base_guest_env: guest_env.clone(),
                 guest_env,
-                standalone_wasm_backend: match create_config.wasm_backend.unwrap_or_default() {
+                standalone_wasm_backend: match wasm_backend {
                     vm_config::StandaloneWasmBackend::V8 => crate::executor::StandaloneWasmBackend::V8,
                     vm_config::StandaloneWasmBackend::Wasmtime => crate::executor::StandaloneWasmBackend::Wasmtime,
                     vm_config::StandaloneWasmBackend::WasmtimeThreads => crate::executor::StandaloneWasmBackend::WasmtimeThreads,
                 },
                 requested_runtime: payload.runtime,
-                root_filesystem_mode: protocol_root_filesystem_mode(root_filesystem.mode),
+                root_filesystem_mode,
                 guest_cwd,
                 runtime_scratch_root: cwd,
                 host_cwd,
@@ -2853,9 +3141,9 @@ where
                 host_net_transfer_descriptions: Arc::new(Mutex::new(BTreeMap::new())),
                 loaded_snapshot,
                 configuration: VmConfiguration {
-                    defaults_profile: create_config.defaults_profile(),
+                    defaults_profile,
                     permissions: permissions_policy,
-                    js_runtime: create_config.js_runtime.clone(),
+                    js_runtime,
                     ..VmConfiguration::default()
                 },
                 layers: VmLayerStore::default(),
@@ -2889,6 +3177,17 @@ where
                 unix_address_registry: Arc::new(Mutex::new(BTreeMap::new())),
                 unix_socket_host_dir,
             };
+            // Host lifecycle publication follows successful worker handoff.
+            // A canceled or timed-out bootstrap can never publish Ready.
+            let lifecycle = (|| {
+                bridge.emit_lifecycle(&vm_id, LifecycleState::Starting)?;
+                bridge.emit_log(&vm_id, format!("created VM {vm_id} for session {session_id}"))?;
+                bridge.emit_lifecycle(&vm_id, LifecycleState::Ready)
+            })();
+            if let Err(error) = lifecycle {
+                cleanup_unpublished_vm(&bridge, &vm_id, &vm);
+                return Err(error);
+            }
             tracing::info!(target: "agentos_vm::perf", phase = "create_vm", elapsed_ms = __t.elapsed().as_millis() as u64, "vm phase");
             Ok(CompletedCreateVm {
                 request,
@@ -2902,7 +3201,6 @@ where
         }
         .await;
         if result.is_err() {
-            cleanup_path(&cleanup_cwd, "failed VM create shadow root");
             if let Err(error) = cleanup_bridge.clear_vm_permissions(&cleanup_vm_id) {
                 eprintln!(
                     "ERR_AGENTOS_VM_CREATE_CLEANUP: vm_id={cleanup_vm_id} phase=permission_reset error={error}"
@@ -2949,8 +3247,33 @@ where
             VmLifecycleState::Disposing,
         )];
 
-        let terminate_result =
-            terminate_detached_vm_processes::<B>(&bridge, &vm_id, &mut self.vm, &mut events).await;
+        let exit_drain = drain_detached_vm_exit_events::<B>(
+            &bridge,
+            &vm_id,
+            &mut self.vm,
+            &mut events,
+            &mut self.queued_exits,
+        );
+        let completed_executions = self
+            .vm
+            .executions
+            .iter()
+            .filter(|(_, execution)| execution.public && !execution.context)
+            .filter_map(|(execution_id, execution)| {
+                let result = execution.result.as_ref()?;
+                Some(crate::protocol::ExecutionCompletedEvent {
+                    execution_id: execution_id.clone(),
+                    generation: execution.descriptor.generation,
+                    outcome: result.outcome.clone(),
+                    exit_code: result.exit_code,
+                    exit_signal: result.exit_signal,
+                    error: result.error.clone(),
+                })
+            })
+            .collect();
+        let terminate_result = exit_drain.and(
+            terminate_detached_vm_processes::<B>(&bridge, &vm_id, &mut self.vm, &mut events).await,
+        );
         if let Some(task) = self.vm.execution_retention_wake_task.take() {
             task.abort();
         }
@@ -2984,14 +3307,57 @@ where
                 "ERR_AGENTOS_VM_TEARDOWN_CLEANUP: vm_id={vm_id} phase=mount_shutdown error={error}"
             );
         }
-        let mut teardown_result = finish_vm_teardown_owned(&bridge, &vm_id, &mut self.vm);
         let shutdown_deadline = Duration::from_millis(self.vm.limits.reactor.shutdown_deadline_ms);
         let teardown_deadline = absolute_deadline.map_or_else(
             || tokio::time::Instant::now() + shutdown_deadline,
             |deadline| deadline.min(tokio::time::Instant::now() + shutdown_deadline),
         );
+        // The process-scoped supervisor owns this admission even if the
+        // caller reaches its deadline or VM-scoped admission closes. There is
+        // only one kernel owner and no inline fallback after timeout.
+        let kernel_owner = Arc::clone(&host_path_cleanup.cleanup);
+        *kernel_owner
+            .detached_kernel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(self.vm.kernel);
+        let bridge_for_teardown = bridge.clone();
+        let vm_id_for_teardown = vm_id.clone();
+        let runtime = self.vm.runtime_context.process_scope();
+        let worker_runtime = runtime.clone();
+        let teardown = runtime.spawn_owned(
+            agentos_driver_tokio::TaskClass::Vm,
+            agentos_driver_tokio::TaskOwner::Vm {
+                generation: self.vm.generation,
+            },
+            |_| {},
+            async move {
+                let result = run_kernel_teardown_when_available(
+                    &worker_runtime,
+                    &bridge_for_teardown,
+                    &vm_id_for_teardown,
+                    kernel_owner,
+                )
+                .await;
+                if let Err(error) | Ok(Err(error)) = &result {
+                    eprintln!(
+                        "ERR_AGENTOS_VM_TEARDOWN_KERNEL: vm_id={vm_id_for_teardown} error={error}"
+                    );
+                }
+                result
+            },
+        );
+        let (mut teardown_result, kernel_teardown_unconfirmed) =
+            wait_for_kernel_teardown(teardown, teardown_deadline, &vm_id, shutdown_deadline).await;
+        self.vm.vm_fetch_streams.clear();
         let mut sqlite_close_timed_out = false;
-        if let Some(database) = self.vm.database.take() {
+        // The blocking owner may still hold a filesystem backed by the
+        // database. Do not close that database concurrently with teardown.
+        if let Some(database) = self
+            .vm
+            .database
+            .take()
+            .filter(|_| !kernel_teardown_unconfirmed)
+        {
             let (close_result, timed_out) = close_vm_database_before_deadline(
                 &vm_id,
                 database.as_ref(),
@@ -3017,7 +3383,14 @@ where
             eprintln!("ERR_AGENTOS_VM_FAIRNESS_RETIRE: vm_id={vm_id} error={error}");
         }
 
-        let cache_release = release_vm_import_cache_owners(&self.vm);
+        let cache_release = if kernel_teardown_unconfirmed {
+            Err(VmError::host(
+                "ERR_AGENTOS_VM_PATH_CLEANUP_UNCONFIRMED",
+                "kernel teardown has not finished; VM host paths remain owned by the worker",
+            ))
+        } else {
+            release_vm_import_cache_owners(&self.vm.execution_engines)
+        };
         self.cache_leases.release();
         let cleanup_result = match cache_release {
             Ok(()) => {
@@ -3043,7 +3416,8 @@ where
             teardown_deadline.saturating_duration_since(tokio::time::Instant::now()),
         )
         .await;
-        let deadline_expired = sqlite_close_timed_out || reconciliation_timed_out;
+        let deadline_expired =
+            kernel_teardown_unconfirmed || sqlite_close_timed_out || reconciliation_timed_out;
         let quarantine_reason = vm_quarantine_reason(
             capability_admission_error.is_some(),
             fairness_retirement_result.is_err(),
@@ -3055,12 +3429,19 @@ where
             let teardown_deadline_expired = matches!(&reason, VmQuarantineReason::TeardownDeadline);
             let mut diagnostic = quarantine_diagnostic(
                 &vm_id,
-                &self.vm,
+                QuarantineDiagnosticVm {
+                    generation: self.vm.generation,
+                    shutdown_deadline_ms: self.vm.limits.reactor.shutdown_deadline_ms,
+                    resources: self.vm.resources.as_ref(),
+                },
                 reconciliation,
                 reason.clone(),
                 capability_admission_error.as_deref(),
                 fairness_retirement_result.as_ref().err(),
             );
+            if kernel_teardown_unconfirmed {
+                diagnostic.push_str("; kernel teardown is unconfirmed; restart the sidecar worker to release quarantine");
+            }
             if sqlite_close_timed_out {
                 diagnostic.push_str("; SQLite close is unconfirmed; generation cannot be reaped; restart the sidecar worker to release quarantine");
             }
@@ -3085,7 +3466,7 @@ where
                     runtime_context: self.vm.runtime_context.clone(),
                     capabilities: self.vm.capabilities.clone(),
                     reason,
-                    sqlite_close_unconfirmed: sqlite_close_timed_out,
+                    teardown_unconfirmed: sqlite_close_timed_out || kernel_teardown_unconfirmed,
                 }),
                 Err(if teardown_deadline_expired {
                     VmError::VmTeardownDeadline {
@@ -3110,6 +3491,7 @@ where
             session_id,
             vm_id,
             events: std::mem::take(&mut events),
+            completed_executions,
             quarantine,
             result,
         }
@@ -3146,6 +3528,7 @@ fn drain_detached_vm_exit_events<B>(
     vm_id: &str,
     vm: &mut VmState,
     events: &mut Vec<EventFrame>,
+    queued_exits: &mut BTreeMap<String, ActiveExecutionEvent>,
 ) -> Result<(), VmError>
 where
     B: VmManagerHost + Send + 'static,
@@ -3160,7 +3543,11 @@ where
                 .active_processes
                 .get_mut(&process_id)
                 .expect("active process");
-            let exit_code = match process.take_teardown_exit_event()? {
+            let terminal = match queued_exits.remove(&process_id) {
+                Some(exit) => Some(exit),
+                None => process.take_teardown_exit_event()?,
+            };
+            let exit_code = match terminal {
                 Some(ActiveExecutionEvent::Exited(code)) => code,
                 Some(ActiveExecutionEvent::Common(ExecutionEvent::Exited(exit))) => {
                     process.observe_runtime_exit(exit)?
@@ -3216,7 +3603,7 @@ where
                 wake
             })
             .collect::<Vec<_>>();
-        drain_detached_vm_exit_events::<B>(bridge, vm_id, vm, events)?;
+        drain_detached_vm_exit_events::<B>(bridge, vm_id, vm, events, &mut BTreeMap::new())?;
         if vm.active_processes.is_empty() || tokio::time::Instant::now() >= deadline {
             return Ok(());
         }
@@ -3230,7 +3617,13 @@ where
         });
         if tokio::time::timeout_at(deadline, changed).await.is_err() {
             // Observe an exit delivered at the deadline before the fallback.
-            return drain_detached_vm_exit_events::<B>(bridge, vm_id, vm, events);
+            return drain_detached_vm_exit_events::<B>(
+                bridge,
+                vm_id,
+                vm,
+                events,
+                &mut BTreeMap::new(),
+            );
         }
     }
 }
@@ -3269,7 +3662,9 @@ where
             }
         }
     }
-    if let Err(error) = drain_detached_vm_exit_events::<B>(bridge, vm_id, vm, events) {
+    if let Err(error) =
+        drain_detached_vm_exit_events::<B>(bridge, vm_id, vm, events, &mut BTreeMap::new())
+    {
         record_vm_teardown_error(vm_id, "exit_drain", error, &mut first_error);
     }
     let process_ids = vm.active_processes.keys().cloned().collect::<Vec<_>>();
@@ -3347,6 +3742,72 @@ where
     first_error.map_or(Ok(()), Err)
 }
 
+async fn run_kernel_teardown_when_available<B>(
+    runtime: &agentos_driver_tokio::DriverHandle,
+    bridge: &crate::state::SharedBridge<B>,
+    vm_id: &str,
+    kernel_owner: Arc<HostPathCleanup>,
+) -> Result<Result<(), VmError>, VmError>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
+    let permits = control_plane_permits(runtime);
+    let dispose = permits
+        .gate(ControlPlaneJob::Dispose)
+        .acquire()
+        .await
+        .map_err(|error| VmError::Execution(format!("admit kernel teardown: {error}")))?;
+    let worker =
+        Arc::new(permits.workers.acquire().await.map_err(|error| {
+            VmError::Execution(format!("admit kernel teardown worker: {error}"))
+        })?);
+    drop(dispose);
+    let bridge = bridge.clone();
+    let vm_id = vm_id.to_owned();
+    runtime
+        .run_blocking_when_available(CONTROL_PLANE_BLOCKING_JOB_RESERVATION_BYTES, move || {
+            let _worker = worker;
+            let mut kernel = kernel_owner
+                .detached_kernel
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+                .expect("one worker owns the detached kernel");
+            finish_vm_kernel_teardown(&bridge, &vm_id, &mut kernel)
+        })
+        .await
+        .map_err(VmError::from)
+}
+
+type KernelTeardownTask = tokio::task::JoinHandle<Result<Result<(), VmError>, VmError>>;
+
+async fn wait_for_kernel_teardown<E: Into<VmError>>(
+    teardown: Result<KernelTeardownTask, E>,
+    deadline: tokio::time::Instant,
+    vm_id: &str,
+    shutdown_deadline: Duration,
+) -> (Result<(), VmError>, bool) {
+    let task = match teardown {
+        Ok(task) => task,
+        Err(error) => return (Err(error.into()), true),
+    };
+    match tokio::time::timeout_at(deadline, task).await {
+        Ok(Ok(Ok(result))) => (result, false),
+        Ok(Ok(Err(error))) => (Err(error), true),
+        Ok(Err(error)) => (Err(VmError::Execution(format!(
+            "ERR_AGENTOS_VM_TEARDOWN_KERNEL: vm_id={vm_id} blocking teardown task stopped: {error}"
+        ))), true),
+        Err(_) => (Err(VmError::VmTeardownDeadline {
+            vm_id: vm_id.to_owned(),
+            deadline_ms: shutdown_deadline.as_millis().try_into().unwrap_or(u64::MAX),
+            message: format!(
+                "ERR_AGENTOS_VM_TEARDOWN_DEADLINE: vm_id={vm_id} phase=kernel; raise limits.reactor.shutdownDeadlineMs"
+            ),
+        }), true),
+    }
+}
+
 fn finish_vm_teardown_owned<B>(
     bridge: &crate::state::SharedBridge<B>,
     vm_id: &str,
@@ -3356,10 +3817,31 @@ where
     B: VmManagerHost + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let result = finish_vm_kernel_teardown(bridge, vm_id, &mut vm.kernel);
+    vm.vm_fetch_streams.clear();
+    result
+}
+
+fn finish_vm_kernel_teardown<B>(
+    bridge: &crate::state::SharedBridge<B>,
+    vm_id: &str,
+    kernel: &mut crate::state::SidecarKernel,
+) -> Result<(), VmError>
+where
+    B: VmManagerHost + Send + 'static,
+    BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+{
     let mut first_error = None;
-    let snapshot = if vm.kernel.root_filesystem_mut().is_some() {
-        match vm
-            .kernel
+    let persists_filesystem_state =
+        match bridge.with_mut(|bridge| Ok(bridge.persists_filesystem_state())) {
+            Ok(persists) => persists,
+            Err(error) => {
+                record_vm_teardown_error(vm_id, "filesystem_persistence", error, &mut first_error);
+                false
+            }
+        };
+    let snapshot = if persists_filesystem_state && kernel.root_filesystem_mut().is_some() {
+        match kernel
             .snapshot_root_filesystem()
             .map_err(kernel_error)
             .and_then(|snapshot| encode_root_snapshot(&snapshot).map_err(root_filesystem_error))
@@ -3379,12 +3861,9 @@ where
     if let Err(error) = bridge.emit_lifecycle(vm_id, LifecycleState::Terminated) {
         record_vm_teardown_error(vm_id, "lifecycle", error, &mut first_error);
     }
-    if let Err(error) = vm.kernel.dispose().map_err(kernel_error) {
+    if let Err(error) = kernel.dispose().map_err(kernel_error) {
         record_vm_teardown_error(vm_id, "kernel", error, &mut first_error);
     }
-    // Kernel disposal closes the sockets; release retained stream leases before
-    // reconciliation waits for their capabilities and resource charges to drain.
-    vm.vm_fetch_streams.clear();
     if let Some(snapshot) = snapshot {
         if let Err(error) = bridge.with_mut(|bridge| {
             bridge.flush_filesystem_state(FlushFilesystemStateRequest {
@@ -3419,9 +3898,19 @@ fn nonzero_resource_usage(resources: &ResourceLedger) -> String {
     }
 }
 
+struct QuarantineDiagnosticVm<'a> {
+    generation: u64,
+    shutdown_deadline_ms: u64,
+    resources: &'a ResourceLedger,
+}
+
 fn quarantine_diagnostic(
     vm_id: &str,
-    vm: &VmState,
+    QuarantineDiagnosticVm {
+        generation,
+        shutdown_deadline_ms,
+        resources,
+    }: QuarantineDiagnosticVm<'_>,
     reconciliation: VmReconciliationSnapshot,
     reason: VmQuarantineReason,
     capability_admission_error: Option<&str>,
@@ -3430,25 +3919,25 @@ fn quarantine_diagnostic(
     match reason {
         VmQuarantineReason::TeardownDeadline => format!(
             "ERR_AGENTOS_VM_TEARDOWN_DEADLINE: vm_id={vm_id} generation={} active_tasks={} outstanding_capabilities={} ledger_zero={} ledger_usage={} deadline_ms={}; raise limits.reactor.shutdownDeadlineMs",
-            vm.generation,
+            generation,
             reconciliation.active_tasks,
             reconciliation.outstanding_capabilities,
             reconciliation.ledger_zero,
-            nonzero_resource_usage(vm.resources.as_ref()),
-            vm.limits.reactor.shutdown_deadline_ms
+            nonzero_resource_usage(resources),
+            shutdown_deadline_ms
         ),
         VmQuarantineReason::ResourceIntegrity => format!(
             "ERR_AGENTOS_VM_RESOURCE_INTEGRITY: vm_id={vm_id} generation={} accounting integrity failed; generation cannot be reaped",
-            vm.generation
+            generation
         ),
         VmQuarantineReason::CapabilityRegistryIntegrity => format!(
             "ERR_AGENTOS_VM_CAPABILITY_INTEGRITY: vm_id={vm_id} generation={} capability admission could not be closed; generation cannot be reaped; error={}",
-            vm.generation,
+            generation,
             capability_admission_error.unwrap_or("unknown")
         ),
         VmQuarantineReason::FairnessIntegrity => format!(
             "ERR_AGENTOS_VM_FAIRNESS_INTEGRITY: vm_id={vm_id} generation={} fairness membership could not be retired; generation cannot be reaped; error={}",
-            vm.generation,
+            generation,
             fairness_retirement_error
                 .map(ToString::to_string)
                 .unwrap_or_else(|| String::from("unknown"))
@@ -3636,20 +4125,6 @@ where
                     .collect(),
             );
         }
-        let existing_created_mountpoints = vm.package_created_mountpoints.clone();
-        let mut created_mountpoints = BTreeMap::new();
-        for (package_id, paths) in &package_mountpoint_paths {
-            let existing = existing_created_mountpoints.get(package_id);
-            let mut created = BTreeSet::new();
-            for path in paths {
-                if existing.is_some_and(|paths| paths.contains(path))
-                    || !vm.kernel.exists_for_operator(path).map_err(kernel_error)?
-                {
-                    created.insert(path.clone());
-                }
-            }
-            created_mountpoints.insert(package_id.clone(), created);
-        }
         let mut next_guest_env = vm.base_guest_env.clone();
         apply_package_provides_env(
             &mut next_guest_env,
@@ -3678,12 +4153,18 @@ where
                     &mut package_mountpoint_paths, context, MountRollback { mounted, created },
                 )?;
                 effective_mounts.extend(aliases);
-                // Preserve prior leaf ownership and add only actual new alias/leaf
-                // directories, not shared ancestors used solely during rollback.
-                for (id, paths) in &package_mountpoint_paths {
-                    created_mountpoints.entry(id.clone()).or_insert_with(BTreeSet::new)
-                        .extend(paths.intersection(created).cloned());
-                }
+                // Own only leaf directories this transaction created or the
+                // same package owned before it.
+                let created_mountpoints = package_mountpoint_paths
+                    .iter()
+                    .map(|(id, paths)| {
+                        let earlier = vm.package_created_mountpoints.get(id);
+                        let owned = paths.iter().filter(|path| {
+                            created.contains(*path) || earlier.is_some_and(|earlier| earlier.contains(*path))
+                        }).cloned().collect::<BTreeSet<_>>();
+                        (id.clone(), owned)
+                    })
+                    .collect::<BTreeMap<_, _>>();
 
         let mut command_guest_paths = discover_command_guest_paths(&mut vm.kernel)?;
         // Package command leaves live under their projection root (normally
@@ -4783,12 +5264,15 @@ fn bootstrap_native_root_filesystem(
     filesystem: &mut dyn MountedFileSystem,
     descriptor: &RootFilesystemDescriptor,
 ) -> Result<(), VmError> {
-    for (guest_path, mode, uid, gid) in ROOT_BOOTSTRAP_DIRS {
+    for (guest_path, mode, uid, gid) in crate::core::root_fs::agentos_bootstrap_directories() {
+        match filesystem.lstat(guest_path) {
+            Ok(_) => continue,
+            Err(error) if error.code() == "ENOENT" => {}
+            Err(error) => return Err(vfs_error(error)),
+        }
         filesystem.mkdir(guest_path, true).map_err(vfs_error)?;
-        filesystem.chmod(guest_path, *mode).map_err(vfs_error)?;
-        filesystem
-            .chown(guest_path, *uid, *gid)
-            .map_err(vfs_error)?;
+        filesystem.chown(guest_path, uid, gid).map_err(vfs_error)?;
+        filesystem.chmod(guest_path, mode).map_err(vfs_error)?;
     }
 
     seed_native_ca_certificates_bundle(filesystem)?;
@@ -5078,7 +5562,7 @@ where
                 detached,
                 created_mountpoints,
                 error,
-            ))
+            ));
         }
     };
 
@@ -5983,7 +6467,7 @@ fn resolve_host_path(value: Option<&String>) -> Result<PathBuf, VmError> {
 
 #[cfg(test)]
 thread_local! {
-    static COMMAND_PROJECTION_SCRATCH_OBSERVER: std::cell::RefCell<Option<Option<PathBuf>>> = const { std::cell::RefCell::new(None) };
+    static COMMAND_PROJECTION_SCRATCH_OBSERVER: std::cell::RefCell<Option<Arc<Mutex<Option<PathBuf>>>>> = const { std::cell::RefCell::new(None) };
 }
 
 fn create_vm_runtime_scratch_root(vm_id: &str) -> Result<PathBuf, VmError> {
@@ -5996,11 +6480,21 @@ fn create_vm_runtime_scratch_root(vm_id: &str) -> Result<PathBuf, VmError> {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        Ok(std::env::temp_dir().join(format!("agentos-vm-runtime-{vm_id}-{suffix}")))
+        let name = if crate::temp_reclaim::has_process_liveness_lock() {
+            format!(
+                "{}{}-{vm_id}-{suffix}",
+                crate::temp_reclaim::VM_RUNTIME_SCRATCH_PID_PREFIX,
+                std::process::id(),
+            )
+        } else {
+            format!("agentos-vm-runtime-{vm_id}-{suffix}")
+        };
+        Ok(std::env::temp_dir().join(name))
     })?;
     #[cfg(test)]
     COMMAND_PROJECTION_SCRATCH_OBSERVER.with(|observer| {
-        if let Some(slot) = observer.borrow_mut().as_mut() {
+        if let Some(slot) = observer.borrow().as_ref() {
+            let mut slot = slot.lock().expect("scratch observer lock");
             assert!(
                 slot.is_none(),
                 "test scratch observer permits one allocation"
@@ -6950,6 +7444,7 @@ mod tests {
                 #[cfg(feature = "test-support")]
                 gate: std::sync::Mutex::new(None),
             },
+            detached_kernel: std::sync::Mutex::new(None),
             cache_retirements: std::sync::Mutex::new(super::ImportCacheRetirements::default()),
             phase: std::sync::Mutex::new(HostPathCleanupPhase::WorkerResult(Ok(()))),
             changed: tokio::sync::Notify::new(),
@@ -7025,6 +7520,39 @@ mod tests {
             sidecar.finish_host_path_cleanup_before_shutdown(lost_at - Duration::from_millis(1),)
         )
         .is_err());
+    }
+
+    #[test]
+    fn kernel_teardown_deadline_leaves_the_admitted_owner_running() {
+        block_on(async {
+            let (release_admission, admission) = tokio::sync::oneshot::channel();
+            let (finished, completed) = tokio::sync::oneshot::channel();
+            let owner = tokio::spawn(async move {
+                admission.await.expect("admission is released");
+                finished.send(()).expect("test still observing the owner");
+                Ok(Ok(()))
+            });
+            let (result, unconfirmed) = super::wait_for_kernel_teardown(
+                Ok::<_, crate::VmError>(owner),
+                tokio::time::Instant::now() - Duration::from_millis(1),
+                "vm-blocked-admission",
+                Duration::from_millis(5),
+            )
+            .await;
+            assert!(unconfirmed);
+            assert!(matches!(
+                result,
+                Err(crate::VmError::VmTeardownDeadline { .. })
+            ));
+
+            release_admission
+                .send(())
+                .expect("deadline did not cancel admission");
+            tokio::time::timeout(Duration::from_secs(1), completed)
+                .await
+                .expect("the original owner finished after admission")
+                .expect("the original owner was not aborted");
+        });
     }
 
     #[test]
@@ -7467,7 +7995,7 @@ mod tests {
             assert!(matches!(error, crate::VmError::VmTeardownDeadline { .. }));
             assert!(sidecar.quarantined_vms.contains_key(&generation));
             let quarantined = sidecar.quarantined_vms.get(&generation).unwrap();
-            assert!(quarantined.sqlite_close_unconfirmed);
+            assert!(quarantined.teardown_unconfirmed);
             assert!(quarantined.reconciliation_snapshot().ledger_zero);
             sidecar.reap_reconciled_quarantined_vms();
             assert!(
@@ -7644,7 +8172,7 @@ mod tests {
             runtime_context,
             capabilities,
             reason: VmQuarantineReason::FairnessIntegrity,
-            sqlite_close_unconfirmed: false,
+            teardown_unconfirmed: false,
         };
         assert!(quarantined.reconciliation_snapshot().ledger_zero);
         assert!(!quarantined.can_reap());
@@ -7663,7 +8191,7 @@ mod tests {
             runtime_context,
             capabilities,
             reason: VmQuarantineReason::ResourceIntegrity,
-            sqlite_close_unconfirmed: false,
+            teardown_unconfirmed: false,
         };
         assert!(quarantined.reconciliation_snapshot().ledger_zero);
         assert!(!quarantined.can_reap());
@@ -7709,7 +8237,7 @@ mod tests {
                 runtime_context: runtime_context.clone(),
                 capabilities: capabilities.clone(),
                 reason: VmQuarantineReason::TeardownDeadline,
-                sqlite_close_unconfirmed: false,
+                teardown_unconfirmed: false,
             };
             assert!(!quarantined.can_reap());
 
@@ -7749,7 +8277,7 @@ mod tests {
                 runtime_context,
                 capabilities,
                 reason: VmQuarantineReason::TeardownDeadline,
-                sqlite_close_unconfirmed: false,
+                teardown_unconfirmed: false,
             })
             .expect("retain quarantined generation");
         assert_eq!(active_vm_metric(&sidecar), baseline + 1);

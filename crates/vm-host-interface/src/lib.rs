@@ -257,6 +257,11 @@ pub trait HostPersistence: VmHostTypes {
         request: FlushFilesystemStateRequest,
     ) -> Result<(), Self::Error>;
 
+    /// Whether the host keeps filesystem snapshots offered at VM disposal.
+    fn persists_filesystem_state(&self) -> bool {
+        true
+    }
+
     /// Release transient host memory for a permanently retired VM identity.
     /// Durable hosts may retain the flushed snapshot for external recovery.
     fn release_filesystem_state(&mut self, _vm_id: &str) -> Result<(), Self::Error> {

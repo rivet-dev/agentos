@@ -160,7 +160,7 @@ getrandom = { version = "0.2", optional = true }
 h2 = { version = "0.4", optional = true }
 http = { version = "1", optional = true }
 hmac = { version = "0.12", optional = true }
-hickory-resolver = { version = "=0.26.1", optional = true }
+hickory-resolver = { version = "=0.26.3", optional = true }
 jsonwebtoken = { version = "9.3.1", optional = true }
 log = { version = "0.4", optional = true }
 md-5 = { version = "0.10", optional = true }
@@ -282,8 +282,16 @@ name = "host_dir"
 required-features = ["runtime"]
 
 [[test]]
+name = "idle_guest_cpu"
+required-features = ["runtime", "node-v8"]
+
+[[test]]
 name = "kill_cleanup"
 required-features = ["runtime"]
+
+[[test]]
+name = "module_code_cache_isolation"
+required-features = ["runtime", "node-v8"]
 
 [[test]]
 name = "language_execution"

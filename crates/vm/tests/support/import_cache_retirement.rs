@@ -185,10 +185,12 @@ mod import_cache_retirement_tests {
         drop(good);
         leases.release();
         let result = block_on(ticket.activate_and_wait(None));
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("ERR_AGENTOS_IMPORT_CACHE_CLEANUP"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("ERR_AGENTOS_IMPORT_CACHE_CLEANUP")
+        );
         assert!(
             !good_root.exists() && !scratch.exists(),
             "a failed cache cannot skip later cache and VM paths"
@@ -285,20 +287,26 @@ mod import_cache_retirement_tests {
             roots.iter().all(|root| !root.exists()),
             "all engine-owned cache paths retire while manager remains alive: {roots:?}"
         );
-        assert!(manager
-            .javascript_engine
-            .import_cache_cleanup_guards(&id)
-            .is_empty());
+        assert!(
+            manager
+                .javascript_engine
+                .import_cache_cleanup_guards(&id)
+                .is_empty()
+        );
         #[cfg(feature = "wasm-v8")]
-        assert!(manager
-            .wasm_engine
-            .import_cache_cleanup_guards(&id)
-            .is_empty());
+        assert!(
+            manager
+                .wasm_engine
+                .import_cache_cleanup_guards(&id)
+                .is_empty()
+        );
         #[cfg(feature = "python-v8-pyodide")]
-        assert!(manager
-            .python_engine
-            .import_cache_cleanup_guards(&id)
-            .is_empty());
+        assert!(
+            manager
+                .python_engine
+                .import_cache_cleanup_guards(&id)
+                .is_empty()
+        );
     }
 
     fn ic_roots(
@@ -357,8 +365,10 @@ mod import_cache_retirement_tests {
             record_count,
             "collector deduplicates retirement authority"
         );
-        assert!(expected.iter().all(|root| actual.contains(root)),
-            "collector omitted actual engine-owned roots: expected {expected:?}, collected {actual:?}");
+        assert!(
+            expected.iter().all(|root| actual.contains(root)),
+            "collector omitted actual engine-owned roots: expected {expected:?}, collected {actual:?}"
+        );
         assert!(actual.len() <= super::super::MAX_VM_IMPORT_CACHE_RETIREMENTS);
         assert!(
             expected.iter().all(|root| root.is_dir()),
@@ -567,12 +577,14 @@ mod import_cache_retirement_tests {
         );
         assert!(!scratch.exists() && !unix.exists() && roots.iter().all(|root| !root.exists()));
         assert!(!manager.vms.contains_key(&vm_id));
-        assert!(!manager
-            .sessions
-            .get(RP_SESSION)
-            .unwrap()
-            .vm_ids
-            .contains(&vm_id));
+        assert!(
+            !manager
+                .sessions
+                .get(RP_SESSION)
+                .unwrap()
+                .vm_ids
+                .contains(&vm_id)
+        );
         assert!(!manager.host_path_cleanups.contains_key(&generation));
         assert!(!manager.quarantined_vms.contains_key(&generation));
         assert!(manager.bridge.permissions.lock().unwrap().is_empty());
@@ -582,8 +594,10 @@ mod import_cache_retirement_tests {
                 &disposal_result,
                 Err(crate::VmError::VmTeardownDeadline { .. })
             );
-        assert!(returned_while_held && typed_cleanup_failure,
-            "prepared disposal must return a typed cleanup failure before gate release; returned={returned_while_held} result={disposal_result:?}");
+        assert!(
+            returned_while_held && typed_cleanup_failure,
+            "prepared disposal must return a typed cleanup failure before gate release; returned={returned_while_held} result={disposal_result:?}"
+        );
     }
 
     #[test]
@@ -671,12 +685,13 @@ mod import_cache_retirement_tests {
         use agentos_executor_python_v8_pyodide::{
             CreatePythonContextRequest, StartPythonExecutionRequest,
         };
-        let dist = engine
-            .bundled_pyodide_dist_path_for_vm(vm_id)
+        let agentos_executor_python_v8_pyodide::PyodidePaths { dist, cache } = engine
+            .bundled_pyodide_paths_for_vm(vm_id)
             .expect("materialize real bundled Python assets");
         let context = engine.create_context(CreatePythonContextRequest {
             vm_id: vm_id.into(),
             pyodide_dist_path: dist,
+            pyodide_cache_path: Some(cache),
         });
         let execution = engine
             .prepare_execution(StartPythonExecutionRequest {

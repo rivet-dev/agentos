@@ -68,7 +68,11 @@ function decodeSqliteValue(value) {
 	}
 	if (value && typeof value === "object") {
 		if (value.__agentosSqliteType === "double") {
-			if (typeof value.value !== "string" || !/^[0-9a-f]{16}$/.test(value.value)) throw new Error("Invalid SQLite double value");
+			if (
+				typeof value.value !== "string" ||
+				!/^[0-9a-f]{16}$/.test(value.value)
+			)
+				throw new Error("Invalid SQLite double value");
 			return Buffer.from(value.value, "hex").readDoubleBE();
 		}
 		if (
@@ -107,68 +111,165 @@ const SQLITE_TRANSFER_CHUNK = 32 * 1024;
 const SQLITE_TRANSFER_INLINE = 256 * 1024;
 const sqliteParameters = Symbol("sqlite.parameters");
 function normalizeSqliteParams(params, database) {
- return {[sqliteParameters]:true, database, value:normalizeSqliteParamsRaw(params)};
+	return {
+		[sqliteParameters]: true,
+		database,
+		value: normalizeSqliteParamsRaw(params),
+	};
 }
-function invokeSqliteBridge(bridgeFn,args,label){
- if(typeof bridgeFn==="function")return bridgeFn(...args);
- if(!bridgeFn)throw new Error(`sqlite bridge is not available for ${label}`);
- if(typeof bridgeFn.applySync==="function")return bridgeFn.applySync(void 0,args);
- if(typeof bridgeFn.applySyncPromise==="function")return bridgeFn.applySyncPromise(void 0,args);
- throw new Error(`sqlite bridge is not available for ${label}`);
+function invokeSqliteBridge(bridgeFn, args, label) {
+	if (typeof bridgeFn === "function") return bridgeFn(...args);
+	if (!bridgeFn) throw new Error(`sqlite bridge is not available for ${label}`);
+	if (typeof bridgeFn.applySync === "function")
+		return bridgeFn.applySync(void 0, args);
+	if (typeof bridgeFn.applySyncPromise === "function")
+		return bridgeFn.applySyncPromise(void 0, args);
+	throw new Error(`sqlite bridge is not available for ${label}`);
 }
-function withSqliteCleanup(action,cleanup){
- let failed=false,original;
- try{return action();}catch(error){failed=true;original=error;throw error;}
- finally{try{cleanup();}catch(error){if(failed)throw new AggregateError([original,error],"SQLite transfer cleanup failed");throw error;}}
+function withSqliteCleanup<T>(action: () => T, cleanup: () => unknown): T {
+	let failed = false;
+	let original: unknown;
+	let result!: T;
+	try {
+		result = action();
+	} catch (error) {
+		failed = true;
+		original = error;
+	}
+	try {
+		cleanup();
+	} catch (error) {
+		if (failed) {
+			throw new AggregateError(
+				[original, error],
+				"SQLite transfer cleanup failed",
+			);
+		}
+		throw error;
+	}
+	if (failed) throw original;
+	return result;
 }
-function decodeSqliteReply(result){
- if(result?.kind==="inline")return decodeSqliteValue(result.value);
- if(result?.kind!=="transfer"||!Number.isSafeInteger(result.length)||result.length<1||result.length>2147483647)throw new Error("Invalid SQLite result envelope");
- return withSqliteCleanup(()=>{
-  const bytes=Buffer.allocUnsafe(result.length);let offset=0;
-  while(offset<bytes.length){
-   const encoded=invokeSqliteBridge(_sqliteTransferRead,[result.database,result.generation,offset],"result.read");
-   const chunk=Buffer.from(encoded,"base64");
-   if(chunk.length<1||chunk.length>SQLITE_TRANSFER_CHUNK||chunk.length>bytes.length-offset)throw new Error("Invalid SQLite result chunk");
-   chunk.copy(bytes,offset);offset+=chunk.length;
-  }
-  return decodeSqliteValue(JSON.parse(bytes.toString("utf8")));
- },()=>invokeSqliteBridge(_sqliteTransferRelease,[result.database,result.generation],"result.release"));
+function decodeSqliteReply(result) {
+	if (result?.kind === "inline") return decodeSqliteValue(result.value);
+	if (
+		result?.kind !== "transfer" ||
+		!Number.isSafeInteger(result.length) ||
+		result.length < 1 ||
+		result.length > 2147483647
+	)
+		throw new Error("Invalid SQLite result envelope");
+	return withSqliteCleanup(
+		() => {
+			const bytes = Buffer.allocUnsafe(result.length);
+			let offset = 0;
+			while (offset < bytes.length) {
+				const encoded = invokeSqliteBridge(
+					_sqliteTransferRead,
+					[result.database, result.generation, offset],
+					"result.read",
+				);
+				const chunk = Buffer.from(encoded, "base64");
+				if (
+					chunk.length < 1 ||
+					chunk.length > SQLITE_TRANSFER_CHUNK ||
+					chunk.length > bytes.length - offset
+				)
+					throw new Error("Invalid SQLite result chunk");
+				chunk.copy(bytes, offset);
+				offset += chunk.length;
+			}
+			return decodeSqliteValue(JSON.parse(bytes.toString("utf8")));
+		},
+		() =>
+			invokeSqliteBridge(
+				_sqliteTransferRelease,
+				[result.database, result.generation],
+				"result.release",
+			),
+	);
 }
-function sqliteBridgeCall(bridgeFn,args,label){
- let staged;
- try{
-  return withSqliteCleanup(()=>{
-   const index=args.findIndex(value=>value?.[sqliteParameters]===true);
-   if(index>=0){
-    args=args.slice();const parameter=args[index];
-    const bytes=Buffer.from(JSON.stringify(parameter.value),"utf8");
-    if(bytes.length>SQLITE_TRANSFER_INLINE){
-     const start=invokeSqliteBridge(_sqliteTransferBegin,[parameter.database,bytes.length],"parameters.begin");
-     staged={database:parameter.database,generation:start.generation};
-     for(let offset=0;offset<bytes.length;offset+=SQLITE_TRANSFER_CHUNK){
-      invokeSqliteBridge(_sqliteTransferAppend,[staged.database,staged.generation,offset,bytes.subarray(offset,offset+SQLITE_TRANSFER_CHUNK).toString("base64")],"parameters.append");
-     }
-     args[index]=null;args.push(staged);
-    }else{args[index]=parameter.value;args.push(null);}
-   }
-   const result=invokeSqliteBridge(bridgeFn,args,label);
-   return ["statement.get","statement.all","database.query"].includes(label)?decodeSqliteReply(result):decodeSqliteValue(result);
-  },()=>{if(staged)invokeSqliteBridge(_sqliteTransferCancel,[staged.database,staged.generation],"parameters.cancel");});
- }catch(error){
-  if(error?.code==="ERR_SQLITE_ERROR"&&error.details){
-   if(typeof error.details.errcode==="number")error.errcode=error.details.errcode;
-   if(typeof error.details.errstr==="string")error.errstr=error.details.errstr;
-   delete error.details;
-  }
-  throw error;
- }
+function sqliteBridgeCall(bridgeFn, args, label) {
+	let staged: { database: unknown; generation: unknown } | undefined;
+	try {
+		return withSqliteCleanup(
+			() => {
+				const index = args.findIndex(
+					(value) => value?.[sqliteParameters] === true,
+				);
+				if (index >= 0) {
+					args = args.slice();
+					const parameter = args[index];
+					const bytes = Buffer.from(JSON.stringify(parameter.value), "utf8");
+					if (bytes.length > SQLITE_TRANSFER_INLINE) {
+						const start = invokeSqliteBridge(
+							_sqliteTransferBegin,
+							[parameter.database, bytes.length],
+							"parameters.begin",
+						);
+						staged = {
+							database: parameter.database,
+							generation: start.generation,
+						};
+						for (
+							let offset = 0;
+							offset < bytes.length;
+							offset += SQLITE_TRANSFER_CHUNK
+						) {
+							invokeSqliteBridge(
+								_sqliteTransferAppend,
+								[
+									staged.database,
+									staged.generation,
+									offset,
+									bytes
+										.subarray(offset, offset + SQLITE_TRANSFER_CHUNK)
+										.toString("base64"),
+								],
+								"parameters.append",
+							);
+						}
+						args[index] = null;
+						args.push(staged);
+					} else {
+						args[index] = parameter.value;
+						args.push(null);
+					}
+				}
+				const result = invokeSqliteBridge(bridgeFn, args, label);
+				return ["statement.get", "statement.all", "database.query"].includes(
+					label,
+				)
+					? decodeSqliteReply(result)
+					: decodeSqliteValue(result);
+			},
+			() => {
+				if (staged)
+					invokeSqliteBridge(
+						_sqliteTransferCancel,
+						[staged.database, staged.generation],
+						"parameters.cancel",
+					);
+			},
+		);
+	} catch (error) {
+		if (error?.code === "ERR_SQLITE_ERROR" && error.details) {
+			if (typeof error.details.errcode === "number")
+				error.errcode = error.details.errcode;
+			if (typeof error.details.errstr === "string")
+				error.errstr = error.details.errstr;
+			delete error.details;
+		}
+		throw error;
+	}
 }
-var _sqliteTransferBegin=createBridgeSyncFacade("_sqliteTransferBeginRaw");
-var _sqliteTransferAppend=createBridgeSyncFacade("_sqliteTransferAppendRaw");
-var _sqliteTransferCancel=createBridgeSyncFacade("_sqliteTransferCancelRaw");
-var _sqliteTransferRead=createBridgeSyncFacade("_sqliteTransferReadRaw");
-var _sqliteTransferRelease=createBridgeSyncFacade("_sqliteTransferReleaseRaw");
+var _sqliteTransferBegin = createBridgeSyncFacade("_sqliteTransferBeginRaw");
+var _sqliteTransferAppend = createBridgeSyncFacade("_sqliteTransferAppendRaw");
+var _sqliteTransferCancel = createBridgeSyncFacade("_sqliteTransferCancelRaw");
+var _sqliteTransferRead = createBridgeSyncFacade("_sqliteTransferReadRaw");
+var _sqliteTransferRelease = createBridgeSyncFacade(
+	"_sqliteTransferReleaseRaw",
+);
 
 var _sqliteConstants = createBridgeSyncFacade("_sqliteConstantsRaw");
 
@@ -178,7 +279,9 @@ var _sqliteDatabaseClose = createBridgeSyncFacade("_sqliteDatabaseCloseRaw");
 
 var _sqliteDatabaseExec = createBridgeSyncFacade("_sqliteDatabaseExecRaw");
 
-var _sqliteDatabaseQuery = createBridgeSyncFacade("_sqliteDatabaseQueryChunkedRaw");
+var _sqliteDatabaseQuery = createBridgeSyncFacade(
+	"_sqliteDatabaseQueryChunkedRaw",
+);
 
 var _sqliteDatabasePrepare = createBridgeSyncFacade(
 	"_sqliteDatabasePrepareRaw",
@@ -191,13 +294,21 @@ var _sqliteDatabaseLocation = createBridgeSyncFacade(
 var _sqliteDatabaseCheckpoint = createBridgeSyncFacade(
 	"_sqliteDatabaseCheckpointRaw",
 );
-var _sqliteDatabaseIsTransaction = createBridgeSyncFacade("_sqliteDatabaseIsTransactionRaw");
+var _sqliteDatabaseIsTransaction = createBridgeSyncFacade(
+	"_sqliteDatabaseIsTransactionRaw",
+);
 
-var _sqliteStatementRun = createBridgeSyncFacade("_sqliteStatementRunChunkedRaw");
+var _sqliteStatementRun = createBridgeSyncFacade(
+	"_sqliteStatementRunChunkedRaw",
+);
 
-var _sqliteStatementGet = createBridgeSyncFacade("_sqliteStatementGetChunkedRaw");
+var _sqliteStatementGet = createBridgeSyncFacade(
+	"_sqliteStatementGetChunkedRaw",
+);
 
-var _sqliteStatementAll = createBridgeSyncFacade("_sqliteStatementAllChunkedRaw");
+var _sqliteStatementAll = createBridgeSyncFacade(
+	"_sqliteStatementAllChunkedRaw",
+);
 
 var _sqliteStatementColumns = createBridgeSyncFacade(
 	"_sqliteStatementColumnsRaw",
@@ -449,7 +560,10 @@ var DatabaseSync = class {
 		const normalized =
 			params === null
 				? null
-				: normalizeSqliteParams(Array.isArray(params) ? params : [params], this._databaseId);
+				: normalizeSqliteParams(
+						Array.isArray(params) ? params : [params],
+						this._databaseId,
+					);
 		return sqliteBridgeCall(
 			_sqliteDatabaseQuery,
 			[this._databaseId, String(sql ?? ""), normalized, options ?? null],
@@ -464,10 +578,20 @@ var DatabaseSync = class {
 			[this._databaseId, normalizedSql],
 			"database.prepare",
 		);
-        if (!Number.isSafeInteger(sourceSQLLength) || sourceSQLLength < 0 || sourceSQLLength > normalizedSql.length) {
-            throw Object.assign(new Error("Invalid SQLite statement source length"), {code:"ERR_SQLITE_ERROR"});
-        }
-		return new StatementSync(this, normalizedSql.slice(0, sourceSQLLength), statementId);
+		if (
+			!Number.isSafeInteger(sourceSQLLength) ||
+			sourceSQLLength < 0 ||
+			sourceSQLLength > normalizedSql.length
+		) {
+			throw Object.assign(new Error("Invalid SQLite statement source length"), {
+				code: "ERR_SQLITE_ERROR",
+			});
+		}
+		return new StatementSync(
+			this,
+			normalizedSql.slice(0, sourceSQLLength),
+			statementId,
+		);
 	}
 	location() {
 		this._assertOpen();
@@ -479,7 +603,11 @@ var DatabaseSync = class {
 	}
 	get isTransaction() {
 		this._assertOpen();
-		return sqliteBridgeCall(_sqliteDatabaseIsTransaction, [this._databaseId], "database.isTransaction");
+		return sqliteBridgeCall(
+			_sqliteDatabaseIsTransaction,
+			[this._databaseId],
+			"database.isTransaction",
+		);
 	}
 	checkpoint() {
 		this._assertOpen();

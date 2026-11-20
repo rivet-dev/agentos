@@ -101,8 +101,8 @@ impl EmbeddedV8Runtime {
 
     pub fn pre_warm_workers(
         &self,
-        bridge_code: String,
-        userland_code: String,
+        bridge_code: Arc<str>,
+        userland_code: Arc<str>,
         heap_limit_mb: Option<u32>,
         count: usize,
     ) {
@@ -471,10 +471,11 @@ impl EmbeddedV8SessionHandle {
         &self,
         mode: u8,
         file_path: String,
-        bridge_code: String,
+        bridge_code: Arc<str>,
         post_restore_script: String,
-        userland_code: String,
+        userland_code: Arc<str>,
         high_resolution_time: bool,
+        runtime_shim: String,
         user_code: String,
         wasm_module_bytes: Option<Arc<Vec<u8>>>,
     ) -> io::Result<()> {
@@ -485,6 +486,7 @@ impl EmbeddedV8SessionHandle {
             post_restore_script,
             userland_code,
             high_resolution_time,
+            runtime_shim,
             user_code,
             wasm_module_bytes,
             None,
@@ -496,10 +498,11 @@ impl EmbeddedV8SessionHandle {
         &self,
         mode: u8,
         file_path: String,
-        bridge_code: String,
+        bridge_code: Arc<str>,
         post_restore_script: String,
-        userland_code: String,
+        userland_code: Arc<str>,
         high_resolution_time: bool,
+        runtime_shim: String,
         user_code: String,
         wasm_module_bytes: Option<Arc<Vec<u8>>>,
         guest_bridge_policy: Option<crate::runtime_protocol::GuestBridgePolicy>,
@@ -514,6 +517,7 @@ impl EmbeddedV8SessionHandle {
                 post_restore_script,
                 userland_code,
                 high_resolution_time,
+                runtime_shim,
                 user_code,
                 wasm_module_bytes,
                 guest_bridge_policy,
@@ -1129,7 +1133,7 @@ fn dispatch_runtime_command(
         } => snapshot_cache
             .get_or_create_with_userland(
                 &bridge_code,
-                (!userland_code.is_empty()).then_some(userland_code.as_str()),
+                (!userland_code.is_empty()).then_some(&*userland_code),
             )
             .map(|_| ())
             .map_err(other_io_error),

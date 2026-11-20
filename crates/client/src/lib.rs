@@ -117,8 +117,9 @@ pub use sidecar::configure_shared_sidecar_package_cache;
 #[cfg(any(feature = "actor-internals", feature = "sidecar-internals"))]
 pub use sidecar::AgentOsPackageSession;
 pub use sidecar::{
-    AgentOsSidecar, AgentOsSidecarDescription, AgentOsSidecarPlacement, SidecarState,
-    AgentOsSidecarRuntimeConfig, AgentOsSidecarBlockingConfig, AgentOsSidecarExecutorConfig, AgentOsSidecarProtocolConfig,
+    AgentOsSidecar, AgentOsSidecarBlockingConfig, AgentOsSidecarDescription,
+    AgentOsSidecarExecutorConfig, AgentOsSidecarPlacement, AgentOsSidecarProtocolConfig,
+    AgentOsSidecarRuntimeConfig, SidecarState,
 };
 pub use stream::{ByteStream, Subscription};
 
@@ -144,7 +145,8 @@ pub use process::{
 };
 
 pub use net::{
-    GuestConnection, GuestConnectionChunk, HttpRequest, HttpResponse, HttpStreamChunk, HttpStreamHead,
+    GuestConnection, GuestConnectionChunk, HttpRequest, HttpResponse, HttpStreamChunk,
+    HttpStreamHead,
 };
 
 pub use software::{

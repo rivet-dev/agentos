@@ -1,5 +1,4 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
-import {ipcInfo,openIpcChannel,resetIpcTransport} from "./process-ipc.js";
 import {
 	CustomEvent,
 	Event,
@@ -21,9 +20,9 @@ import {
 import { Buffer3 } from "./buffer-runtime.js";
 import { builtinPathStdlibModule } from "./builtin-modules.js";
 import {
+	CHILD_PROCESS_EXIT_DRAIN_MAX_MS,
+	decodeChildProcessIpcFramePayload,
 	encodeChildProcessIpcFrame,
-    decodeChildProcessIpcFramePayload,
-    CHILD_PROCESS_EXIT_DRAIN_MAX_MS,
 } from "./child-process.js";
 import {
 	_stderr,
@@ -54,6 +53,7 @@ import {
 import { installSafeIntlFormatters } from "./misc-stubs.js";
 import { fetch } from "./network.js";
 import { getRuntimeGid, getRuntimeUid } from "./os.js";
+import { ipcInfo, openIpcChannel, resetIpcTransport } from "./process-ipc.js";
 import {
 	_stdin,
 	_stdinListeners,
@@ -68,11 +68,11 @@ import {
 	syncLiveStdinHandle,
 } from "./stdin.js";
 import {
-	enqueueNextTick,
 	_queueMicrotask,
 	clearImmediate,
 	clearInterval,
 	clearTimeout2,
+	enqueueNextTick,
 	scheduleNextTickFlush,
 	setImmediate,
 	setInterval,
@@ -351,7 +351,7 @@ function _scheduleProcessIpcMessageFlush() {
 	});
 }
 
-function _emitOrQueueProcessIpcMessage(message,encodedBytes) {
+function _emitOrQueueProcessIpcMessage(message, encodedBytes) {
 	if (_listenerCountForEvent("message") > 0) {
 		_emit("message", message, void 0);
 		return;
@@ -751,15 +751,27 @@ var _cwd = config2.cwd;
 const collectGuestGarbage = createBridgeSyncFacade("v8.collectGarbage");
 function installExplicitGarbageCollector(config) {
 	const options = String(config.env.NODE_OPTIONS ?? "").split(/\s+/);
-	const enabled = options.some(option => option === "--expose-gc" || option === "--expose_gc") ||
-		config.execArgv.some(option => option === "--expose-gc" || option === "--expose_gc") ||
+	const enabled =
+		options.some(
+			(option) => option === "--expose-gc" || option === "--expose_gc",
+		) ||
+		config.execArgv.some(
+			(option) => option === "--expose-gc" || option === "--expose_gc",
+		) ||
 		config.exposeGc;
-	if (!enabled) { delete globalThis.gc; return; }
+	if (!enabled) {
+		delete globalThis.gc;
+		return;
+	}
 	Object.defineProperty(globalThis, "gc", {
-		configurable: true, writable: true, enumerable: true,
+		configurable: true,
+		writable: true,
+		enumerable: true,
 		value: function gc(options) {
 			const collect = () => collectGuestGarbage.applySyncPromise(void 0, []);
-			return options?.execution === "async" ? Promise.resolve().then(collect) : collect();
+			return options?.execution === "async"
+				? Promise.resolve().then(collect)
+				: collect();
 		},
 	});
 }
@@ -1220,10 +1232,14 @@ var process2 = {
 		return process2.listeners(event);
 	},
 	// Stdio streams
-    // Console initialization imports process through the stream graph. Resolve
-    // the streams after that cycle finishes, as stdin already does.
-    get stdout() { return _stdout; },
-    get stderr() { return _stderr; },
+	// Console initialization imports process through the stream graph. Resolve
+	// the streams after that cycle finishes, as stdin already does.
+	get stdout() {
+		return _stdout;
+	},
+	get stderr() {
+		return _stderr;
+	},
 	get stdin() {
 		return getProcessStdin();
 	},
@@ -1280,11 +1296,27 @@ var process2 = {
 				: typeof optionsOrCallback === "function"
 					? optionsOrCallback
 					: maybeCallback;
-        const frame=getAsyncContextFrame();
-        const done=typeof callback==="function"?(...args)=>runInAsyncContextFrame(frame,callback,undefined,args):undefined;
-        if(!process2.connected||!process2._ipcChannel){const error=Object.assign(new Error("IPC channel is closed"),{code:"ERR_IPC_CHANNEL_CLOSED"});if(done)queueMicrotask(()=>done(error));else queueMicrotask(()=>{if(!_emit("error",error))throw error;});return false;}
+		const frame = getAsyncContextFrame();
+		const done =
+			typeof callback === "function"
+				? (...args) => runInAsyncContextFrame(frame, callback, undefined, args)
+				: undefined;
+		if (!process2.connected || !process2._ipcChannel) {
+			const error = Object.assign(new Error("IPC channel is closed"), {
+				code: "ERR_IPC_CHANNEL_CLOSED",
+			});
+			if (done) queueMicrotask(() => done(error));
+			else
+				queueMicrotask(() => {
+					if (!_emit("error", error)) throw error;
+				});
+			return false;
+		}
 		try {
-			return process2._ipcChannel.send(encodeChildProcessIpcFrame(message,process2._ipcSerialization),done);
+			return process2._ipcChannel.send(
+				encodeChildProcessIpcFrame(message, process2._ipcSerialization),
+				done,
+			);
 		} catch (error) {
 			if (done) {
 				queueMicrotask(() => done(error));
@@ -1298,7 +1330,7 @@ var process2 = {
 			return;
 		}
 		process2.connected = false;
-        process2._ipcChannel?.disconnect();
+		process2._ipcChannel?.disconnect();
 		if (
 			process2._agentOSIpcHandleId &&
 			typeof _unregisterHandle === "function"
@@ -1331,18 +1363,38 @@ var process2 = {
 };
 
 function installProcessIpcBridge() {
-    if(process2._agentOSIpcInstalled)return;
-    const info=ipcInfo();
-    if(!info){process2.connected=false;return;}
-    process2._agentOSIpcInstalled=true;process2.connected=true;
-    process2._ipcSerialization=info.serialization;
-    process2._ipcChannel=openIpcChannel(null,info,{
-        drainMs:CHILD_PROCESS_EXIT_DRAIN_MAX_MS,
-        message:(payload,bytes)=>{try{_emitOrQueueProcessIpcMessage(decodeChildProcessIpcFramePayload(payload),bytes);}catch(error){const outcome=routeAsyncCallbackError(error);if(!outcome.handled)throw outcome.rethrow;}},
-        error:error=>{if(!_emit("error",error))throw error;},
-        close:()=>{process2.connected=false;_syncProcessIpcHandleLiveness();_emit("disconnect");},
-    });
-    _syncProcessIpcHandleLiveness();
+	if (process2._agentOSIpcInstalled) return;
+	const info = ipcInfo();
+	if (!info) {
+		process2.connected = false;
+		return;
+	}
+	process2._agentOSIpcInstalled = true;
+	process2.connected = true;
+	process2._ipcSerialization = info.serialization;
+	process2._ipcChannel = openIpcChannel(null, info, {
+		drainMs: CHILD_PROCESS_EXIT_DRAIN_MAX_MS,
+		message: (payload, bytes) => {
+			try {
+				_emitOrQueueProcessIpcMessage(
+					decodeChildProcessIpcFramePayload(payload),
+					bytes,
+				);
+			} catch (error) {
+				const outcome = routeAsyncCallbackError(error);
+				if (!outcome.handled) throw outcome.rethrow;
+			}
+		},
+		error: (error) => {
+			if (!_emit("error", error)) throw error;
+		},
+		close: () => {
+			process2.connected = false;
+			_syncProcessIpcHandleLiveness();
+			_emit("disconnect");
+		},
+	});
+	_syncProcessIpcHandleLiveness();
 }
 
 // Exit status and the terminal-request flag belong to one Execute, even when
@@ -1378,7 +1430,8 @@ exposeCustomGlobal(
 );
 
 function applyProcessConfig(nextConfig) {
-    resetIpcTransport();process2._ipcChannel=undefined;
+	resetIpcTransport();
+	process2._ipcChannel = undefined;
 	syncLiveStdinHandle(false);
 	resetLiveStdinState(new TextDecoder());
 	for (const key of Object.keys(_stdinListeners)) {
@@ -1387,8 +1440,8 @@ function applyProcessConfig(nextConfig) {
 	for (const key of Object.keys(_stdinOnceListeners)) {
 		_stdinOnceListeners[key] = [];
 	}
-    // The trusted post-restore hook discovers current kernel IPC ownership.
-    // Ordinary stdin listeners never own or parse the private channel.
+	// The trusted post-restore hook discovers current kernel IPC ownership.
+	// Ordinary stdin listeners never own or parse the private channel.
 	process2._agentOSIpcInstalled = false;
 	setStdinDataValue(nextConfig.stdin ?? "");
 	setStdinPosition(0);

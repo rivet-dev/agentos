@@ -44,11 +44,29 @@ follows the same contract:
 
 The path from guest code to the host is a **chain of bounded queues**: the V8
 runtime → a per-execution frame channel → the V8→host event channel → the sidecar
-stdout frame queue → the host. Streaming channels apply backpressure where the
-producer can safely wait. Process/runtime delivery queues that cannot block
-reject the crossing event with an error naming `limits.process.pendingEventCount`
-or `limits.process.pendingEventBytes`. Neither path silently drops data or
-crashes the sidecar.
+stdout frame queue → the host. Each stage applies backpressure: when the shared
+process-event queue is full, the producing guest is paused rather than its event
+rejected (see below). Only internal queues whose producer cannot wait, such as
+host-function callback output, reject the crossing event with an error naming
+`limits.process.pendingEventCount` or `limits.process.pendingEventBytes`. No
+path silently drops data or crashes the sidecar.
+
+All VMs on one sidecar share its queue of process events waiting for the host.
+Guest stdout and stderr may fill at most seven eighths of that queue
+(`runtime.protocol.maxProcessEvents`); the rest is kept for exits and other
+lifecycle events. A VM that finds the output part full, or reaches its own
+`limits.process.pendingEventCount` or `limits.process.pendingEventBytes`, is
+paused: its guest's writes block, like
+a writer on a full pipe, until the host drains output. The host drain takes
+VMs in turn, so a quiet VM's events never wait behind another VM's backlog. A
+flooding guest or a slow host reader therefore delays only the VMs that produce
+output; it never drops output, starves another VM's exit, or closes the
+transport. Like one large write to a full pipe, an output chunk larger than
+the VM's whole `limits.process.pendingEventBytes` drains in parts that fit,
+with the guest paused between them. An event that cannot be split, such as an
+exit, is delivered over the byte limit (the queue's event-count bounds still
+apply) and the sidecar logs `ERR_AGENTOS_PROCESS_EVENT_LIMIT`; it is never
+dropped.
 
 If the VM's aggregate public-output queue exceeds either limit, agentOS closes
 that VM's admission and retires it. Other VMs, including those sharing its

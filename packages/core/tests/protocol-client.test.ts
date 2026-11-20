@@ -971,25 +971,95 @@ process.stderr.write('READY');
 	});
 });
 
-function ingressRefusal(): Extract<LiveResponseFrame['payload'],{type:'rejected'}> {
- return {type:'rejected',code:'ERR_AGENTOS_PROTOCOL_FRAME_LIMIT',message:'ordinary ingress full',limit_name:'stdio ordinary ingress',configured_limit:128,current_usage:128,requested:1,unit:'frames',scope:'process',vm_id:null,session_generation:null,capability_id:null,operation:'stdio.requestAdmission',configuration_path:'runtime.protocol.maxIngressFrames',retryable:true,errno:'EAGAIN'};
+function ingressRefusal(): Extract<
+	LiveResponseFrame["payload"],
+	{ type: "rejected" }
+> {
+	return {
+		type: "rejected",
+		code: "ERR_AGENTOS_PROTOCOL_FRAME_LIMIT",
+		message: "ordinary ingress full",
+		limit_name: "stdio ordinary ingress",
+		configured_limit: 128,
+		current_usage: 128,
+		requested: 1,
+		unit: "frames",
+		scope: "process",
+		vm_id: null,
+		session_generation: null,
+		capability_id: null,
+		operation: "stdio.requestAdmission",
+		configuration_path: "runtime.protocol.maxIngressFrames",
+		retryable: true,
+		errno: "EAGAIN",
+	};
 }
-it('retries only deterministic ingress refusals with the same immutable request',async()=>{
- const transport=new MemoryFrameTransport(),client=new SidecarProtocolClient({frameTransport:transport,eventBufferCapacity:2,payloadCodec:'json'}),scope={...ownership};
- try{
-  const response=client.sendRequest({ownership:scope,payload:{type:'create_layer'}}).then(value=>({ok:true as const,value}),error=>({ok:false as const,error}));
-  await expect.poll(()=>transport.writes.length).toBe(1);scope.connection_id='mutated';
-  transport.emitFrame({frame_type:'response',schema:SIDECAR_PROTOCOL_SCHEMA,request_id:1,ownership,payload:ingressRefusal()});
-  await expect.poll(()=>transport.writes.length,{timeout:1000}).toBe(2);
-  expect(transport.writes[1]).toEqual(transport.writes[0]);expect(transport.writes[1]).toMatchObject({request_id:1,ownership:{connection_id:'conn'}});
-  transport.emitFrame({frame_type:'response',schema:SIDECAR_PROTOCOL_SCHEMA,request_id:1,ownership,payload:{type:'layer_created',layer_id:'once'}});
-  expect(await response).toMatchObject({ok:true,value:{payload:{layer_id:'once'}}});
- }finally{client.dispose();}
+it("retries only deterministic ingress refusals with the same immutable request", async () => {
+	const transport = new MemoryFrameTransport(),
+		client = new SidecarProtocolClient({
+			frameTransport: transport,
+			eventBufferCapacity: 2,
+			payloadCodec: "json",
+		}),
+		scope = { ...ownership };
+	try {
+		const response = client
+			.sendRequest({ ownership: scope, payload: { type: "create_layer" } })
+			.then(
+				(value) => ({ ok: true as const, value }),
+				(error) => ({ ok: false as const, error }),
+			);
+		await expect.poll(() => transport.writes.length).toBe(1);
+		scope.connection_id = "mutated";
+		transport.emitFrame({
+			frame_type: "response",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			request_id: 1,
+			ownership,
+			payload: ingressRefusal(),
+		});
+		await expect.poll(() => transport.writes.length, { timeout: 1000 }).toBe(2);
+		expect(transport.writes[1]).toEqual(transport.writes[0]);
+		expect(transport.writes[1]).toMatchObject({
+			request_id: 1,
+			ownership: { connection_id: "conn" },
+		});
+		transport.emitFrame({
+			frame_type: "response",
+			schema: SIDECAR_PROTOCOL_SCHEMA,
+			request_id: 1,
+			ownership,
+			payload: { type: "layer_created", layer_id: "once" },
+		});
+		expect(await response).toMatchObject({
+			ok: true,
+			value: { payload: { layer_id: "once" } },
+		});
+	} finally {
+		client.dispose();
+	}
 });
-it('closing the client cancels an ingress retry before another write',async()=>{
- const transport=new MemoryFrameTransport(),client=new SidecarProtocolClient({frameTransport:transport,eventBufferCapacity:2,payloadCodec:'json'});
- const response=client.sendRequest({ownership,payload:{type:'create_layer'}}).catch(error=>error);
- await expect.poll(()=>transport.writes.length).toBe(1);
- transport.emitFrame({frame_type:'response',schema:SIDECAR_PROTOCOL_SCHEMA,request_id:1,ownership,payload:ingressRefusal()});
- await Promise.resolve();client.dispose();expect(await response).toBeInstanceOf(Error);await new Promise(resolve=>setTimeout(resolve,20));expect(transport.writes).toHaveLength(1);
+it("closing the client cancels an ingress retry before another write", async () => {
+	const transport = new MemoryFrameTransport(),
+		client = new SidecarProtocolClient({
+			frameTransport: transport,
+			eventBufferCapacity: 2,
+			payloadCodec: "json",
+		});
+	const response = client
+		.sendRequest({ ownership, payload: { type: "create_layer" } })
+		.catch((error) => error);
+	await expect.poll(() => transport.writes.length).toBe(1);
+	transport.emitFrame({
+		frame_type: "response",
+		schema: SIDECAR_PROTOCOL_SCHEMA,
+		request_id: 1,
+		ownership,
+		payload: ingressRefusal(),
+	});
+	await Promise.resolve();
+	client.dispose();
+	expect(await response).toBeInstanceOf(Error);
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	expect(transport.writes).toHaveLength(1);
 });

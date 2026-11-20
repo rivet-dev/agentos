@@ -140,7 +140,7 @@ fn javascript_terminal_delivery_preserves_enqueue_and_retained_ownership() {
         let mut cx = Context::from_waker(Waker::noop());
         assert!(matches!(notified.as_mut().poll(&mut cx), Poll::Ready(())));
         assert_eq!(lifecycle.take_committed_terminal().unwrap(), Some(11));
-        assert!(matches!(time::timeout(Duration::ZERO, receiver.recv_async()).await, Err(_)));
+        assert!(time::timeout(Duration::ZERO, receiver.recv_async()).await.is_err());
         assert!(send_javascript_event_async(&sender, &gauge, &lifecycle, None, JavascriptExecutionEvent::Stdout(vec![b'x'])).await);
         assert!(matches!(receiver.recv_async().await, Ok(JavascriptExecutionEvent::Stdout(bytes)) if bytes == b"x"));
         drop(sender);

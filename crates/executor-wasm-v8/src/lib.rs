@@ -191,6 +191,7 @@ pub struct WasmV8Execution {
     execution_id: String,
     child_pid: u32,
     inner: JavascriptExecution,
+    _import_cache_guard: Arc<agentos_executor_v8_runtime::asset_cache::NodeImportCacheCleanup>,
     execution_timeout: Option<Duration>,
     execution_started_at: Instant,
     timeout_reported: bool,
@@ -1330,7 +1331,9 @@ impl WasmV8ExecutionEngine {
 
     pub fn create_context(&mut self, request: CreateWasmContextRequest) -> WasmContext {
         self.next_context_id += 1;
-        self.import_caches.entry(request.vm_id.clone()).or_default();
+        self.import_caches
+            .entry(request.vm_id.clone())
+            .or_insert_with(|| NodeImportCache::default().without_pyodide());
         let javascript_context =
             self.javascript_engine
                 .create_context(CreateJavascriptContextRequest {
@@ -1442,7 +1445,10 @@ impl WasmV8ExecutionEngine {
             .cloned()
             .ok_or_else(|| WasmExecutionError::MissingContext(context.context_id.clone()))?;
         {
-            let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
+            let import_cache = self
+                .import_caches
+                .entry(context.vm_id.clone())
+                .or_insert_with(|| NodeImportCache::default().without_pyodide());
             import_cache
                 .ensure_materialized_with_timeout_and_runtime(&runtime, prewarm_timeout)
                 .map_err(WasmExecutionError::PrepareWarmPath)?;
@@ -1522,7 +1528,10 @@ impl WasmV8ExecutionEngine {
             .cloned()
             .ok_or_else(|| WasmExecutionError::MissingContext(context.context_id.clone()))?;
         {
-            let import_cache = self.import_caches.entry(context.vm_id.clone()).or_default();
+            let import_cache = self
+                .import_caches
+                .entry(context.vm_id.clone())
+                .or_insert_with(|| NodeImportCache::default().without_pyodide());
             import_cache
                 .ensure_materialized_with_timeout_and_runtime_async(&runtime, prewarm_timeout)
                 .await
@@ -1609,6 +1618,7 @@ impl WasmV8ExecutionEngine {
             execution_id,
             child_pid,
             inner: javascript_execution,
+            _import_cache_guard: import_cache.cleanup_guard(),
             execution_timeout,
             execution_started_at: Instant::now(),
             timeout_reported: false,

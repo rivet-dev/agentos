@@ -46,9 +46,7 @@ const SYNTHETIC_PID_BASE = 1_000_000;
 const MISSING_EXIT_EVENT_GRACE_MS = 500;
 const DEFAULT_VM_DISPOSE_EXIT_CONFIRMATION_TIMEOUT_MS = 500;
 const PROTECTED_READ_ONLY_GUEST_ROOTS = ["/etc/agentos"] as const;
-const TRAILING_OUTPUT_DRAIN_INTERVAL_MS = 10;
 const TRAILING_OUTPUT_DRAIN_MAX_MS = 250;
-const TRAILING_OUTPUT_DRAIN_QUIET_TURNS = 2;
 const EXEC_TERMINATION_CONFIRMATION_MS = 30_000;
 
 // Termination proof must remain observable even after an ordinary wait failed.
@@ -451,9 +449,9 @@ interface TrackedProcessEntry {
 	stdinFlushPromise: Promise<void> | null;
 	pendingCloseStdin: boolean;
 	pendingKillSignal: number | null;
-	waitWithFallbackPromise: Promise<number> | null;
-	hostExitObservedAt: number | null;
-	outputGeneration: number;
+	waitPromise: Promise<number> | null;
+	outputEnd: Promise<void>;
+	resolveOutputEnd: () => void;
 }
 
 // Per-query host metadata from Core's already bounded process registry. Output
@@ -646,20 +644,8 @@ export class SidecarKernelProxy {
 				error,
 			);
 		});
-		await Promise.all(
-			liveProcesses
-				.filter((entry) => !entry.launchRejected)
-				.map((entry) =>
-					this.signalProcess(entry, 15).catch((error) => {
-						console.error(
-							`[agentOS] process ${entry.pid} teardown signal failed`,
-							error,
-						);
-						this.handleBackgroundProcessError(entry, error);
-					}),
-				),
-		);
-
+		// One request: DisposeVm terminates every live guest process (TERM, then
+		// KILL), so there is no signal round trip per process first.
 		let disposalFailed = false;
 		let disposalError: unknown;
 		await this.client.disposeVm(this.session, this.vm).catch((error) => {
@@ -971,6 +957,11 @@ export class SidecarKernelProxy {
 			confirmExit = resolve;
 		});
 
+		let resolveOutputEnd!: () => void;
+		const outputEnd = new Promise<void>((resolve) => {
+			resolveOutputEnd = resolve;
+		});
+
 		const entry: TrackedProcessEntry = {
 			pid,
 			processId,
@@ -1008,9 +999,9 @@ export class SidecarKernelProxy {
 			stdinFlushPromise: null,
 			pendingCloseStdin: !options?.streamStdin,
 			pendingKillSignal: null,
-			waitWithFallbackPromise: null,
-			hostExitObservedAt: null,
-			outputGeneration: 0,
+			waitPromise: null,
+			outputEnd,
+			resolveOutputEnd,
 		};
 		this.trackedProcesses.set(pid, entry);
 		this.trackedProcessesById.set(processId, entry);
@@ -1024,6 +1015,9 @@ export class SidecarKernelProxy {
 					return Promise.reject(stdinHasNoReader(entry.pid));
 				}
 				if (entry.waitError) return Promise.reject(entry.waitError);
+				if (entry.pendingStdin.length >= PROCESS_STDIN_QUEUE_LIMIT) {
+					return Promise.reject(stdinQueueLimitError(entry.pid));
+				}
 				entry.pendingStdin.push(data);
 				return this.flushPendingStdin(entry).catch((error) => {
 					this.handleBackgroundProcessError(entry, error);
@@ -1091,12 +1085,7 @@ export class SidecarKernelProxy {
 				// Rejected admission is not a process exit. Release this non-process's
 				// tracking while retaining the rejection on the returned handle.
 				this.processes.delete(entry.pid);
-				void this.releaseProcessTrackingAfterDrain(entry).catch((error) => {
-					console.error(
-						`[agentOS] rejected process ${entry.pid} cleanup failed`,
-						error,
-					);
-				});
+				this.releaseProcessTracking(entry);
 			}
 		});
 
@@ -1570,16 +1559,28 @@ export class SidecarKernelProxy {
 		];
 	}
 
-    configurePermissions(permissions:SidecarPermissionsPolicy,loopbackExemptPorts?:number[]):Promise<void>{
-        return this.reconfigureSidecarMounts(structuredClone(permissions),loopbackExemptPorts?.slice());
-    }
+	configurePermissions(
+		permissions: SidecarPermissionsPolicy,
+		loopbackExemptPorts?: number[],
+	): Promise<void> {
+		return this.reconfigureSidecarMounts(
+			structuredClone(permissions),
+			loopbackExemptPorts?.slice(),
+		);
+	}
 
-    private reconfigureSidecarMounts(permissionsOverride?:SidecarPermissionsPolicy,portsOverride?:number[]): Promise<void> {
+	private reconfigureSidecarMounts(
+		permissionsOverride?: SidecarPermissionsPolicy,
+		portsOverride?: number[],
+	): Promise<void> {
 		const run = async () => {
-            if(this.disposed){
-                if(permissionsOverride)throw Object.assign(new Error("VM is disposed"),{code:"ERR_AGENTOS_VM_DISPOSED"});
-                return;
-            }
+			if (this.disposed) {
+				if (permissionsOverride)
+					throw Object.assign(new Error("VM is disposed"), {
+						code: "ERR_AGENTOS_VM_DISPOSED",
+					});
+				return;
+			}
 			// Re-send boot packages and host-function shims. The sidecar preserves
 			// runtime-linked packages independently of this client payload.
 			await this.client.configureVm(this.session, this.vm, {
@@ -1590,10 +1591,11 @@ export class SidecarKernelProxy {
 				packages: this.packages,
 				packagesMountAt: this.packagesMountAt,
 				hostFunctionShimCommands: this.hostFunctionShimCommands,
-            });
-            if(permissionsOverride!==undefined)this.permissions=permissionsOverride;
-            if(portsOverride!==undefined)this.loopbackExemptPorts=portsOverride;
-        };
+			});
+			if (permissionsOverride !== undefined)
+				this.permissions = permissionsOverride;
+			if (portsOverride !== undefined) this.loopbackExemptPorts = portsOverride;
+		};
 		const previous = this.mountReconfigurePromise ?? Promise.resolve();
 		const next = previous.then(run, run);
 		const tracked = next.finally(() => {
@@ -1814,25 +1816,18 @@ export class SidecarKernelProxy {
 			return;
 		}
 
-		let observedGeneration = entry.outputGeneration;
-		let quietTurns = 0;
-		let delayMs = 0;
-		const deadline = Date.now() + TRAILING_OUTPUT_DRAIN_MAX_MS;
-
-		while (quietTurns < TRAILING_OUTPUT_DRAIN_QUIET_TURNS) {
-			const remainingMs = deadline - Date.now();
-			if (remainingMs <= 0) {
-				return;
-			}
-
-			await drainTrailingProcessOutputTurn(Math.min(delayMs, remainingMs));
-			if (entry.outputGeneration === observedGeneration) {
-				quietTurns += 1;
-			} else {
-				observedGeneration = entry.outputGeneration;
-				quietTurns = 0;
-			}
-			delayMs = TRAILING_OUTPUT_DRAIN_INTERVAL_MS;
+		// Replay can report an exit on the response lane before the event lane
+		// delivers queued output. Its ordered exit closes that output stream.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				entry.outputEnd,
+				new Promise<void>((resolve) => {
+					timer = setTimeout(resolve, TRAILING_OUTPUT_DRAIN_MAX_MS);
+				}),
+			]);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
 		}
 	}
 
@@ -1898,10 +1893,6 @@ export class SidecarKernelProxy {
 					if (!entry) {
 						continue;
 					}
-					entry.outputGeneration += 1;
-					void this.refreshProcessSnapshot().catch((error) => {
-						this.reportProcessSnapshotRefreshFailure("output", error);
-					});
 					this.scheduleSignalStateRefresh(entry);
 					const chunk = event.payload.chunk;
 					const listeners =
@@ -1931,6 +1922,29 @@ export class SidecarKernelProxy {
 						event.payload.exit_code,
 						event.payload.exit_signal ?? null,
 					);
+					// The sidecar sends a process's output before its exit on this
+					// ordered lane, and the pump dispatched it above, so nothing for
+					// this process can follow. Release only here: an exit learned
+					// elsewhere (replay) can arrive while output is still queued.
+					this.releaseProcessTracking(entry);
+					continue;
+				}
+
+				if (
+					event.payload.type === "vm_lifecycle" &&
+					(event.payload.state === "disposed" ||
+						event.payload.state === "failed")
+				) {
+					// Exit events are the only exit proof. A VM that ended without
+					// one leaves the process status unknown, never exited.
+					const error = new Error(
+						`VM ${event.payload.state} before process exit was observed`,
+					);
+					for (const entry of this.trackedProcesses.values()) {
+						if (entry.exitCode === null) {
+							this.handleBackgroundProcessError(entry, error);
+						}
+					}
 					continue;
 				}
 
@@ -1980,32 +1994,21 @@ export class SidecarKernelProxy {
 		entry.exitTime = Date.now();
 		this.updateTrackedProcessSnapshot(entry);
 		entry.wakeWait?.();
-		// Release per-process tracking now that the process has terminated so these
-		// maps/Sets don't grow without bound. Defer the release until trailing
-		// output has drained: `wait()`'s drain and late `process_output` events
-		// still need the entry + its listeners during the drain window. The exited
-		// record lives on in `processes` for listing.
-		void this.releaseProcessTrackingAfterDrain(entry).catch((error) => {
-			console.error(
-				`[agentOS] process ${entry.pid} tracking cleanup failed`,
-				error,
-			);
-		});
 	}
 
-	private async releaseProcessTrackingAfterDrain(
-		entry: TrackedProcessEntry,
-	): Promise<void> {
-		try {
-			await this.drainTrailingProcessOutput(entry);
-		} finally {
-			this.trackedProcesses.delete(entry.pid);
-			this.trackedProcessesById.delete(entry.processId);
-			this.signalRefreshes.delete(entry.pid);
-			this.signalStates.delete(entry.pid);
-			entry.onStdout.clear();
-			entry.onStderr.clear();
-		}
+	/**
+	 * Release per-process tracking once the ordered exit event has been
+	 * dispatched, so these maps/Sets do not grow without bound. The exited
+	 * record lives on in `processes` for listing.
+	 */
+	private releaseProcessTracking(entry: TrackedProcessEntry): void {
+		entry.resolveOutputEnd();
+		this.trackedProcesses.delete(entry.pid);
+		this.trackedProcessesById.delete(entry.processId);
+		this.signalRefreshes.delete(entry.pid);
+		this.signalStates.delete(entry.pid);
+		entry.onStdout.clear();
+		entry.onStderr.clear();
 	}
 
 	private waitForTrackedProcess(entry: TrackedProcessEntry): Promise<number> {
@@ -2015,104 +2018,21 @@ export class SidecarKernelProxy {
 		if (entry.waitError && !this.disposing) {
 			return Promise.reject(entry.waitError);
 		}
-		if (entry.waitWithFallbackPromise !== null) {
-			return entry.waitWithFallbackPromise;
+		if (entry.waitPromise !== null) {
+			return entry.waitPromise;
 		}
 
-		entry.waitWithFallbackPromise = (async () => {
+		// Exit is event-driven, like the Rust client: the process_exited event,
+		// a typed failure (pump, VM lifecycle, signal), or disposal wakes this.
+		// No timer and no sidecar request is held while the process runs.
+		entry.waitPromise = (async () => {
 			while (entry.exitCode === null && !entry.waitError && !this.disposed) {
-				// One cancellable wake per process, rather than another Promise.race
-				// reaction retained on an unresolved exit promise every 50ms.
 				await new Promise<void>((resolve) => {
-					const timer = setTimeout(() => {
-						entry.wakeWait = null;
-						resolve();
-					}, 50);
 					entry.wakeWait = () => {
-						clearTimeout(timer);
 						entry.wakeWait = null;
 						resolve();
 					};
 				});
-				if (entry.exitCode !== null || entry.waitError || this.disposed) {
-					break;
-				}
-				if (!entry.started) {
-					continue;
-				}
-
-				try {
-					// Metadata cannot hold terminal delivery hostage. Keep a wake armed
-					// while the coalesced snapshot RPC is in flight, too.
-					let wake!: () => void;
-					const terminal = new Promise<void>((resolve) => {
-						wake = resolve;
-						entry.wakeWait = resolve;
-					});
-					try {
-						await Promise.race([this.refreshProcessSnapshot(), terminal]);
-					} finally {
-						if (entry.wakeWait === wake) entry.wakeWait = null;
-					}
-					if (entry.exitCode !== null || entry.waitError || this.disposed)
-						break;
-					const snapshot = this.sidecarProcessSnapshot.find(
-						(candidate) => candidate.processId === entry.processId,
-					);
-					if (snapshot?.status === "exited") {
-						if (snapshot.exitCode === undefined || snapshot.exitCode === null) {
-							this.handleBackgroundProcessError(
-								entry,
-								new Error("exited snapshot has no exit status"),
-							);
-						} else {
-							entry.confirmExit(snapshot.exitCode);
-							this.finishProcess(
-								entry,
-								snapshot.exitCode,
-								snapshot.exitSignal ?? null,
-							);
-						}
-						break;
-					}
-					if (snapshot) {
-						entry.hostExitObservedAt = null;
-						continue;
-					}
-
-					// A missing snapshot can mean reaping, lost metadata, or a launch race.
-					// None provides an exit status. Bound the grace period and fail closed.
-					if (!snapshot) {
-						const now = Date.now();
-						if (entry.hostExitObservedAt === null) {
-							entry.hostExitObservedAt = now;
-							continue;
-						}
-						if (now - entry.hostExitObservedAt >= MISSING_EXIT_EVENT_GRACE_MS) {
-							this.handleBackgroundProcessError(
-								entry,
-								new Error(
-									"process disappeared from snapshots without an exit event",
-								),
-							);
-							break;
-						}
-					}
-				} catch (error) {
-					// A lifecycle mutation can temporarily close ordinary snapshot
-					// admission. It says nothing about the process's exit status.
-					// Retry only this explicit backpressure on the existing 50ms
-					// observation loop; terminal events and disposal still wake it.
-					if (
-						error instanceof SidecarRejectedError &&
-						error.detail.code === "ERR_AGENTOS_VM_LIFECYCLE_CONFLICT" &&
-						error.detail.retryable === true &&
-						error.detail.errno === "EAGAIN"
-					) {
-						continue;
-					}
-					this.handleBackgroundProcessError(entry, error);
-				}
 			}
 
 			if (entry.exitCode === null && this.disposing && !entry.launchRejected) {
@@ -2149,10 +2069,10 @@ export class SidecarKernelProxy {
 				)
 			);
 		})().finally(() => {
-			entry.waitWithFallbackPromise = null;
+			entry.waitPromise = null;
 		});
 
-		return entry.waitWithFallbackPromise;
+		return entry.waitPromise;
 	}
 
 	private async signalProcess(
@@ -2216,10 +2136,14 @@ export class SidecarKernelProxy {
 				}
 			})
 			.catch((error) => {
+				// No such process: the sidecar already finished it and its exit
+				// event is on the way, so the writer gets EPIPE like a write to
+				// a dead reader's pipe, and the wait still reports the exit.
 				if (
-					entry.exitCode !== null &&
-					(isNoSuchProcessError(error) || isUnknownVmError(error))
+					isNoSuchProcessError(error) ||
+					(entry.exitCode !== null && isUnknownVmError(error))
 				) {
+					entry.pendingStdin.length = 0;
 					throw stdinHasNoReader(entry.pid);
 				}
 				throw guestStdinError(error) ?? error;
@@ -2252,8 +2176,8 @@ export class SidecarKernelProxy {
 			await this.client.closeStdin(this.session, this.vm, entry.processId);
 		} catch (error) {
 			if (
-				entry.exitCode !== null &&
-				(isNoSuchProcessError(error) || isUnknownVmError(error))
+				isNoSuchProcessError(error) ||
+				(entry.exitCode !== null && isUnknownVmError(error))
 			) {
 				return;
 			}
@@ -2270,7 +2194,13 @@ export class SidecarKernelProxy {
 		if (isRefusedStdinWrite(error)) return;
 		if (entry.exitCode !== null) {
 			// An I/O failure after exit must never rewrite the guest's real status.
-			if (!isNoSuchProcessError(error) && !isUnknownVmError(error)) {
+			// A request the caller's own disposal cancelled after the exit is not
+			// a failure either: the process it targeted is already gone.
+			if (
+				!isNoSuchProcessError(error) &&
+				!isUnknownVmError(error) &&
+				!(this.disposed && isCancelledRequestError(error))
+			) {
 				this.emitBackgroundProcessError(entry, error);
 			}
 			return;
@@ -2894,6 +2824,27 @@ function buildCommandMap(
 }
 
 /** Stdin written after its process exited, as a pipe write with no reader on Linux. */
+/** Stdin writes that may wait in one process's queue at once, as in the Rust client. */
+const PROCESS_STDIN_QUEUE_LIMIT = 1024;
+
+function stdinQueueLimitError(pid: number): Error {
+	return Object.assign(
+		new Error(
+			`process ${pid} already has ${PROCESS_STDIN_QUEUE_LIMIT} stdin writes waiting; await earlier writes`,
+		),
+		{
+			code: "ERR_AGENTOS_RESOURCE_LIMIT",
+			limitName: "process_stdin_queue_entries",
+			configuredLimit: PROCESS_STDIN_QUEUE_LIMIT,
+			requested: PROCESS_STDIN_QUEUE_LIMIT + 1,
+			unit: "writes",
+			scope: "process",
+			operation: "process.writeStdin",
+			retryable: true,
+		},
+	);
+}
+
 function stdinHasNoReader(pid: number): KernelError {
 	return new KernelError(
 		"EPIPE",
@@ -2937,6 +2888,14 @@ function isNoSuchProcessError(error: unknown): boolean {
 		error.message.includes("ESRCH") ||
 		message.includes("no such process") ||
 		message.includes("has no active process")
+	);
+}
+
+function isCancelledRequestError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		(error.message.includes("ERR_AGENTOS_REQUEST_CANCELLED") ||
+			error.message.includes("ERR_AGENTOS_COORDINATOR_CANCELLED"))
 	);
 }
 

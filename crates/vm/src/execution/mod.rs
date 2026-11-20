@@ -9,8 +9,8 @@ mod coordinator;
 mod owned_rpc;
 use self::coordinator::*;
 pub(crate) use self::coordinator::{
-    close_stdin_owned, guest_kernel_core_error, resize_pty_owned, write_stdin_owned,
-    OwnedVmRouteFuture, OwnedVmRouteInput,
+    close_stdin_if_running_owned, close_stdin_owned, guest_kernel_core_error, resize_pty_owned,
+    write_stdin_owned, OwnedVmRouteFuture, OwnedVmRouteInput,
 };
 mod launch;
 use self::launch::*;
@@ -37,7 +37,9 @@ pub(crate) use host_dispatch::checked_deferred_guest_wait_deadline;
 mod process;
 pub(crate) mod process_ipc;
 use self::process::*;
-pub(crate) use self::process::{settle_execution_host_call, terminate_child_process_tree};
+pub(crate) use self::process::{
+    settle_execution_host_call, terminate_child_process_tree, PolledExecutionEvent,
+};
 mod process_events;
 #[cfg(any(test, feature = "test-support"))]
 #[allow(unused_imports)]
@@ -143,7 +145,7 @@ use crate::service::python_error;
 use crate::service::{
     audit_fields, dirname, emit_security_audit_event, emit_structured_event_or_stderr,
     kernel_error, log_stale_process_event, normalize_host_path, normalize_path,
-    path_is_within_root, process_event_queue_overflow_error, wasm_error,
+    path_is_within_root, process_event_queue_overflow_error, wasm_error, ProcessEventOffer,
 };
 use crate::state::{
     async_completion_channel, tcp_socket_event_retained_bytes, unix_listener_event_retained_bytes,

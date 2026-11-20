@@ -1854,6 +1854,20 @@ where
             )
             .await?;
         }
+        // An attached run outside a context returns no stdin handle, so the
+        // `stdin` option is all its input: end it, as `< file` does on Linux.
+        // Left open, a command that reads to end of input (`cat`, `tr`) runs
+        // until its timeout. A context reuses one resident process and a PTY's
+        // input is a terminal, so both stay open, as do spawned processes.
+        if !operation.background && !context_execution && operation.pty.is_none() {
+            crate::execution::close_stdin_if_running_owned(
+                self.vm_input(request),
+                CloseStdinRequest {
+                    process_id: process_id.clone(),
+                },
+            )
+            .await?;
+        }
 
         let descriptor = self
             .vms

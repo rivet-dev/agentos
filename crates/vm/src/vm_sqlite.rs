@@ -537,7 +537,6 @@ fn execute_local_statement(
     let readonly = prepared.readonly();
     let columns = prepared
         .column_names()
-        .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
     if columns.is_empty() {

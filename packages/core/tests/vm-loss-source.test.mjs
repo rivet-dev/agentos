@@ -11,7 +11,7 @@ const {code}=await transform(await readFile(new URL('../src/sidecar-process.ts',
 function fixture(){
  const context={module:{exports:{}},Error,Promise,require(name){if(name==='./sidecar-errors.js')return errors.module.exports;return {};}};
  vm.runInNewContext(code,context);let closed,requests=0;
- const process=context.module.exports.SidecarProcess.fromClient({onClose(handler){closed=handler;return()=>{};},setSidecarRequestHandler(){},async sendRequest(){requests++;return {payload:{type:'vm_disposed'}};}});
+ const process=context.module.exports.SidecarProcess.fromClient({onClose(handler){closed=handler;return()=>{};},setSidecarRequestHandler(){},async sendRequest(){requests++;return {payload:{type:'vm_disposed',completed_executions:[]}};}});
  return {process,close:error=>closed(error),requests:()=>requests};
 }
 const session={connectionId:'connection-test',sessionId:'session-test'},guest={vmId:'vm-test'};

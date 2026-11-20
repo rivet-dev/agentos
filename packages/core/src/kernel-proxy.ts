@@ -450,18 +450,6 @@ export class SidecarKernelProxy {
 		const liveProcesses = [...this.trackedProcesses.values()].filter(
 			(entry) => entry.exitCode === null,
 		);
-		const signals = await Promise.allSettled(
-			liveProcesses.map((entry) => this.signalProcess(entry, 15)),
-		);
-		for (const result of signals) {
-			if (result.status === "rejected") {
-				console.error(
-					"agentOS process signal during disposal failed:",
-					result.reason,
-				);
-			}
-		}
-
 		let disposalFailed = false;
 		let disposalError: unknown;
 		let timedOut = false;

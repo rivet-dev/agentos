@@ -2339,7 +2339,7 @@ pub(super) fn prepare_guest_runtime_env(
         })?,
     );
     // The guest JS host platform drives subtractive global scrubbing in the
-    // per-execution runtime shim (see prepend_v8_runtime_shim).
+    // per-execution runtime shim (see build_v8_runtime_shim).
     env.insert(
         String::from("AGENTOS_JS_PLATFORM"),
         js_runtime_platform_env(vm).to_owned(),
@@ -2458,7 +2458,17 @@ pub(super) fn guest_runtime_identity(
             max_chunk_size_line_bytes: vm.limits.http.max_chunk_size_line_bytes,
             max_pending_response_bytes: vm.limits.http.max_pending_response_bytes,
             max_readline_history_entries: vm.limits.js_runtime.max_readline_history_entries,
-            max_blob_bytes: vm.limits.js_runtime.max_blob_bytes.unwrap_or_else(|| agentos_executor_contract::GuestBridgeLimits::default().max_blob_bytes.min(vm.limits.js_runtime.v8_heap_limit_mb.map(|mb| mb as usize * 1024 * 1024).unwrap_or(usize::MAX))),
+            max_blob_bytes: vm.limits.js_runtime.max_blob_bytes.unwrap_or_else(|| {
+                agentos_executor_contract::GuestBridgeLimits::default()
+                    .max_blob_bytes
+                    .min(
+                        vm.limits
+                            .js_runtime
+                            .v8_heap_limit_mb
+                            .map(|mb| mb as usize * 1024 * 1024)
+                            .unwrap_or(usize::MAX),
+                    )
+            }),
         },
         kernel_stdio: true,
         kernel_ipc: true,
@@ -2488,6 +2498,12 @@ pub(super) fn guest_runtime_identity(
         // derives this from configured agent packages with `agent.snapshot`.
         snapshot_userland_code: None,
         prelude_script: None,
+        snapshot_entrypoints: vm
+            .configuration
+            .js_runtime
+            .as_ref()
+            .and_then(|config| config.snapshot_entrypoints.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -5492,6 +5508,20 @@ where
             );
             record_execute_phase("js_load_entrypoint_source", phase_start.elapsed());
 
+            let guest_runtime = javascript_guest_runtime(&vm, Some(u64::from(kernel_pid)), Some(0));
+            let snapshot_reader = if guest_runtime.snapshot_userland_code.is_none() {
+                crate::filesystem::capture_launch_module_snapshot(
+                    &mut vm.kernel,
+                    kernel_pid,
+                    &resolved.guest_cwd,
+                    &env,
+                    &guest_runtime.snapshot_entrypoints,
+                    inline_code.as_deref(),
+                )
+            } else {
+                None
+            };
+
             let phase_start = Instant::now();
             let context = javascript_engine.create_context(CreateJavascriptContextRequest {
                 vm_id: vm_id.clone(),
@@ -5504,11 +5534,7 @@ where
             let execution = match javascript_engine
                 .start_execution_with_module_reader_and_runtime(
                     StartJavascriptExecutionRequest {
-                        guest_runtime: javascript_guest_runtime(
-                            &vm,
-                            Some(u64::from(kernel_pid)),
-                            Some(0),
-                        ),
+                        guest_runtime,
                         vm_id: vm_id.clone(),
                         context_id: context_id.clone(),
                         argv: std::iter::once(launch_entrypoint.clone())
@@ -5522,7 +5548,7 @@ where
                         wasm_module_bytes: None,
                     },
                     None,
-                    None,
+                    snapshot_reader,
                     vm.runtime_context.clone(),
                 )
                 .map_err(javascript_error)
@@ -5578,20 +5604,17 @@ where
             );
             drop(vm);
             let pyodide_assets = python_engine
-                .bundled_pyodide_dist_path_for_vm_async(&vm_id, &runtime)
+                .bundled_pyodide_paths_for_vm_async(&vm_id, &runtime)
                 .await
                 .map_err(python_error);
             vm = input
                 .vm
                 .try_borrow_mut("complete Python asset preparation")?;
             pending_start.disarm();
-            let pyodide_dist_path =
-                top_level_start_step!(pyodide_assets, "top-level Python asset preparation");
-            let pyodide_cache_path = pyodide_dist_path
-                .parent()
-                .and_then(Path::parent)
-                .unwrap_or(pyodide_dist_path.as_path())
-                .join("pyodide-package-cache");
+            let crate::executor::PyodidePaths {
+                dist: pyodide_dist_path,
+                cache: pyodide_cache_path,
+            } = top_level_start_step!(pyodide_assets, "top-level Python asset preparation");
             add_runtime_guest_path_mapping(&mut env, PYTHON_PYODIDE_GUEST_ROOT, &pyodide_dist_path);
             add_runtime_guest_path_mapping(
                 &mut env,
@@ -5619,6 +5642,7 @@ where
             let context = python_engine.create_context(CreatePythonContextRequest {
                 vm_id: vm_id.clone(),
                 pyodide_dist_path,
+                pyodide_cache_path: Some(pyodide_cache_path),
             });
             let context_id = context.context_id;
             let pending_execution = python_engine.start_execution_with_runtime_async(

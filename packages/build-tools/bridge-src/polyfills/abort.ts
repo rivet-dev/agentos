@@ -1,4 +1,8 @@
-import { Event, EventTarget, observeEventTargetListeners } from "./dom-events.js";
+import {
+	Event,
+	EventTarget,
+	observeEventTargetListeners,
+} from "./dom-events.js";
 
 const NativeAbortControllerGlobal = globalThis.AbortController;
 const NativeAbortSignalGlobal = globalThis.AbortSignal;
@@ -16,99 +20,111 @@ const abortControllerState = new WeakMap();
 // https://dom.spec.whatwg.org/#create-a-dependent-abort-signal
 const SignalWeakRef = WeakRef;
 const SignalFinalizationRegistry = FinalizationRegistry;
-const registerFinalizer = Function.call.bind(SignalFinalizationRegistry.prototype.register);
-const unregisterFinalizer = Function.call.bind(SignalFinalizationRegistry.prototype.unregister);
+const registerFinalizer = Function.call.bind(
+	SignalFinalizationRegistry.prototype.register,
+);
+const unregisterFinalizer = Function.call.bind(
+	SignalFinalizationRegistry.prototype.unregister,
+);
 const deref = Function.call.bind(SignalWeakRef.prototype.deref);
 const observedDependents = new Set();
 function detachDependent(signal, state) {
-    for (const entry of state.sources) {
-        const source = deref(entry.source);
-        if (source) abortSignalState.get(source).dependents.delete(entry.dependent);
-    }
-    state.sources = [];
-    observedDependents.delete(signal);
-    unregisterFinalizer(dependentFinalizer, signal);
+	for (const entry of state.sources) {
+		const source = deref(entry.source);
+		if (source) abortSignalState.get(source).dependents.delete(entry.dependent);
+	}
+	state.sources = [];
+	observedDependents.delete(signal);
+	unregisterFinalizer(dependentFinalizer, signal);
 }
 function updateDependentLiveness(signal, type, count) {
-    if (type !== "abort") return;
-    const state = abortSignalState.get(signal);
-    state.abortListeners = count;
-    if (!state.aborted && count && state.sources.some(entry => deref(entry.source))) {
-        observedDependents.add(signal);
-    } else observedDependents.delete(signal);
+	if (type !== "abort") return;
+	const state = abortSignalState.get(signal);
+	state.abortListeners = count;
+	if (
+		!state.aborted &&
+		count &&
+		state.sources.some((entry) => deref(entry.source))
+	) {
+		observedDependents.add(signal);
+	} else observedDependents.delete(signal);
 }
-const dependentFinalizer = new SignalFinalizationRegistry(sources => {
-    for (const entry of sources) {
-        const source = deref(entry.source);
-        if (source) abortSignalState.get(source).dependents.delete(entry.dependent);
-    }
+const dependentFinalizer = new SignalFinalizationRegistry((sources) => {
+	for (const entry of sources) {
+		const source = deref(entry.source);
+		if (source) abortSignalState.get(source).dependents.delete(entry.dependent);
+	}
 });
-const sourceFinalizer = new SignalFinalizationRegistry(dependents => {
-    for (const reference of dependents) {
-        const signal = deref(reference);
-        if (!signal) continue;
-        const state = abortSignalState.get(signal);
-        state.sources = state.sources.filter(entry => deref(entry.source));
-        updateDependentLiveness(signal, "abort", state.abortListeners);
-    }
+const sourceFinalizer = new SignalFinalizationRegistry((dependents) => {
+	for (const reference of dependents) {
+		const signal = deref(reference);
+		if (!signal) continue;
+		const state = abortSignalState.get(signal);
+		state.sources = state.sources.filter((entry) => deref(entry.source));
+		updateDependentLiveness(signal, "abort", state.abortListeners);
+	}
 });
 function abortFallbackSignal(signal, reason) {
-    const state = abortSignalState.get(signal);
-    if (state.aborted) return;
-    state.aborted = true;
-    state.reason = createAbortSignalReason(reason);
-    const delivery = [signal];
-    // Dependents are flattened to root signals. Mark every result before any
-    // listener runs, so propagation cannot be stopped by an ordinary event.
-    for (const reference of state.dependents) {
-        const dependent = deref(reference);
-        if (!dependent) continue;
-        const child = abortSignalState.get(dependent);
-        if (child.aborted) continue;
-        child.aborted = true;
-        child.reason = state.reason;
-        detachDependent(dependent, child);
-        delivery.push(dependent);
-    }
-    state.dependents.clear();
-    unregisterFinalizer(sourceFinalizer, signal);
-    detachDependent(signal, state);
-    for (const target of delivery) target.dispatchEvent(new Event("abort"));
+	const state = abortSignalState.get(signal);
+	if (state.aborted) return;
+	state.aborted = true;
+	state.reason = createAbortSignalReason(reason);
+	const delivery = [signal];
+	// Dependents are flattened to root signals. Mark every result before any
+	// listener runs, so propagation cannot be stopped by an ordinary event.
+	for (const reference of state.dependents) {
+		const dependent = deref(reference);
+		if (!dependent) continue;
+		const child = abortSignalState.get(dependent);
+		if (child.aborted) continue;
+		child.aborted = true;
+		child.reason = state.reason;
+		detachDependent(dependent, child);
+		delivery.push(dependent);
+	}
+	state.dependents.clear();
+	unregisterFinalizer(sourceFinalizer, signal);
+	detachDependent(signal, state);
+	for (const target of delivery) target.dispatchEvent(new Event("abort"));
 }
 function composeFallbackSignals(inputs) {
-    const signal = new FallbackAbortSignal(abortSignalToken);
-    const state = abortSignalState.get(signal);
-    state.dependent = true;
-    for (const input of inputs) {
-        const source = abortSignalState.get(input);
-        if (source.aborted) {
-            state.aborted = true;
-            state.reason = source.reason;
-            return signal;
-        }
-    }
-    const roots = new Set();
-    for (const input of inputs) {
-        const source = abortSignalState.get(input);
-        if (source.dependent) {
-            for (const entry of source.sources) {
-                const root = deref(entry.source);
-                if (root) roots.add(root);
-            }
-        } else roots.add(input);
-    }
-    const reference = new SignalWeakRef(signal);
-    for (const root of roots) {
-        const source = abortSignalState.get(root);
-        if (!source.sourceRegistered) {
-            registerFinalizer(sourceFinalizer, root, source.dependents, root);
-            source.sourceRegistered = true;
-        }
-        source.dependents.add(reference);
-        state.sources.push({source:new SignalWeakRef(root), dependent:reference});
-    }
-    if (state.sources.length) registerFinalizer(dependentFinalizer, signal, state.sources, signal);
-    return signal;
+	const signal = new FallbackAbortSignal(abortSignalToken);
+	const state = abortSignalState.get(signal);
+	state.dependent = true;
+	for (const input of inputs) {
+		const source = abortSignalState.get(input);
+		if (source.aborted) {
+			state.aborted = true;
+			state.reason = source.reason;
+			return signal;
+		}
+	}
+	const roots = new Set();
+	for (const input of inputs) {
+		const source = abortSignalState.get(input);
+		if (source.dependent) {
+			for (const entry of source.sources) {
+				const root = deref(entry.source);
+				if (root) roots.add(root);
+			}
+		} else roots.add(input);
+	}
+	const reference = new SignalWeakRef(signal);
+	for (const root of roots) {
+		const source = abortSignalState.get(root);
+		if (!source.sourceRegistered) {
+			registerFinalizer(sourceFinalizer, root, source.dependents, root);
+			source.sourceRegistered = true;
+		}
+		source.dependents.add(reference);
+		state.sources.push({
+			source: new SignalWeakRef(root),
+			dependent: reference,
+		});
+	}
+	if (state.sources.length)
+		registerFinalizer(dependentFinalizer, signal, state.sources, signal);
+	return signal;
 }
 
 function withCode(error, code) {
@@ -129,13 +145,13 @@ class FallbackAbortSignal extends EventTarget {
 			aborted: false,
 			reason: void 0,
 			onabort: null,
-            dependent: false,
-            dependents: new Set(),
-            sources: [],
-            abortListeners: 0,
-            sourceRegistered: false,
+			dependent: false,
+			dependents: new Set(),
+			sources: [],
+			abortListeners: 0,
+			sourceRegistered: false,
 		});
-        observeEventTargetListeners(this, updateDependentLiveness);
+		observeEventTargetListeners(this, updateDependentLiveness);
 	}
 
 	get aborted() {
@@ -174,7 +190,7 @@ class FallbackAbortController {
 
 	abort(reason) {
 		const signal = abortControllerState.get(this);
-        abortFallbackSignal(signal, reason);
+		abortFallbackSignal(signal, reason);
 	}
 }
 
@@ -317,9 +333,9 @@ if (typeof AbortSignal.any !== "function") {
 				}
 				inputs.push(signal);
 			}
-            if (inputs.every(signal => abortSignalState.has(signal))) {
-                return composeFallbackSignals(inputs);
-            }
+			if (inputs.every((signal) => abortSignalState.has(signal))) {
+				return composeFallbackSignals(inputs);
+			}
 			const controller = new AbortController();
 			const listeners = [];
 			const abortFromSignal = (signal) => {

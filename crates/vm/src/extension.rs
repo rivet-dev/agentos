@@ -218,7 +218,7 @@ impl DirectExtensionServices {
 }
 
 macro_rules! direct_extension_service {
-    ($name:ident($($argument:ident: $ty:ty),*) -> $result:ty) => {
+    ($name:ident($($argument:ident: $ty:ty),* $(,)?) -> $result:ty) => {
         fn $name(&self, $($argument: $ty),*) -> ExtensionFuture<'static, $result> {
             let commands = self.commands.clone();
             Box::pin(async move {
@@ -252,19 +252,74 @@ macro_rules! direct_extension_service {
 }
 
 impl ExtensionServices for DirectExtensionServices {
-    direct_extension_service!(vm_database(ownership: OwnershipScope) -> Option<crate::vm_sqlite::SharedVmSqliteDatabase>);
-    direct_extension_service!(spawn_process(ownership: OwnershipScope, request: ExecuteRequest) -> ProcessStartedResponse);
-    direct_extension_service!(write_stdin(ownership: OwnershipScope, request: WriteStdinRequest) -> StdinWrittenResponse);
-    direct_extension_service!(close_stdin(ownership: OwnershipScope, request: CloseStdinRequest) -> StdinClosedResponse);
-    direct_extension_service!(kill_process(ownership: OwnershipScope, request: KillProcessRequest) -> ProcessKilledResponse);
-    direct_extension_service!(poll_event(ownership: OwnershipScope, timeout: Duration) -> Option<EventFrame>);
-    direct_extension_service!(poll_process_event(ownership: OwnershipScope, process_id: String, timeout: Duration) -> Option<EventFrame>);
-    direct_extension_service!(guest_filesystem_call(ownership: OwnershipScope, request: GuestFilesystemCallRequest) -> GuestFilesystemResultResponse);
-    direct_extension_service!(bind_process_to_session(ownership: OwnershipScope, namespace: String, ext_session_id: String, process_id: String) -> ());
-    direct_extension_service!(bind_vm_to_session(ownership: OwnershipScope, namespace: String, ext_session_id: String) -> ());
-    direct_extension_service!(dispose_session_resources(ownership: OwnershipScope, namespace: String, ext_session_id: String) -> Vec<EventFrame>);
-    direct_extension_service!(start_buffering_process_output(ownership: OwnershipScope, process_id: String) -> ());
-    direct_extension_service!(handoff_buffered_process_output(ownership: OwnershipScope, namespace: String, ext_session_id: String, process_id: String, timeout: Duration) -> ExtensionBufferedProcessOutput);
+    direct_extension_service!(
+        vm_database(ownership: OwnershipScope) -> Option<crate::vm_sqlite::SharedVmSqliteDatabase>
+    );
+    direct_extension_service!(
+        spawn_process(ownership: OwnershipScope, request: ExecuteRequest) -> ProcessStartedResponse
+    );
+    direct_extension_service!(
+        write_stdin(ownership: OwnershipScope, request: WriteStdinRequest) -> StdinWrittenResponse
+    );
+    direct_extension_service!(
+        close_stdin(ownership: OwnershipScope, request: CloseStdinRequest) -> StdinClosedResponse
+    );
+    direct_extension_service!(
+        kill_process(
+            ownership: OwnershipScope,
+            request: KillProcessRequest,
+        ) -> ProcessKilledResponse
+    );
+    direct_extension_service!(
+        poll_event(ownership: OwnershipScope, timeout: Duration) -> Option<EventFrame>
+    );
+    direct_extension_service!(
+        poll_process_event(
+            ownership: OwnershipScope,
+            process_id: String,
+            timeout: Duration,
+        ) -> Option<EventFrame>
+    );
+    direct_extension_service!(
+        guest_filesystem_call(
+            ownership: OwnershipScope,
+            request: GuestFilesystemCallRequest,
+        ) -> GuestFilesystemResultResponse
+    );
+    direct_extension_service!(
+        bind_process_to_session(
+            ownership: OwnershipScope,
+            namespace: String,
+            ext_session_id: String,
+            process_id: String,
+        ) -> ()
+    );
+    direct_extension_service!(
+        bind_vm_to_session(
+            ownership: OwnershipScope,
+            namespace: String,
+            ext_session_id: String,
+        ) -> ()
+    );
+    direct_extension_service!(
+        dispose_session_resources(
+            ownership: OwnershipScope,
+            namespace: String,
+            ext_session_id: String,
+        ) -> Vec<EventFrame>
+    );
+    direct_extension_service!(
+        start_buffering_process_output(ownership: OwnershipScope, process_id: String) -> ()
+    );
+    direct_extension_service!(
+        handoff_buffered_process_output(
+            ownership: OwnershipScope,
+            namespace: String,
+            ext_session_id: String,
+            process_id: String,
+            timeout: Duration,
+        ) -> ExtensionBufferedProcessOutput
+    );
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

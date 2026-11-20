@@ -368,8 +368,10 @@ export const agentOsLimitsSchema = z
 					.max(Number.MAX_SAFE_INTEGER)
 					.optional(),
 				v8HeapLimitMb: positiveInteger.optional(),
-                v8SerializationLimitBytes: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
-                maxBlobBytes: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
+				v8SerializationLimitBytes: positiveInteger
+					.max(Number.MAX_SAFE_INTEGER)
+					.optional(),
+				maxBlobBytes: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
 				syncRpcWaitTimeoutMs: nonNegativeInteger.optional(),
 				cpuTimeLimitMs: nonNegativeInteger.optional(),
 				wallClockLimitMs: nonNegativeInteger.optional(),
@@ -509,14 +511,32 @@ export const mountConfigSchema = z.union([
 
 export const sidecarRuntimeConfigSchema = z
 	.object({
-		blocking: z.object({maxQueuedBytes: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional()}).strict().optional(),
-		protocol: z.object({
-			maxInFlightRequests: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
-			maxTerminalFrames: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
-			maxTerminalBytes: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
-			maxControlFrames: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
-			maxControlBytes: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
-		}).strict().optional(),
+		blocking: z
+			.object({
+				maxQueuedBytes: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
+			})
+			.strict()
+			.optional(),
+		protocol: z
+			.object({
+				maxInFlightRequests: positiveInteger
+					.max(Number.MAX_SAFE_INTEGER)
+					.optional(),
+				maxTerminalFrames: positiveInteger
+					.max(Number.MAX_SAFE_INTEGER)
+					.optional(),
+				maxTerminalBytes: positiveInteger
+					.max(Number.MAX_SAFE_INTEGER)
+					.optional(),
+				maxControlFrames: positiveInteger
+					.max(Number.MAX_SAFE_INTEGER)
+					.optional(),
+				maxControlBytes: positiveInteger
+					.max(Number.MAX_SAFE_INTEGER)
+					.optional(),
+			})
+			.strict()
+			.optional(),
 		executor: z
 			.object({
 				maxActiveVms: positiveInteger.max(Number.MAX_SAFE_INTEGER).optional(),
@@ -613,6 +633,7 @@ export const agentOsOptionFieldSchemas = {
 	wasmBackend: z.enum(["v8", "wasmtime", "wasmtime-threads"]).optional(),
 	defaultsProfile: z.enum(["agent_os", "secure"]).optional(),
 	highResolutionTime: z.boolean().optional(),
+	snapshotEntrypoints: stringArray.optional(),
 	database: z
 		.object({
 			type: z.literal("sqlite_file"),

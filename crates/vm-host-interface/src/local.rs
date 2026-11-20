@@ -29,6 +29,7 @@ pub struct LocalVmHost {
     started_at: Instant,
     next_timer_id: usize,
     snapshots: BTreeMap<String, FilesystemSnapshot>,
+    retain_snapshots: bool,
 }
 
 impl Default for LocalVmHost {
@@ -37,6 +38,17 @@ impl Default for LocalVmHost {
             started_at: Instant::now(),
             next_timer_id: 0,
             snapshots: BTreeMap::new(),
+            retain_snapshots: true,
+        }
+    }
+}
+
+impl LocalVmHost {
+    /// Construct a local host that discards VM disposal snapshots.
+    pub fn ephemeral() -> Self {
+        Self {
+            retain_snapshots: false,
+            ..Self::default()
         }
     }
 }
@@ -276,8 +288,14 @@ impl HostPersistence for LocalVmHost {
         &mut self,
         request: FlushFilesystemStateRequest,
     ) -> Result<(), Self::Error> {
-        self.snapshots.insert(request.vm_id, request.snapshot);
+        if self.retain_snapshots {
+            self.snapshots.insert(request.vm_id, request.snapshot);
+        }
         Ok(())
+    }
+
+    fn persists_filesystem_state(&self) -> bool {
+        self.retain_snapshots
     }
 
     fn release_filesystem_state(&mut self, vm_id: &str) -> Result<(), Self::Error> {

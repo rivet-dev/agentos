@@ -17,6 +17,7 @@ exclude = [
 
 [features]
 test-support = []
+wasm-exnref = []
 obscura-embedding = ["dep:deno_core"]
 
 [dependencies]
@@ -41,6 +42,7 @@ tracing = "0.1"
 
 [build-dependencies]
 cc = "1"
+sha2 = "0.10"
 
 [dev-dependencies]
 nix = { version = "0.29", features = ["fs"] }

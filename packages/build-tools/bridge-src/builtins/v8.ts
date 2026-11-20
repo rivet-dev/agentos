@@ -9,7 +9,9 @@ function v8Serialize(value) {
 }
 function v8Deserialize(value) {
 	if (!ArrayBuffer.isView(value)) {
-		const error = new TypeError("The buffer argument must be a TypedArray or DataView");
+		const error = new TypeError(
+			"The buffer argument must be a TypedArray or DataView",
+		);
 		error.code = "ERR_INVALID_ARG_TYPE";
 		throw error;
 	}
@@ -32,28 +34,53 @@ class V8Serializer {
 
 const nativeDeserializerOperations = new Map();
 function deserializerOperation(receiver, operation, ...args) {
- let call = nativeDeserializerOperations.get(operation);
- if (!call) {
-  const name="v8.deserializer."+operation, bridge=globalThis[name];
-  if(typeof bridge!=="function" && typeof bridge?.applySync!=="function") throw new Error("Native V8 Deserializer bridge is unavailable");
-  call=createBridgeSyncFacade(name);nativeDeserializerOperations.set(operation,call);
- }
- return call.applySyncPromise(void 0, [receiver, ...args]);
+	let call = nativeDeserializerOperations.get(operation);
+	if (!call) {
+		const name = "v8.deserializer." + operation,
+			bridge = globalThis[name];
+		if (typeof bridge !== "function" && typeof bridge?.applySync !== "function")
+			throw new Error("Native V8 Deserializer bridge is unavailable");
+		call = createBridgeSyncFacade(name);
+		nativeDeserializerOperations.set(operation, call);
+	}
+	return call.applySyncPromise(void 0, [receiver, ...args]);
 }
 class V8Deserializer {
- constructor(buffer) { deserializerOperation(this, "create", buffer); }
- readHeader() { return deserializerOperation(this, "readHeader"); }
- readValue() { return deserializerOperation(this, "readValue"); }
- readUint32() { return deserializerOperation(this, "readUint32"); }
- readUint64() { return deserializerOperation(this, "readUint64"); }
- readDouble() { return deserializerOperation(this, "readDouble"); }
- readRawBytes(length) { return Buffer.from(deserializerOperation(this, "readRawBytes", length)); }
- getWireFormatVersion() { return deserializerOperation(this, "getWireFormatVersion"); }
- transferArrayBuffer(id, buffer) { deserializerOperation(this, "transferArrayBuffer", id, buffer); }
- _readHostObject() { throw new Error("Unable to deserialize host object"); }
+	constructor(buffer) {
+		deserializerOperation(this, "create", buffer);
+	}
+	readHeader() {
+		return deserializerOperation(this, "readHeader");
+	}
+	readValue() {
+		return deserializerOperation(this, "readValue");
+	}
+	readUint32() {
+		return deserializerOperation(this, "readUint32");
+	}
+	readUint64() {
+		return deserializerOperation(this, "readUint64");
+	}
+	readDouble() {
+		return deserializerOperation(this, "readDouble");
+	}
+	readRawBytes(length) {
+		return Buffer.from(deserializerOperation(this, "readRawBytes", length));
+	}
+	getWireFormatVersion() {
+		return deserializerOperation(this, "getWireFormatVersion");
+	}
+	transferArrayBuffer(id, buffer) {
+		deserializerOperation(this, "transferArrayBuffer", id, buffer);
+	}
+	_readHostObject() {
+		throw new Error("Unable to deserialize host object");
+	}
 }
 class V8DefaultDeserializer extends V8Deserializer {
- _readHostObject() { return deserializerOperation(this, "readHostObject"); }
+	_readHostObject() {
+		return deserializerOperation(this, "readHostObject");
+	}
 }
 
 var nativeV8HeapStatistics = createBridgeSyncFacade("v8.getHeapStatistics");

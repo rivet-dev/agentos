@@ -193,6 +193,137 @@ fn attached_execution_is_ephemeral_and_does_not_capture_by_default() {
     dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
 }
 
+fn run_attached_stdin_reader(
+    name: &str,
+    stdin: Option<Vec<u8>>,
+) -> wire::ExecutionCompletedResponse {
+    let mut sidecar = new_sidecar(name);
+    let connection_id = authenticate_wire(&mut sidecar, &format!("{name}-connection"));
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let cwd = temp_dir(&format!("{name}-cwd"));
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        wire::GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+    let mut process = process_options(None);
+    process.operation_id = None;
+    process.background = Some(false);
+    process.output = wire::ExecutionOutputOptions {
+        capture: Some(wire::ExecutionOutputCapture::All),
+        retain_events: None,
+    };
+    process.args = vec![
+        String::from("-e"),
+        String::from(
+            "let size = 0; process.stdin.on('data', (chunk) => { size += chunk.length; }).on('end', () => console.log(`read ${size} bytes to end`));",
+        ),
+    ];
+    process.stdin = stdin;
+    process.timeout_ms = Some(5_000);
+    let accepted = sidecar
+        .dispatch_wire_blocking(wire_request(
+            4,
+            wire_vm(&connection_id, &session_id, &vm_id),
+            wire::RequestPayload::ArgvExecutionRequest(wire::ArgvExecutionRequest {
+                process,
+                command: String::from("node"),
+            }),
+        ))
+        .expect("start attached stdin reader");
+    let operation_id = accepted_execution_id(accepted);
+    let result = wait_for_execution(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        &operation_id,
+    );
+    dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+    result
+}
+
+#[test]
+fn attached_execution_gives_the_process_end_of_input_after_its_stdin() {
+    let result =
+        run_attached_stdin_reader("language-execution-stdin-eof", Some(b"text\n".to_vec()));
+    assert_eq!(result.outcome, wire::ExecutionOutcome::Succeeded);
+    assert_eq!(
+        String::from_utf8(result.stdout.expect("captured stdout")).expect("UTF-8 stdout"),
+        "read 5 bytes to end\n"
+    );
+}
+
+#[test]
+fn attached_execution_without_stdin_gives_the_process_end_of_input() {
+    let result = run_attached_stdin_reader("language-execution-no-stdin-eof", None);
+    assert_eq!(result.outcome, wire::ExecutionOutcome::Succeeded);
+    assert_eq!(
+        String::from_utf8(result.stdout.expect("captured stdout")).expect("UTF-8 stdout"),
+        "read 0 bytes to end\n"
+    );
+}
+
+#[test]
+fn context_keeps_its_stdin_open_across_calls_with_stdin() {
+    let mut sidecar = new_sidecar("language-execution-context-stdin");
+    let connection_id = authenticate_wire(&mut sidecar, "context-stdin-connection");
+    let session_id = open_session_wire(&mut sidecar, 2, &connection_id);
+    let cwd = temp_dir("language-execution-context-stdin-cwd");
+    let (vm_id, _) = create_vm_wire(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        wire::GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+    create_context(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "stdin-context",
+    );
+    for call in 0..2 {
+        let mut process = context_process_options("stdin-context");
+        process.stdin = Some(format!("call {call}\n").into_bytes());
+        process.timeout_ms = Some(5_000);
+        let started = sidecar
+            .dispatch_wire_blocking(wire_request(
+                5 + call,
+                wire_vm(&connection_id, &session_id, &vm_id),
+                wire::RequestPayload::JavaScriptEvaluationRequest(
+                    wire::JavaScriptEvaluationRequest {
+                        process,
+                        expression: String::from("1 + 1"),
+                        format: Some(wire::JavaScriptModuleFormat::CommonJs),
+                        file_path: None,
+                        inputs: None,
+                    },
+                ),
+            ))
+            .expect("start context call with stdin");
+        let execution_id = accepted_execution_id(started);
+        let result = wait_for_execution(
+            &mut sidecar,
+            &connection_id,
+            &session_id,
+            &vm_id,
+            &execution_id,
+        );
+        assert_eq!(
+            result.outcome,
+            wire::ExecutionOutcome::Succeeded,
+            "context call {call} with stdin: {result:?}"
+        );
+    }
+    dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
+}
+
 #[test]
 fn background_and_retained_events_require_valid_identity() {
     let mut sidecar = new_sidecar("language-execution-identity-validation");

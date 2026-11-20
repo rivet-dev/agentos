@@ -14,7 +14,7 @@ use web_time::{SystemTime, UNIX_EPOCH};
 
 const MAX_REALPATH_SYMLINKS: usize = 40;
 
-pub trait MountedFileSystem: Any {
+pub trait MountedFileSystem: Any + Send {
     /// True when this backend is known to reject all writes without mutation.
     /// Unknown backends retain preflight admission before any mkdir attempt.
     fn is_read_only(&self) -> bool {
@@ -53,7 +53,7 @@ pub trait MountedFileSystem: Any {
                 return Err(VfsError::new(
                     "EEXIST",
                     format!("file already exists, open '{path}'"),
-                ))
+                ));
             }
             Err(error) if error.code() == "ENOENT" => {}
             Err(error) => return Err(error),
@@ -376,7 +376,7 @@ impl<F> MountedVirtualFileSystem<F> {
 
 impl<F> MountedFileSystem for MountedVirtualFileSystem<F>
 where
-    F: VirtualFileSystem + 'static,
+    F: VirtualFileSystem + Send + 'static,
 {
     fn is_read_only(&self) -> bool {
         (&self.inner as &dyn Any)
@@ -1551,13 +1551,15 @@ pub struct MountTable {
     namespace_directories: MountNamespaceIndex,
     namespace_device_id: Option<u64>,
     next_namespace_inode: u64,
+    /// Longest path first; equal lengths keep mount order.
     mounts: Vec<MountRegistration>,
+    /// Path to its position in `mounts`, kept in step on every change.
     mount_indices: BTreeMap<String, usize>,
     mutation_generation: u64,
 }
 
 impl MountTable {
-    pub fn new(root_fs: impl VirtualFileSystem + 'static) -> Self {
+    pub fn new(root_fs: impl VirtualFileSystem + Send + 'static) -> Self {
         Self {
             #[cfg(test)]
             namespace_component_probes: std::cell::Cell::new(0),
@@ -1636,7 +1638,7 @@ impl MountTable {
     pub fn mount(
         &mut self,
         path: &str,
-        filesystem: impl VirtualFileSystem + 'static,
+        filesystem: impl VirtualFileSystem + Send + 'static,
         options: MountOptions,
     ) -> VfsResult<()> {
         self.mount_boxed(
@@ -1675,7 +1677,7 @@ impl MountTable {
             if normalized == "/" {
                 return Err(VfsError::new("EINVAL", "cannot mount over root"));
             }
-            if self.mounts.iter().any(|mount| mount.path == normalized) {
+            if self.mount_indices.contains_key(&normalized) {
                 return Err(VfsError::new(
                     "EEXIST",
                     format!("already mounted at {normalized}"),
@@ -1749,7 +1751,7 @@ impl MountTable {
             filesystem
         };
 
-        self.mounts.push(MountRegistration {
+        self.insert_registration(MountRegistration {
             namespace_requires_walk,
             namespace_device_id: self.namespace_device_id,
             namespace_ancestors,
@@ -1767,11 +1769,37 @@ impl MountTable {
             cached_usage: None,
             filesystem,
         });
-        self.mounts
-            .sort_by_key(|mount| std::cmp::Reverse(mount.path.len()));
-        self.rebuild_mount_indices();
         self.advance_mutation_generation();
         Ok(root_growth)
+    }
+
+    /// Insert where a stable longest-first sort would put it, and shift the
+    /// stored positions in place. A VM configure applies ~150 mounts on the
+    /// sidecar router thread; re-sorting and re-cloning every path per mount
+    /// made that quadratic.
+    fn insert_registration(&mut self, mount: MountRegistration) {
+        let len = mount.path.len();
+        let position = self
+            .mounts
+            .partition_point(|existing| existing.path.len() >= len);
+        for index in self.mount_indices.values_mut() {
+            if *index >= position {
+                *index += 1;
+            }
+        }
+        self.mount_indices.insert(mount.path.clone(), position);
+        self.mounts.insert(position, mount);
+    }
+
+    fn remove_registration(&mut self, position: usize) -> MountRegistration {
+        let mount = self.mounts.remove(position);
+        self.mount_indices.remove(&mount.path);
+        for index in self.mount_indices.values_mut() {
+            if *index > position {
+                *index -= 1;
+            }
+        }
+        mount
     }
 
     pub fn unmount(&mut self, path: &str) -> VfsResult<()> {
@@ -1798,20 +1826,15 @@ impl MountTable {
             ));
         }
 
-        let Some(index) = self
-            .mounts
-            .iter()
-            .position(|mount| mount.path == normalized)
-        else {
+        let Some(index) = self.mount_indices.get(&normalized).copied() else {
             return Err(VfsError::new(
                 "EINVAL",
                 format!("not a mount point: {normalized}"),
             ));
         };
 
-        let mount = self.mounts.remove(index);
+        let mount = self.remove_registration(index);
         self.detach_namespace_ancestors(&mount.path, &mount.namespace_ancestors);
-        self.rebuild_mount_indices();
         self.advance_mutation_generation();
         Ok(DetachedMount {
             registration: Some(mount),
@@ -1821,11 +1844,7 @@ impl MountTable {
     /// Restore an exact backend removed by `detach`. No new mountpoint is
     /// materialized, since the backend and its mount metadata already existed.
     pub fn restore_detached(&mut self, mut mount: DetachedMount) -> VfsResult<()> {
-        if self
-            .mounts
-            .iter()
-            .any(|existing| existing.path == mount.path())
-        {
+        if self.mount_indices.contains_key(mount.path()) {
             let path = mount.path().to_owned();
             let cleanup_error = mount.shutdown().err();
             return Err(VfsError::new(
@@ -1847,11 +1866,7 @@ impl MountTable {
         registration.namespace_requires_walk = walk;
         registration.namespace_device_id = self.namespace_device_id;
         self.attach_namespace_ancestors(&registration.path, &mut registration.namespace_ancestors)?;
-        self.mounts
-            .push(mount.registration.take().expect("owned detached mount"));
-        self.mounts
-            .sort_by_key(|mount| std::cmp::Reverse(mount.path.len()));
-        self.rebuild_mount_indices();
+        self.insert_registration(mount.registration.take().expect("owned detached mount"));
         self.advance_mutation_generation();
         Ok(())
     }
@@ -2164,16 +2179,9 @@ impl MountTable {
             |path| filesystem.read_link(path),
         )?;
         let parent =
-            resolved.rsplit_once('/').map_or(
-                "/",
-                |(head, _)| {
-                    if head.is_empty() {
-                        "/"
-                    } else {
-                        head
-                    }
-                },
-            );
+            resolved
+                .rsplit_once('/')
+                .map_or("/", |(head, _)| if head.is_empty() { "/" } else { head });
         let missing = self.missing_directory_count(index, parent)?;
         Ok((resolved, missing))
     }
@@ -2244,16 +2252,6 @@ impl MountTable {
             "ENOENT",
             format!("no such file or directory, resolve '{full_path}'"),
         ))
-    }
-
-    fn rebuild_mount_indices(&mut self) {
-        self.mount_indices.clear();
-        self.mount_indices.extend(
-            self.mounts
-                .iter()
-                .enumerate()
-                .map(|(index, mount)| (mount.path.clone(), index)),
-        );
     }
 
     fn resolve_writable_index(&self, full_path: &str) -> VfsResult<(usize, String)> {
@@ -2749,7 +2747,12 @@ impl VirtualFileSystem for MountTable {
             let canonical = self.routed_guest_path(index, &relative_path);
             let entries = self.child_mount_basenames(&canonical);
             if entries.len() > max_entries {
-                return Err(VfsError::new("ENOMEM", format!("directory listing for '{path}' exceeds configured limit of {max_entries} entries")));
+                return Err(VfsError::new(
+                    "ENOMEM",
+                    format!(
+                        "directory listing for '{path}' exceeds configured limit of {max_entries} entries"
+                    ),
+                ));
             }
             return Ok(entries);
         }
@@ -3124,7 +3127,7 @@ impl VirtualFileSystem for MountTable {
         let namespace_walk = self.namespace_requires_walk(index);
         let fallback_error = match self.realpath_in_mount(index, &relative_path) {
             Ok(resolved) if !path_needs_component_walk(path) && !namespace_walk => {
-                return Ok(resolved)
+                return Ok(resolved);
             }
             Ok(_) => None,
             // ELOOP and ENOENT may mean the mounted backend encountered a symlink
@@ -3161,7 +3164,7 @@ impl VirtualFileSystem for MountTable {
             let (stat, mount_ancestor) = match self.lstat_canonical_component(&candidate) {
                 Ok(result) => result,
                 Err(error) if error.code() == "ENOENT" => {
-                    return Err(fallback_error.unwrap_or(error))
+                    return Err(fallback_error.unwrap_or(error));
                 }
                 Err(error) => return Err(error),
             };
@@ -3650,6 +3653,9 @@ fn check_usage_limits(
 }
 
 fn normalize_path(path: &str) -> String {
+    if super::vfs::is_normalized_path(path) {
+        return path.to_owned();
+    }
     let mut segments = Vec::new();
     for component in Path::new(path).components() {
         match component {

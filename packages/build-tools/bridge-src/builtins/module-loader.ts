@@ -52,7 +52,12 @@ function computeRequireResolvePaths(dirname, request) {
 }
 function createRequireResolve(dirname) {
 	const resolve = function (request, _options) {
-		const resolved = Module._resolveFilename(request, { path: dirname }, false, _options);
+		const resolved = Module._resolveFilename(
+			request,
+			{ path: dirname },
+			false,
+			_options,
+		);
 		return resolved;
 	};
 	resolve.paths = function (request) {
@@ -334,7 +339,11 @@ function requireFrom(request, parentDir, isMain = false) {
 			}
 		}
 	}
-	const resolved = Module._resolveFilename(request, { path: parentPath }, isMain);
+	const resolved = Module._resolveFilename(
+		request,
+		{ path: parentPath },
+		isMain,
+	);
 	if (Object.prototype.hasOwnProperty.call(_moduleCache, resolved)) {
 		if (isMain) markMainModule(_moduleCache[resolved]);
 		return _moduleCache[resolved].exports;

@@ -47,24 +47,38 @@ var registeredNetSockets = /* @__PURE__ */ new Map();
 const registeredNetSocketsByPorts = new Map();
 const registeredSocketPorts = new WeakMap();
 function unindexNetSocketPeer(socket) {
- const ports=registeredSocketPorts.get(socket);
- if(!ports)return;
- registeredSocketPorts.delete(socket);
- const remotes=registeredNetSocketsByPorts.get(ports.local),peers=remotes?.get(ports.remote);
- peers?.delete(socket);
- if(peers?.size===0)remotes.delete(ports.remote);
- if(remotes?.size===0)registeredNetSocketsByPorts.delete(ports.local);
+	const ports = registeredSocketPorts.get(socket);
+	if (!ports) return;
+	registeredSocketPorts.delete(socket);
+	const remotes = registeredNetSocketsByPorts.get(ports.local),
+		peers = remotes?.get(ports.remote);
+	peers?.delete(socket);
+	if (peers?.size === 0) remotes.delete(ports.remote);
+	if (remotes?.size === 0) registeredNetSocketsByPorts.delete(ports.local);
 }
 function indexNetSocketPeer(socket) {
- unindexNetSocketPeer(socket);
- if(typeof socket.localPort!=="number"||typeof socket.remotePort!=="number")return;
- let remotes=registeredNetSocketsByPorts.get(socket.localPort);
- if(!remotes){remotes=new Map();registeredNetSocketsByPorts.set(socket.localPort,remotes);}
- let peers=remotes.get(socket.remotePort);
- if(!peers){peers=new Set();remotes.set(socket.remotePort,peers);}
- peers.add(socket);registeredSocketPorts.set(socket,{local:socket.localPort,remote:socket.remotePort});
+	unindexNetSocketPeer(socket);
+	if (
+		typeof socket.localPort !== "number" ||
+		typeof socket.remotePort !== "number"
+	)
+		return;
+	let remotes = registeredNetSocketsByPorts.get(socket.localPort);
+	if (!remotes) {
+		remotes = new Map();
+		registeredNetSocketsByPorts.set(socket.localPort, remotes);
+	}
+	let peers = remotes.get(socket.remotePort);
+	if (!peers) {
+		peers = new Set();
+		remotes.set(socket.remotePort, peers);
+	}
+	peers.add(socket);
+	registeredSocketPorts.set(socket, {
+		local: socket.localPort,
+		remote: socket.remotePort,
+	});
 }
-
 
 var registeredNetServersByPort = /* @__PURE__ */ new Map();
 
@@ -77,10 +91,10 @@ function getRegisteredNetSocket(socketId) {
 }
 
 function registerNetSocket(socketId, socket) {
- socket._bridgeReadInterestSocketId=undefined;
+	socket._bridgeReadInterestSocketId = undefined;
 	globalThis[`${NET_SOCKET_REGISTRY_PREFIX}${socketId}`] = socket;
 	registeredNetSockets.set(socketId, socket);
- indexNetSocketPeer(socket);
+	indexNetSocketPeer(socket);
 	registerCapabilityReadiness(socket, () => {
 		countNetBridgeMetric("readEventWakeups");
 		wakeSocketBridgeReads(socket);
@@ -88,7 +102,7 @@ function registerNetSocket(socketId, socket) {
 }
 
 function unregisterNetSocket(socketId) {
- unindexNetSocketPeer(registeredNetSockets.get(socketId));
+	unindexNetSocketPeer(registeredNetSockets.get(socketId));
 	unregisterCapabilityReadiness(registeredNetSockets.get(socketId));
 	delete globalThis[`${NET_SOCKET_REGISTRY_PREFIX}${socketId}`];
 	registeredNetSockets.delete(socketId);
@@ -325,9 +339,11 @@ function wakePeerBridgeReads(socket) {
 		typeof socket.remotePort === "number" &&
 		typeof socket.localPort === "number"
 	) {
-        const peers=registeredNetSocketsByPorts.get(socket.remotePort)?.get(socket.localPort);
+		const peers = registeredNetSocketsByPorts
+			.get(socket.remotePort)
+			?.get(socket.localPort);
 		for (const peer of peers ?? []) {
-            countNetBridgeMetric("peerWakeCandidates");
+			countNetBridgeMetric("peerWakeCandidates");
 			if (peer === socket || peer.destroyed) {
 				continue;
 			}
@@ -1856,12 +1872,24 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 	_socketAddresses;
 	// Node exposes addresses through prototype accessors. Keeping the peer
 	// information together also avoids deleting instance fields for Unix sockets.
-	get remoteAddress() { return this._socketAddresses?.remoteAddress; }
-	get remotePort() { return this._socketAddresses?.remotePort; }
-	get remoteFamily() { return this._socketAddresses?.remoteFamily; }
-	get localAddress() { return this._socketAddresses?.localAddress; }
-	get localPort() { return this._socketAddresses?.localPort; }
-	get localFamily() { return this._socketAddresses?.localFamily; }
+	get remoteAddress() {
+		return this._socketAddresses?.remoteAddress;
+	}
+	get remotePort() {
+		return this._socketAddresses?.remotePort;
+	}
+	get remoteFamily() {
+		return this._socketAddresses?.remoteFamily;
+	}
+	get localAddress() {
+		return this._socketAddresses?.localAddress;
+	}
+	get localPort() {
+		return this._socketAddresses?.localPort;
+	}
+	get localFamily() {
+		return this._socketAddresses?.localFamily;
+	}
 	_localUnixPath;
 	_remoteUnixPath;
 	bytesRead = 0;
@@ -1916,13 +1944,15 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		if (cb) this.once("connect", cb);
 		this[kAsyncContextFrame] = getAsyncContextFrame();
 		this.connecting = true;
-		this._socketAddresses = path ? undefined : {
-			remoteAddress: host,
-			remotePort: port,
-			localAddress: "0.0.0.0",
-			localPort: 0,
-			localFamily: "IPv4",
-		};
+		this._socketAddresses = path
+			? undefined
+			: {
+					remoteAddress: host,
+					remotePort: port,
+					localAddress: "0.0.0.0",
+					localPort: 0,
+					localFamily: "IPv4",
+				};
 		this._remoteUnixPath = path;
 		this.pending = false;
 		let handle: any;
@@ -1992,13 +2022,19 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		}
 		return this;
 	}
-    _setBridgeReadInterest(enabled) {
-        const socketId=this._socketId;
-        if(!socketId||typeof _netSocketSetReadInterestRaw==="undefined")return;
-        if(this._bridgeReadInterestSocketId===socketId&&this._bridgeReadInterest===enabled)return;
-        _netSocketSetReadInterestRaw.applySync(void 0,[socketId,enabled]);
-        this._bridgeReadInterestSocketId=socketId;this._bridgeReadInterest=enabled;
-    }
+	_setBridgeReadInterest(enabled) {
+		const socketId = this._socketId;
+		if (!socketId || typeof _netSocketSetReadInterestRaw === "undefined")
+			return;
+		if (
+			this._bridgeReadInterestSocketId === socketId &&
+			this._bridgeReadInterest === enabled
+		)
+			return;
+		_netSocketSetReadInterestRaw.applySync(void 0, [socketId, enabled]);
+		this._bridgeReadInterestSocketId = socketId;
+		this._bridgeReadInterest = enabled;
+	}
 	_read() {
 		if (
 			this.destroyed ||
@@ -2329,17 +2365,26 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		let completion = this._bridgeWriteTail;
 		for (const payload of payloads) {
 			completion = completion.then(async () => {
-                // Kernel TCP writes may admit only the available receive window.
-                // Keep the remaining bytes and callback behind this socket's tail.
-                let offset = 0;
-                while (offset < payload.length) {
-                    const written = await _netSocketWriteRaw(socketId, payload.subarray(offset));
-                    if (!Number.isSafeInteger(written) || written <= 0 || written > payload.length - offset) {
-                        throw Object.assign(new Error("Invalid TCP bridge write count"), { code: "EIO" });
-                    }
-                    offset += written;
-                }
-            });
+				// Kernel TCP writes may admit only the available receive window.
+				// Keep the remaining bytes and callback behind this socket's tail.
+				let offset = 0;
+				while (offset < payload.length) {
+					const written = await _netSocketWriteRaw(
+						socketId,
+						payload.subarray(offset),
+					);
+					if (
+						!Number.isSafeInteger(written) ||
+						written <= 0 ||
+						written > payload.length - offset
+					) {
+						throw Object.assign(new Error("Invalid TCP bridge write count"), {
+							code: "EIO",
+						});
+					}
+					offset += written;
+				}
+			});
 		}
 		// Preserve rejection on the tail: later detached batches must fail behind a
 		// failed predecessor instead of writing a suffix after a broken prefix.
@@ -2456,8 +2501,8 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		if (!info) {
 			return;
 		}
-        this._bridgeReadInterestSocketId=undefined;
-        unindexNetSocketPeer(this);
+		this._bridgeReadInterestSocketId = undefined;
+		unindexNetSocketPeer(this);
 		if (info.localPath !== undefined || info.remotePath !== undefined) {
 			this._localUnixPath = info.localPath;
 			this._remoteUnixPath = info.remotePath ?? this._remoteUnixPath;
@@ -2472,7 +2517,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 			remotePort: info.remotePort ?? this.remotePort,
 			remoteFamily: info.remoteFamily ?? this.remoteFamily,
 		};
-        if (isRegisteredNetSocket(this)) indexNetSocketPeer(this);
+		if (isRegisteredNetSocket(this)) indexNetSocketPeer(this);
 	}
 	_applyAcceptedKeepAlive(initialDelay) {
 		this._keepAliveState = true;
@@ -2959,7 +3004,16 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 						countNetBridgeMetric("readMacrotaskYieldElapsedUs", yieldElapsedUs);
 						maxNetBridgeMetric("readMacrotaskYieldMaxUs", yieldElapsedUs);
 					}
-					if (!this._applicationReadDemand || this._tlsUpgrading || this._remoteEnded || this.destroyed || this._bridgeReleased || this._closeEmitted || !isRegisteredNetSocket(this)) return;
+					if (
+						!this._applicationReadDemand ||
+						this._tlsUpgrading ||
+						this._remoteEnded ||
+						this.destroyed ||
+						this._bridgeReleased ||
+						this._closeEmitted ||
+						!isRegisteredNetSocket(this)
+					)
+						return;
 				}
 				// applySync may run nested JavaScript while the host response is in
 				// flight. Serialize the transport read itself so a reentrant pump
@@ -3417,7 +3471,8 @@ function netConnect(portOrOptions, hostOrCallback, callback) {
 	return socket;
 }
 
-var NetServer = class extends (eventsStdlibModuleNs.EventEmitter ?? eventsStdlibModuleNs.default) {
+var NetServer = class extends (eventsStdlibModuleNs.EventEmitter ??
+	eventsStdlibModuleNs.default) {
 	[kAsyncContextFrame] = undefined;
 	_serverId = 0;
 	capabilityId;

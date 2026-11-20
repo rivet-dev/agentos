@@ -5286,7 +5286,11 @@ fn v8_json_serialization_rejects_lossy_values_impl() {
         let rejected = result[api]["rejected"].as_object().expect("rejected cases");
         assert_eq!(rejected.len(), 30, "{api}: {result:#}");
         for (name, code) in rejected {
-            let expected = if name.ends_with(":withToJson") { "Error" } else { "RETURNED" };
+            let expected = if name.ends_with(":withToJson") {
+                "Error"
+            } else {
+                "RETURNED"
+            };
             assert_eq!(code, expected, "{api}/{name}: {result:#}");
         }
         assert_eq!(result[api]["invalid"], "Error", "{result:#}");
@@ -5300,11 +5304,7 @@ fn v8_json_serialization_rejects_lossy_values_impl() {
             result[api]["classRoundTrip"], result[api]["roundTrips"][5],
             "{result:#}"
         );
-        assert_eq!(
-            result[api]["arrayMutationError"],
-            "Error",
-            "{result:#}"
-        );
+        assert_eq!(result[api]["arrayMutationError"], "Error", "{result:#}");
     }
 }
 

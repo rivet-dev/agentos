@@ -1021,3 +1021,13 @@ fn executor_not_compiled(executor: &'static str, feature: &'static str) -> WasmE
         })),
     )
 }
+
+/// Apply process allocator defaults before constructing the native driver.
+pub fn configure_native_heap() {
+    #[cfg(any(
+        feature = "node-v8",
+        feature = "python-v8-pyodide",
+        feature = "wasm-v8"
+    ))]
+    agentos_executor_v8_runtime::native_heap::configure_native_heap();
+}

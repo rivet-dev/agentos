@@ -980,3 +980,95 @@ fn virtual_namespace_xattrs_preserve_backend_errors() {
         );
     }
 }
+
+#[test]
+fn every_path_reads_its_own_mount_after_mixed_mounts_and_removals() {
+    // Mount order mixes path lengths, so each mount lands between existing
+    // ones; removals then shift the mounts behind them.
+    let paths = [
+        "/opt/agentos/pkgs/b",
+        "/a",
+        "/opt/agentos/bin/ls",
+        "/opt",
+        "/opt/agentos/pkgs/aa",
+        "/data/x",
+        "/opt/agentos/bin/cat",
+        "/data",
+        "/z",
+    ];
+    let marker = |path: &str| format!("mount {path}").into_bytes();
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    for path in paths {
+        let mut filesystem = MemoryFileSystem::new();
+        filesystem
+            .write_file("/id", marker(path))
+            .expect("seed marker");
+        table
+            .mount(path, filesystem, MountOptions::new("memory"))
+            .expect("mount filesystem");
+    }
+
+    let detached = table.detach("/opt/agentos/pkgs/aa").expect("detach leaf");
+    table.unmount("/a").expect("unmount short leaf");
+    table.unmount("/data/x").expect("unmount nested leaf");
+    table.restore_detached(detached).expect("restore leaf");
+    table
+        .unmount("/opt/agentos/bin/ls")
+        .expect("unmount long leaf");
+
+    for path in paths {
+        let read = table.read_file(&format!("{path}/id"));
+        match path {
+            "/a" | "/data/x" | "/opt/agentos/bin/ls" => {
+                assert_eq!(read.expect_err("removed mount").code(), "ENOENT")
+            }
+            _ => assert_eq!(
+                read.expect("own mount"),
+                marker(path),
+                "{path} reads another mount"
+            ),
+        }
+    }
+}
+
+#[test]
+fn mount_table_does_not_alias_paths_that_repeat_the_mount_segment() {
+    // Regression: `resolve_index` previously stripped the mount prefix with
+    // `trim_start_matches`, which removes *every* leading repetition. For a
+    // mount `/data`, `/data/database.sqlite` was mangled to `/base.sqlite`
+    // (because `/database.sqlite` still starts with `/data`), so a read of one
+    // file silently returned a different file within the mount.
+    let mut backing = MemoryFileSystem::new();
+    backing
+        .write_file("/database.sqlite", b"REAL".to_vec())
+        .expect("seed real file");
+    backing
+        .write_file("/base.sqlite", b"DECOY".to_vec())
+        .expect("seed decoy file");
+
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount("/data", backing, MountOptions::new("memory"))
+        .expect("mount memory filesystem");
+
+    assert_eq!(
+        table.read_file("/data/database.sqlite").expect("read file"),
+        b"REAL".to_vec(),
+        "path must map to the file the caller named, not an aliased one"
+    );
+
+    // A genuinely nested directory named like the mount must also resolve right.
+    let mut nested = MemoryFileSystem::new();
+    nested.mkdir("/data", true).expect("nested dir");
+    nested
+        .write_file("/data/file.txt", b"NESTED".to_vec())
+        .expect("seed nested file");
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount("/data", nested, MountOptions::new("memory"))
+        .expect("mount nested filesystem");
+    assert_eq!(
+        table.read_file("/data/data/file.txt").expect("read nested"),
+        b"NESTED".to_vec()
+    );
+}

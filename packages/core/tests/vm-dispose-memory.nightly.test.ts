@@ -1,9 +1,7 @@
-import type { ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
-import type { StdioSidecarProcess } from "../src/process.js";
 import { bodyWithCleanup } from "./helpers/native-owner-fixture.js";
+import { pssBytes, sidecarPid } from "./helpers/sidecar-memory.js";
 
 const FILE_BYTES = 8 * 1024 * 1024;
 const WARMUP_CYCLES = 3;
@@ -11,25 +9,6 @@ const MEASURED_CYCLES = 12;
 // Less than the content of two disposed VMs. A sidecar that keeps each
 // disposed VM's filesystem grows by more than FILE_BYTES per cycle.
 const MAX_GROWTH_BYTES = 2 * FILE_BYTES;
-
-// Reaches into internals only to find the sidecar process; the behavior under
-// test is the memory the OS reports for it.
-function sidecarChild(vm: AgentOs): ChildProcess {
-	return (
-		vm as unknown as {
-			_sidecarClient: {
-				protocolClient: { sidecarProcess: StdioSidecarProcess };
-			};
-		}
-	)._sidecarClient.protocolClient.sidecarProcess.child;
-}
-
-function pssBytes(pid: number): number {
-	const rollup = readFileSync(`/proc/${pid}/smaps_rollup`, "utf8");
-	const match = rollup.match(/^Pss:\s+(\d+) kB$/m);
-	if (!match) throw new Error(`no Pss line in /proc/${pid}/smaps_rollup`);
-	return Number(match[1]) * 1024;
-}
 
 async function cycle(
 	sidecar: Awaited<ReturnType<typeof AgentOs.createSidecar>>,
@@ -58,8 +37,7 @@ test.skipIf(process.platform !== "linux")(
 					defaultSoftware: false,
 					sidecar: { kind: "explicit", handle: sidecar },
 				});
-				const pid = sidecarChild(keep).pid;
-				if (pid === undefined) throw new Error("sidecar process has no pid");
+				const pid = sidecarPid(keep);
 
 				for (let i = 0; i < WARMUP_CYCLES; i++) await cycle(sidecar);
 				await settle();

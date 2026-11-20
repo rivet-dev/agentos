@@ -97,6 +97,44 @@ describe("process management", () => {
 		expect(exit.exitCode).toBe(0);
 	}, 30_000);
 
+	test("an exit with output still buffered delivers every byte before the exit", async () => {
+		const chunk = `${"x".repeat(4095)}\n`;
+		await vm.writeFile(
+			"/tmp/burst-exit.mjs",
+			[
+				`const chunk = ${JSON.stringify(chunk)};`,
+				"for (let i = 0; i < 64; i++) process.stdout.write(chunk);",
+				"process.stdout.write('stdout-end');",
+				"process.stderr.write('stderr-end');",
+				"process.exit(3);",
+			].join("\n"),
+		);
+		let stdout = "";
+		let stderr = "";
+		const { pid } = await vm.process.spawn("node", ["/tmp/burst-exit.mjs"], {
+			env: { HOME: "/home/agentos" },
+			onStdout: (data) => {
+				stdout += Buffer.from(data).toString("utf8");
+			},
+			onStderr: (data) => {
+				stderr += Buffer.from(data).toString("utf8");
+			},
+		});
+		let outputAtExit: { stdout: string; stderr: string } | null = null;
+		vm.onProcessExit(pid, () => {
+			outputAtExit = { stdout, stderr };
+		});
+
+		const exit = await vm.process.wait(pid);
+		const expected = {
+			stdout: `${chunk.repeat(64)}stdout-end`,
+			stderr: "stderr-end",
+		};
+		expect(exit.exitCode).toBe(3);
+		expect({ stdout, stderr }).toEqual(expected);
+		expect(outputAtExit).toEqual(expected);
+	}, 30_000);
+
 	test("process.signal on an already-exited process is a no-op", async () => {
 		await vm.writeFile("/tmp/already-done.mjs", "process.exit(0);");
 		const { pid } = await vm.process.spawn("node", ["/tmp/already-done.mjs"], {

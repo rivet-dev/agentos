@@ -556,10 +556,10 @@ export interface AgentOsLimits {
 	jsRuntime?: {
 		maxReadlineHistoryEntries?: number;
 		v8HeapLimitMb?: number;
-        /** Local node:v8 operation cap; omitted preserves the bridge-size cap. */
-        v8SerializationLimitBytes?: number;
-        /** Per-Blob/File byte ceiling. Defaults to64MiB; cannot exceed the configured V8 heap. */
-        maxBlobBytes?: number;
+		/** Local node:v8 operation cap; omitted preserves the bridge-size cap. */
+		v8SerializationLimitBytes?: number;
+		/** Per-Blob/File byte ceiling. Defaults to64MiB; cannot exceed the configured V8 heap. */
+		maxBlobBytes?: number;
 		syncRpcWaitTimeoutMs?: number;
 		cpuTimeLimitMs?: number;
 		wallClockLimitMs?: number;
@@ -691,6 +691,17 @@ export interface AgentOsOptions<
 	 * profiling workloads.
 	 */
 	highResolutionTime?: boolean;
+	/**
+	 * Guest entrypoints that boot from a V8 startup snapshot. For a guest
+	 * `node <entry>` process whose entry is listed, every module the entry
+	 * statically imports is evaluated once per sidecar, not once per process.
+	 * Imported modules must be ES modules on a read-only host mount. Module
+	 * top-level code then runs at snapshot time, so it must not capture
+	 * per-process state such as `process.argv`, `process.env`, the time, or
+	 * random values. See the module snapshots section of the JavaScript
+	 * executor docs.
+	 */
+	snapshotEntrypoints?: string[];
 	/** Durable SQLite storage for VM-owned filesystem and runtime state. */
 	database?: VmSqliteConfig;
 	/** Root filesystem configuration. Defaults to an overlay with the bundled base snapshot as its deepest lower. */
@@ -2422,6 +2433,9 @@ export class AgentOs {
 	// No completion event can arrive after the sidecar exits, so its close
 	// rejects every execution still waiting for one.
 	private _pendingCompletionRejects = new Set<(error: Error) => void>();
+	private _sidecarCloseError: Error | null = null;
+	/** Set while dispose() runs; resolves once running processes are settled. */
+	private _vmDisposal: Promise<void> | null = null;
 	private _shells = new Map<string, ShellEntry>();
 	// Value is the recorded exit code (undefined until/unless the exit
 	// resolves) so waitShell can still report it after the entry is dropped.
@@ -2550,21 +2564,42 @@ export class AgentOs {
 		listMounts: this._listMounts.bind(this),
 	};
 
-    /** Replace the trusted owner's complete permission policy. Omitted scopes
-     * resolve to sidecar defaults, as with initial configuration. This changes
-     * future admission; existing authorized streams retain their capabilities.
-     * Creation-time loopback exemptions remain part of the VM configuration.
-     */
-    async configurePermissions(permissions:Permissions,options:{loopbackExemptPorts?:number[]}={}):Promise<void>{
-        return this._withVmMutation(async()=>{
-        if(!(this.#kernel instanceof SidecarKernelProxy))throw Object.assign(new Error("permission reconfiguration requires the native Core runtime"),{code:"ENOTSUP"});
-        const ports=options.loopbackExemptPorts;
-        if(ports&&(ports.length>65535||ports.some(port=>!Number.isInteger(port)||port<1||port>65535)))throw new RangeError("loopbackExemptPorts must contain at most65535 ports from1 through65535");
-        const policy=serializePermissionsForSidecar(permissions);
-        if(!policy)throw new TypeError("configurePermissions requires a permission policy");
-        await this.#kernel.configurePermissions(policy,ports);
-        });
-    }
+	/** Replace the trusted owner's complete permission policy. Omitted scopes
+	 * resolve to sidecar defaults, as with initial configuration. This changes
+	 * future admission; existing authorized streams retain their capabilities.
+	 * Creation-time loopback exemptions remain part of the VM configuration.
+	 */
+	async configurePermissions(
+		permissions: Permissions,
+		options: { loopbackExemptPorts?: number[] } = {},
+	): Promise<void> {
+		return this._withVmMutation(async () => {
+			if (!(this.#kernel instanceof SidecarKernelProxy))
+				throw Object.assign(
+					new Error(
+						"permission reconfiguration requires the native Core runtime",
+					),
+					{ code: "ENOTSUP" },
+				);
+			const ports = options.loopbackExemptPorts;
+			if (
+				ports &&
+				(ports.length > 65535 ||
+					ports.some(
+						(port) => !Number.isInteger(port) || port < 1 || port > 65535,
+					))
+			)
+				throw new RangeError(
+					"loopbackExemptPorts must contain at most65535 ports from1 through65535",
+				);
+			const policy = serializePermissionsForSidecar(permissions);
+			if (!policy)
+				throw new TypeError(
+					"configurePermissions requires a permission policy",
+				);
+			await this.#kernel.configurePermissions(policy, ports);
+		});
+	}
 
 	readonly network = {
 		httpRequest: this._httpRequest.bind(this),
@@ -2611,6 +2646,7 @@ export class AgentOs {
 			this._handleSidecarEvent(event);
 		});
 		this._disposeSidecarCloseListener = this._sidecarClient.onClose((error) => {
+			this._sidecarCloseError = error;
 			for (const reject of this._pendingCompletionRejects) reject(error);
 		});
 		agentOsRuntimeAdmins.set(this, {
@@ -2808,7 +2844,8 @@ export class AgentOs {
 					// emulation), matching the prior behavior where Agent OS only
 					// constrained the builtin allow-list.
 					...(options?.allowedNodeBuiltins !== undefined ||
-					options?.highResolutionTime !== undefined
+					options?.highResolutionTime !== undefined ||
+					options?.snapshotEntrypoints !== undefined
 						? {
 								jsRuntime: {
 									platform: "node" as const,
@@ -2818,6 +2855,9 @@ export class AgentOs {
 										: {}),
 									...(options?.highResolutionTime !== undefined
 										? { highResolutionTime: options.highResolutionTime }
+										: {}),
+									...(options?.snapshotEntrypoints !== undefined
+										? { snapshotEntrypoints: options.snapshotEntrypoints }
 										: {}),
 								},
 							}
@@ -3233,14 +3273,14 @@ export class AgentOs {
 			};
 			if (admitted.completed) await reconcileCompletion();
 			else {
-				void admitted.completion
-					.then(reconcileCompletion)
-					.catch((error) =>
-						console.error(
-							"[agentos] failed to reconcile spawned process completion",
-							error,
-						),
+				void admitted.completion.then(reconcileCompletion).catch((error) => {
+					// dispose() settles the exit of every process it terminates.
+					if (this._vmDisposal !== null) return;
+					console.error(
+						"[agentos] failed to reconcile spawned process completion",
+						error,
 					);
+				});
 			}
 			if (options.signal) {
 				const abort = () => {
@@ -4061,6 +4101,51 @@ export class AgentOs {
 		};
 	}
 
+	/**
+	 * Settle every language process after DisposeVm. A process that finished
+	 * before the dispose was already settled by the completion the dispose
+	 * delivered. On success the sidecar terminated the rest, so each reports a
+	 * signalled exit. On failure their termination is unproven, so their waits
+	 * fail with the disposal error.
+	 */
+	private _settleLanguageProcessesAfterDisposal(failure: Error | null): void {
+		if (!failure) {
+			for (const [pid, process] of this._languageProcesses) {
+				if (process.exit) continue;
+				const exit: ProcessExit = {
+					pid,
+					outcome: "signalled",
+					exitCode: 137,
+					exitSignal: 9,
+					signal: "SIGKILL",
+				};
+				process.exit = exit;
+				process.descriptor = {
+					...process.descriptor,
+					state: "exited",
+					exitCode: exit.exitCode,
+					exitSignal: exit.exitSignal,
+				};
+				for (const handler of process.exitHandlers) {
+					try {
+						handler(exit);
+					} catch (error) {
+						console.error("agentOS process exit handler failed", error);
+					}
+				}
+			}
+		}
+		const pendingError =
+			failure ??
+			new Error(
+				"ERR_AGENTOS_VM_DISPOSED: the VM was disposed before the execution reported completion",
+			);
+		for (const reject of this._pendingCompletionRejects) reject(pendingError);
+		this._pendingCompletionRejects.clear();
+		this._languageProcesses.clear();
+		this._languageProcessIds.clear();
+	}
+
 	/** A completion signal that rejects if the sidecar exits before it resolves. */
 	private _pendingCompletion(): {
 		completion: Promise<void>;
@@ -4362,7 +4447,18 @@ export class AgentOs {
 		const language = this._languageProcesses.get(pid);
 		if (language) {
 			if (language.exit) return language.exit;
-			const result = await this._waitExecutionResult(language.executionId);
+			let result: MappedExecutionResult;
+			try {
+				result = await this._waitExecutionResult(language.executionId);
+			} catch (error) {
+				// Disposal terminates the process in the sidecar and settles its
+				// exit here, so a wait it interrupts reports that exit.
+				if (this._vmDisposal !== null) {
+					await this._vmDisposal;
+					if (language.exit) return language.exit;
+				}
+				throw error;
+			}
 			if (language.exit) return language.exit;
 			if (result.exitCode === undefined) {
 				throw Object.assign(
@@ -4441,14 +4537,25 @@ export class AgentOs {
 		return (this.#kernel as unknown as { vfs: VirtualFileSystem }).vfs;
 	}
 
-    /** One bounded positional read. Kernel pread quotas still govern length. */
-    private async _readFileRange(path:string,offset:number,length:number):Promise<Uint8Array>{
-        this._assertSafeAbsolutePath(path);
-        if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(length)||length<0){
-            throw new RangeError("readFileRange offset and length must be non-negative safe integers");
-        }
-        return this._vfs().pread(path,offset,length);
-    }
+	/** One bounded positional read. Kernel pread quotas still govern length. */
+	private async _readFileRange(
+		path: string,
+		offset: number,
+		length: number,
+	): Promise<Uint8Array> {
+		this._assertSafeAbsolutePath(path);
+		if (
+			!Number.isSafeInteger(offset) ||
+			offset < 0 ||
+			!Number.isSafeInteger(length) ||
+			length < 0
+		) {
+			throw new RangeError(
+				"readFileRange offset and length must be non-negative safe integers",
+			);
+		}
+		return this._vfs().pread(path, offset, length);
+	}
 
 	private async _readFile(path: string): Promise<Uint8Array> {
 		this._assertSafeAbsolutePath(path);
@@ -4871,27 +4978,68 @@ export class AgentOs {
 		end(): Promise<void>;
 		close(): Promise<void>;
 	}> {
-		const call = async (operation: "socket-open" | "socket-read" | "socket-write" | "socket-end" | "socket-close", fields: { streamId?: string; bodyBase64?: string; maxBytes?: number } = {}) => JSON.parse(
-			await this._sidecarClient.vmFetch(this._sidecarSession, this._sidecarVm, {
-				port, method: "GET", path: "/", headersJson: "{}", streamOperation: operation, ...fields,
-			}),
-		);
-		const { streamId } = await call("socket-open") as { streamId: string };
+		const call = async (
+			operation:
+				| "socket-open"
+				| "socket-read"
+				| "socket-write"
+				| "socket-end"
+				| "socket-close",
+			fields: {
+				streamId?: string;
+				bodyBase64?: string;
+				maxBytes?: number;
+			} = {},
+		) =>
+			JSON.parse(
+				await this._sidecarClient.vmFetch(
+					this._sidecarSession,
+					this._sidecarVm,
+					{
+						port,
+						method: "GET",
+						path: "/",
+						headersJson: "{}",
+						streamOperation: operation,
+						...fields,
+					},
+				),
+			);
+		const { streamId } = (await call("socket-open")) as { streamId: string };
 		return {
 			async read(maxBytes = 65536) {
-				const result = await call("socket-read", { streamId, maxBytes }) as { body: string; done: boolean };
-				return { body: new Uint8Array(Buffer.from(result.body, "base64")), done: result.done };
+				const result = (await call("socket-read", { streamId, maxBytes })) as {
+					body: string;
+					done: boolean;
+				};
+				return {
+					body: new Uint8Array(Buffer.from(result.body, "base64")),
+					done: result.done,
+				};
 			},
 			async write(bytes) {
-				for (let offset = 0; offset < bytes.byteLength;) {
-					const bodyBase64 = Buffer.from(bytes.subarray(offset, offset + 65536)).toString("base64");
-					const { written } = await call("socket-write", { streamId, bodyBase64 }) as { written: number };
-					if (written <= 0 || written > Math.min(65536, bytes.byteLength - offset)) throw new Error("Invalid guest connection write acknowledgement");
+				for (let offset = 0; offset < bytes.byteLength; ) {
+					const bodyBase64 = Buffer.from(
+						bytes.subarray(offset, offset + 65536),
+					).toString("base64");
+					const { written } = (await call("socket-write", {
+						streamId,
+						bodyBase64,
+					})) as { written: number };
+					if (
+						written <= 0 ||
+						written > Math.min(65536, bytes.byteLength - offset)
+					)
+						throw new Error("Invalid guest connection write acknowledgement");
 					offset += written;
 				}
 			},
-			async end() { await call("socket-end", { streamId }); },
-			async close() { await call("socket-close", { streamId }); },
+			async end() {
+				await call("socket-end", { streamId });
+			},
+			async close() {
+				await call("socket-close", { streamId });
+			},
 		};
 	}
 
@@ -5793,6 +5941,11 @@ export class AgentOs {
 
 	private async _disposeInternal(): Promise<void> {
 		this._cronManager.dispose();
+		const errors: unknown[] = [];
+		let settleDisposal!: () => void;
+		this._vmDisposal = new Promise<void>((resolve) => {
+			settleDisposal = resolve;
+		});
 
 		for (const entry of this._shells.values()) {
 			entry.handle.kill();
@@ -5801,27 +5954,36 @@ export class AgentOs {
 		this._shells.clear();
 		this._processes.clear();
 		this._executionOutputHandlers.clear();
-		this._executionCompletedHandlers.clear();
 		await waitForTrackedExitPromises(
 			shellExitPromises,
 			SHELL_DISPOSE_TIMEOUT_MS,
 		);
 
-		this._disposeSidecarEventListener();
-		this._disposeSidecarCloseListener();
-
+		// One request tears the VM down: the sidecar's DisposeVm terminates every
+		// process still running in it, so there is no kill per process first.
 		const sidecarLease = this._sidecarLease;
 		const disposeVm = sidecarLease
 			? sidecarLease.dispose()
 			: this.#kernel.dispose();
 		const hooks = this._disposeHooks.splice(0);
-		const errors: unknown[] = [];
+		let disposalError: Error | null = null;
 		try {
 			await disposeVm;
 			if (this._sidecarLease === sidecarLease) this._sidecarLease = null;
 		} catch (error) {
 			errors.push(error);
+			disposalError = error instanceof Error ? error : new Error(String(error));
 		}
+		// The event listener stays until DisposeVm resolves: the dispose
+		// delivers the completion of every execution that finished before it,
+		// so a process that exited just before reports its real exit status.
+		this._disposeSidecarEventListener();
+		this._disposeSidecarCloseListener();
+		this._settleLanguageProcessesAfterDisposal(
+			disposalError ?? this._sidecarCloseError,
+		);
+		this._executionCompletedHandlers.clear();
+		settleDisposal();
 		const hookResults = await Promise.allSettled(hooks.map((hook) => hook()));
 		errors.push(
 			...hookResults.flatMap((result) =>
@@ -6398,15 +6560,36 @@ async function getSharedAgentOsSidecarInternal(
 	return sidecar;
 }
 
-function normalizeSidecarRuntimeConfig(runtime: AgentOsSidecarRuntimeConfig | undefined): AgentOsSidecarRuntimeConfig {
+function normalizeSidecarRuntimeConfig(
+	runtime: AgentOsSidecarRuntimeConfig | undefined,
+): AgentOsSidecarRuntimeConfig {
 	const result: AgentOsSidecarRuntimeConfig = {};
 	const checked = (value: number, path: string) => {
-		if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${path} must be a positive safe integer`);
+		if (!Number.isSafeInteger(value) || value <= 0)
+			throw new Error(`${path} must be a positive safe integer`);
 		return value;
 	};
-	if (runtime?.blocking?.maxQueuedBytes !== undefined) result.blocking = {maxQueuedBytes:checked(runtime.blocking.maxQueuedBytes,"runtime.blocking.maxQueuedBytes")};
-	if (runtime?.executor?.maxActiveVms !== undefined) result.executor = {maxActiveVms:checked(runtime.executor.maxActiveVms,"runtime.executor.maxActiveVms")};
-	for (const field of ["maxInFlightRequests", "maxTerminalFrames", "maxTerminalBytes", "maxControlFrames", "maxControlBytes"] as const) {
+	if (runtime?.blocking?.maxQueuedBytes !== undefined)
+		result.blocking = {
+			maxQueuedBytes: checked(
+				runtime.blocking.maxQueuedBytes,
+				"runtime.blocking.maxQueuedBytes",
+			),
+		};
+	if (runtime?.executor?.maxActiveVms !== undefined)
+		result.executor = {
+			maxActiveVms: checked(
+				runtime.executor.maxActiveVms,
+				"runtime.executor.maxActiveVms",
+			),
+		};
+	for (const field of [
+		"maxInFlightRequests",
+		"maxTerminalFrames",
+		"maxTerminalBytes",
+		"maxControlFrames",
+		"maxControlBytes",
+	] as const) {
 		const value = runtime?.protocol?.[field];
 		if (value !== undefined) {
 			result.protocol ??= {};
@@ -6416,21 +6599,35 @@ function normalizeSidecarRuntimeConfig(runtime: AgentOsSidecarRuntimeConfig | un
 	return result;
 }
 
-function sidecarRuntimeConfigsEqual(left: AgentOsSidecarRuntimeConfig, right: AgentOsSidecarRuntimeConfig): boolean {
-	return left.blocking?.maxQueuedBytes === right.blocking?.maxQueuedBytes &&
+function sidecarRuntimeConfigsEqual(
+	left: AgentOsSidecarRuntimeConfig,
+	right: AgentOsSidecarRuntimeConfig,
+): boolean {
+	return (
+		left.blocking?.maxQueuedBytes === right.blocking?.maxQueuedBytes &&
 		left.executor?.maxActiveVms === right.executor?.maxActiveVms &&
-		left.protocol?.maxInFlightRequests === right.protocol?.maxInFlightRequests &&
+		left.protocol?.maxInFlightRequests ===
+			right.protocol?.maxInFlightRequests &&
 		left.protocol?.maxTerminalFrames === right.protocol?.maxTerminalFrames &&
 		left.protocol?.maxTerminalBytes === right.protocol?.maxTerminalBytes &&
 		left.protocol?.maxControlFrames === right.protocol?.maxControlFrames &&
-		left.protocol?.maxControlBytes === right.protocol?.maxControlBytes;
+		left.protocol?.maxControlBytes === right.protocol?.maxControlBytes
+	);
 }
 
 function sidecarRuntimeArgs(runtime: AgentOsSidecarRuntimeConfig): string[] {
 	const args: string[] = [];
-	if (runtime.blocking?.maxQueuedBytes !== undefined) args.push("--max-blocking-bytes", String(runtime.blocking.maxQueuedBytes));
-	if (runtime.executor?.maxActiveVms !== undefined) args.push("--max-active-vms", String(runtime.executor.maxActiveVms));
-	for (const [field, flag] of [["maxInFlightRequests", "--max-in-flight-requests"], ["maxTerminalFrames", "--max-terminal-frames"], ["maxTerminalBytes", "--max-terminal-bytes"], ["maxControlFrames", "--max-control-frames"], ["maxControlBytes", "--max-control-bytes"]] as const) {
+	if (runtime.blocking?.maxQueuedBytes !== undefined)
+		args.push("--max-blocking-bytes", String(runtime.blocking.maxQueuedBytes));
+	if (runtime.executor?.maxActiveVms !== undefined)
+		args.push("--max-active-vms", String(runtime.executor.maxActiveVms));
+	for (const [field, flag] of [
+		["maxInFlightRequests", "--max-in-flight-requests"],
+		["maxTerminalFrames", "--max-terminal-frames"],
+		["maxTerminalBytes", "--max-terminal-bytes"],
+		["maxControlFrames", "--max-control-frames"],
+		["maxControlBytes", "--max-control-bytes"],
+	] as const) {
 		const value = runtime.protocol?.[field];
 		if (value !== undefined) args.push(flag, String(value));
 	}

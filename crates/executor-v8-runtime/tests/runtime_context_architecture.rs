@@ -139,8 +139,8 @@ fn direct_bridge_responses_are_registered_with_the_blocking_event_loop_selector(
         "the direct bridge-response lane must wake the blocking V8 event-loop selector"
     );
     assert!(
-        compact.contains("selector.select_timeout(Duration::from_millis(1))"),
-        "the V8 platform-work fallback may remain bounded without polling bridge responses"
+        compact.contains("selector.select_timeout(platform_pump_wait)"),
+        "the V8 platform-work fallback must back off while idle instead of a fixed tick"
     );
 }
 

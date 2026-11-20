@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use agentos_driver_tokio::DriverHandle;
+use agentos_driver_tokio::{BlockingExecutor, DriverHandle};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time;
 
@@ -25,7 +25,6 @@ const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "113";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agentos-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const NODE_IMPORT_CACHE_BLOCKING_JOB_RESERVATION_BYTES: usize = 64 * 1024;
-const PYODIDE_DIST_DIR: &str = "pyodide-dist";
 const AGENTOS_BUILTIN_SPECIFIER_PREFIX: &str = "agentos:builtin/";
 const AGENTOS_POLYFILL_SPECIFIER_PREFIX: &str = "agentos:polyfill/";
 const BUNDLED_PYODIDE_MJS: &[u8] = include_bytes!("../assets/pyodide/pyodide.mjs");
@@ -2353,6 +2352,14 @@ const DENIED_BUILTIN_ASSETS: &[DeniedBuiltinAsset] = &[
 const PATH_POLYFILL_ASSET_NAME: &str = "path";
 const PATH_POLYFILL_INIT_COUNTER_KEY: &str = "__agentOSPolyfillPathInitCount";
 
+/// Per-VM handle onto the import-cache assets of one sidecar process.
+///
+/// Immutable assets (runners, loader, builtin shims, the Pyodide distribution)
+/// are materialized once per process and base directory into shared read-only
+/// directories. Only writable per-VM state (warmup markers and the Pyodide
+/// package cache) lives in the VM's own directory, which is created lazily the
+/// first time a Python or WebAssembly execution needs it. A VM that only runs
+/// JavaScript never touches the disk through this type.
 #[derive(Debug)]
 pub struct NodeImportCache {
     root_dir: PathBuf,
@@ -2360,23 +2367,31 @@ pub struct NodeImportCache {
     materialized: AtomicBool,
     materialization_lock: Mutex<()>,
     async_materialization_lock: AsyncMutex<()>,
+    include_pyodide: bool,
+    core_assets: Arc<SharedAssetDir>,
+    pyodide_assets: Arc<SharedAssetDir>,
     materialization_marker_path: PathBuf,
+    #[cfg_attr(not(test), allow(dead_code))]
     cache_path: PathBuf,
+    #[cfg_attr(not(test), allow(dead_code))]
     loader_path: PathBuf,
-    register_path: PathBuf,
     python_runner_path: PathBuf,
+    #[cfg_attr(not(test), allow(dead_code))]
     timing_bootstrap_path: PathBuf,
-    prewarm_path: PathBuf,
     wasm_runner_path: PathBuf,
     asset_root: PathBuf,
     pyodide_dist_path: PathBuf,
+    pyodide_cache_path: PathBuf,
     prewarm_marker_dir: PathBuf,
 }
 
+/// Removes a VM's private cache directory when its VM's cache is dropped. Removal runs on the process blocking executor when one is known, so
+/// VM teardown does not unlink files on the sidecar service loop.
 #[derive(Debug)]
 pub struct NodeImportCacheCleanup {
     root_dir: PathBuf,
     retirement: OnceLock<NodeImportCacheRetirement>,
+    blocking: OnceLock<BlockingExecutor>,
 }
 
 /// Path authority for an already-admitted lifecycle cleanup owner. This handle
@@ -2449,21 +2464,34 @@ impl NodeImportCacheRetirement {
     }
 }
 
+/// One immutable directory shared by every VM of this process.
+#[derive(Debug)]
+struct SharedAssetDir {
+    root_dir: PathBuf,
+    marker_path: PathBuf,
+    ready: AtomicBool,
+    /// Serializes builders so concurrent first VMs build the directory once.
+    publish_lock: Mutex<()>,
+    write: fn(&Path, &AtomicBool) -> Result<(), io::Error>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SharedAssetKind {
+    Core,
+    Pyodide,
+}
+
 #[derive(Debug, Clone)]
 struct NodeImportCacheMaterialization {
     // A cancelled caller can leave its admitted materialization job running.
     // Keep the root alive until that last writer has stopped.
     _cleanup_guard: Arc<NodeImportCacheCleanup>,
     root_dir: PathBuf,
+    include_pyodide: bool,
+    core_assets: Option<Arc<SharedAssetDir>>,
+    pyodide_assets: Option<Arc<SharedAssetDir>>,
     materialization_marker_path: PathBuf,
-    loader_path: PathBuf,
-    register_path: PathBuf,
-    python_runner_path: PathBuf,
-    timing_bootstrap_path: PathBuf,
-    prewarm_path: PathBuf,
-    wasm_runner_path: PathBuf,
-    asset_root: PathBuf,
-    pyodide_dist_path: PathBuf,
+    pyodide_cache_path: PathBuf,
     prewarm_marker_dir: PathBuf,
 }
 
@@ -2473,9 +2501,19 @@ impl Default for NodeImportCache {
     }
 }
 
+/// Every per-process temp root starts with this prefix followed by the owning
+/// sidecar PID, so a later sidecar can reclaim roots whose owner is gone.
+pub const NODE_IMPORT_CACHE_PROCESS_ROOT_PREFIX: &str = "agentos-node-import-cache-roots-";
+
+/// This process's import-cache root, which holds its shared assets and the
+/// directories of its VMs.
+pub fn node_import_cache_process_root() -> PathBuf {
+    default_node_import_cache_base_dir()
+}
+
 fn default_node_import_cache_base_dir() -> PathBuf {
     env::temp_dir().join(format!(
-        "{NODE_IMPORT_CACHE_DIR_PREFIX}-roots-{}",
+        "{NODE_IMPORT_CACHE_PROCESS_ROOT_PREFIX}{}",
         std::process::id()
     ))
 }
@@ -2551,6 +2589,40 @@ fn cleanup_stale_node_import_caches(base_dir: &Path) {
     }
 }
 
+/// Process-wide registry of shared asset directories, keyed by their path. The
+/// default base directory yields exactly two entries per process.
+fn shared_asset_dir(base_dir: &Path, kind: SharedAssetKind) -> Arc<SharedAssetDir> {
+    static SHARED_ASSET_DIRS: OnceLock<Mutex<BTreeMap<PathBuf, Arc<SharedAssetDir>>>> =
+        OnceLock::new();
+    type WriteAssets = fn(&Path, &AtomicBool) -> Result<(), io::Error>;
+    let (name, write): (_, WriteAssets) = match kind {
+        SharedAssetKind::Core => ("shared-core", write_core_assets),
+        SharedAssetKind::Pyodide => ("shared-pyodide", write_pyodide_assets),
+    };
+    let root_dir = base_dir.join(format!(
+        "{NODE_IMPORT_CACHE_DIR_PREFIX}-{name}-v{NODE_IMPORT_CACHE_ASSET_VERSION}"
+    ));
+    let mut dirs = SHARED_ASSET_DIRS
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Arc::clone(dirs.entry(root_dir.clone()).or_insert_with(|| {
+        Arc::new(SharedAssetDir {
+            marker_path: root_dir.join(".materialized"),
+            root_dir,
+            ready: AtomicBool::new(false),
+            publish_lock: Mutex::new(()),
+            write,
+        })
+    }))
+}
+
+impl SharedAssetDir {
+    fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire) && self.marker_path.is_file()
+    }
+}
+
 impl NodeImportCache {
     pub fn new_in(base_dir: PathBuf) -> Self {
         cleanup_stale_node_import_caches_once(&base_dir);
@@ -2559,28 +2631,41 @@ impl NodeImportCache {
             "{NODE_IMPORT_CACHE_DIR_PREFIX}-{}-{cache_id}",
             std::process::id()
         ));
+        let core_assets = shared_asset_dir(&base_dir, SharedAssetKind::Core);
+        let pyodide_assets = shared_asset_dir(&base_dir, SharedAssetKind::Pyodide);
+        let core_root = core_assets.root_dir.clone();
 
         Self {
             root_dir: root_dir.clone(),
             cleanup: Arc::new(NodeImportCacheCleanup {
                 root_dir: root_dir.clone(),
                 retirement: OnceLock::new(),
+                blocking: OnceLock::new(),
             }),
             materialized: AtomicBool::new(false),
             materialization_lock: Mutex::new(()),
             async_materialization_lock: AsyncMutex::new(()),
+            include_pyodide: true,
             materialization_marker_path: root_dir.join(".materialized"),
             cache_path: root_dir.join("state.json"),
-            loader_path: root_dir.join("loader.mjs"),
-            register_path: root_dir.join("register.mjs"),
-            python_runner_path: root_dir.join("python-runner.mjs"),
-            timing_bootstrap_path: root_dir.join("timing-bootstrap.mjs"),
-            prewarm_path: root_dir.join("prewarm.mjs"),
-            wasm_runner_path: root_dir.join("wasm-runner.mjs"),
-            asset_root: root_dir.join("assets"),
-            pyodide_dist_path: root_dir.join("assets").join(PYODIDE_DIST_DIR),
+            loader_path: core_root.join("loader.mjs"),
+            python_runner_path: core_root.join("python-runner.mjs"),
+            timing_bootstrap_path: core_root.join("timing-bootstrap.mjs"),
+            wasm_runner_path: core_root.join("wasm-runner.mjs"),
+            asset_root: core_root.join("assets"),
+            pyodide_dist_path: pyodide_assets.root_dir.clone(),
+            pyodide_cache_path: root_dir.join("pyodide-package-cache"),
             prewarm_marker_dir: root_dir.join("warmup"),
+            core_assets,
+            pyodide_assets,
         }
+    }
+
+    /// Skip the Pyodide distribution and the per-VM package cache. WebAssembly
+    /// executions only need the runner assets.
+    pub fn without_pyodide(mut self) -> Self {
+        self.include_pyodide = false;
+        self
     }
 }
 
@@ -2656,12 +2741,28 @@ impl Drop for NodeImportCacheCleanup {
             retirement.0.changed.notify_waiters();
             return;
         }
-        if let Err(error) = remove_node_import_cache_root(&self.root_dir) {
-            eprintln!(
-                "agentos: failed to clean up node import cache {}: {error}",
-                self.root_dir.display()
-            );
+        if let Some(blocking) = self.blocking.get() {
+            let root = self.root_dir.clone();
+            match blocking.submit(NODE_IMPORT_CACHE_BLOCKING_JOB_RESERVATION_BYTES, move || {
+                cleanup_node_import_cache_root(&root);
+            }) {
+                Ok(()) => return,
+                Err(error) => eprintln!(
+                    "agentos: blocking executor rejected node import cache cleanup for {} ({error}); removing inline",
+                    self.root_dir.display()
+                ),
+            }
         }
+        cleanup_node_import_cache_root(&self.root_dir);
+    }
+}
+
+fn cleanup_node_import_cache_root(root: &Path) {
+    if let Err(error) = remove_node_import_cache_root(root) {
+        eprintln!(
+            "agentos: failed to clean up node import cache {}: {error}",
+            root.display()
+        );
     }
 }
 
@@ -2692,8 +2793,14 @@ impl NodeImportCache {
         &self.asset_root
     }
 
+    /// Shared, read-only Pyodide distribution of this process.
     pub fn pyodide_dist_path(&self) -> &Path {
         &self.pyodide_dist_path
+    }
+
+    /// Writable Pyodide package cache private to this VM.
+    pub fn pyodide_cache_path(&self) -> &Path {
+        &self.pyodide_cache_path
     }
 
     pub fn prewarm_marker_dir(&self) -> &Path {
@@ -2736,7 +2843,7 @@ impl NodeImportCache {
         }
         self.materialized.store(false, Ordering::Release);
 
-        let materialization = NodeImportCacheMaterialization::from(self);
+        let materialization = self.materialization(runtime);
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
         let result = runtime.blocking().run_sync(
@@ -2757,9 +2864,7 @@ impl NodeImportCache {
                 other => io::Error::other(other.to_string()),
             }
         })?;
-        result?;
-        self.materialized.store(true, Ordering::Release);
-        Ok(())
+        self.finish_materialization(result)
     }
 
     /// Materialize from an async sidecar path without blocking a Tokio worker.
@@ -2780,7 +2885,7 @@ impl NodeImportCache {
         }
         self.materialized.store(false, Ordering::Release);
 
-        let materialization = NodeImportCacheMaterialization::from(self);
+        let materialization = self.materialization(runtime);
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
         let job = runtime.blocking().run(
@@ -2800,9 +2905,7 @@ impl NodeImportCache {
                 ));
             }
         };
-        result?;
-        self.materialized.store(true, Ordering::Release);
-        Ok(())
+        self.finish_materialization(result)
     }
 
     #[cfg(test)]
@@ -2817,27 +2920,39 @@ impl NodeImportCache {
         self.ensure_materialized_with_timeout_and_runtime(&runtime, timeout)
     }
 
-    fn is_materialized(&self) -> bool {
-        self.materialized.load(Ordering::Acquire) && self.materialization_marker_path.is_file()
-    }
-}
-
-impl From<&NodeImportCache> for NodeImportCacheMaterialization {
-    fn from(cache: &NodeImportCache) -> Self {
-        Self {
-            _cleanup_guard: cache.cleanup_guard(),
-            root_dir: cache.root_dir.clone(),
-            materialization_marker_path: cache.materialization_marker_path.clone(),
-            loader_path: cache.loader_path.clone(),
-            register_path: cache.register_path.clone(),
-            python_runner_path: cache.python_runner_path.clone(),
-            timing_bootstrap_path: cache.timing_bootstrap_path.clone(),
-            prewarm_path: cache.prewarm_path.clone(),
-            wasm_runner_path: cache.wasm_runner_path.clone(),
-            asset_root: cache.asset_root.clone(),
-            pyodide_dist_path: cache.pyodide_dist_path.clone(),
-            prewarm_marker_dir: cache.prewarm_marker_dir.clone(),
+    fn materialization(&self, runtime: &DriverHandle) -> NodeImportCacheMaterialization {
+        self.cleanup
+            .blocking
+            .get_or_init(|| runtime.blocking().clone());
+        let shared_root =
+            |assets: &Arc<SharedAssetDir>| (!assets.is_ready()).then(|| Arc::clone(assets));
+        NodeImportCacheMaterialization {
+            root_dir: self.root_dir.clone(),
+            _cleanup_guard: self.cleanup_guard(),
+            include_pyodide: self.include_pyodide,
+            core_assets: shared_root(&self.core_assets),
+            pyodide_assets: if self.include_pyodide {
+                shared_root(&self.pyodide_assets)
+            } else {
+                None
+            },
+            materialization_marker_path: self.materialization_marker_path.clone(),
+            pyodide_cache_path: self.pyodide_cache_path.clone(),
+            prewarm_marker_dir: self.prewarm_marker_dir.clone(),
         }
+    }
+
+    fn finish_materialization(&self, result: Result<(), io::Error>) -> Result<(), io::Error> {
+        result?;
+        self.materialized.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    fn is_materialized(&self) -> bool {
+        self.materialized.load(Ordering::Acquire)
+            && self.materialization_marker_path.is_file()
+            && self.core_assets.is_ready()
+            && (!self.include_pyodide || self.pyodide_assets.is_ready())
     }
 }
 
@@ -2852,77 +2967,30 @@ impl NodeImportCacheMaterialization {
         }
 
         check_materialization_cancelled(&cancelled)?;
+        for assets in [&self.core_assets, &self.pyodide_assets]
+            .into_iter()
+            .flatten()
+        {
+            publish_shared_asset_dir(assets, &cancelled)?;
+        }
+
+        check_materialization_cancelled(&cancelled)?;
         fs::create_dir_all(&self.root_dir)?;
         #[cfg(test)]
         let _completion = retirement_tests::before_materialize(&self.root_dir);
-        fs::create_dir_all(self.asset_root.join("builtins"))?;
-        fs::create_dir_all(self.asset_root.join("denied"))?;
-        fs::create_dir_all(self.asset_root.join("polyfills"))?;
-        fs::create_dir_all(&self.pyodide_dist_path)?;
-        fs::create_dir_all(pyodide_cache_path(&self.pyodide_dist_path))?;
         fs::create_dir_all(&self.prewarm_marker_dir)?;
-
-        write_file_if_changed(&self.loader_path, &render_loader_source())?;
-        write_file_if_changed(&self.register_path, &render_register_source())?;
-        write_file_if_changed(&self.python_runner_path, NODE_PYTHON_RUNNER_SOURCE)?;
-        write_file_if_changed(&self.timing_bootstrap_path, NODE_TIMING_BOOTSTRAP_SOURCE)?;
-        write_file_if_changed(&self.prewarm_path, NODE_PREWARM_SOURCE)?;
-        write_file_if_changed(&self.wasm_runner_path, NODE_WASM_RUNNER_SOURCE)?;
-
-        for asset in BUILTIN_ASSETS {
-            write_file_if_changed(
-                &self
-                    .asset_root
-                    .join("builtins")
-                    .join(format!("{}.mjs", asset.name)),
-                &render_builtin_asset_source(asset),
-            )?;
-        }
-
-        for asset in DENIED_BUILTIN_ASSETS {
-            write_file_if_changed(
-                &self
-                    .asset_root
-                    .join("denied")
-                    .join(format!("{}.mjs", asset.name)),
-                &render_denied_asset_source(asset.module_specifier),
-            )?;
-        }
-
-        write_file_if_changed(
-            &self
-                .asset_root
-                .join("polyfills")
-                .join(format!("{PATH_POLYFILL_ASSET_NAME}.mjs")),
-            &render_path_polyfill_source(),
-        )?;
-        write_file_if_changed(
-            &self.pyodide_dist_path.join("pyodide.mjs"),
-            &render_patched_pyodide_mjs(),
-        )?;
-        write_bytes_if_changed(
-            &self.pyodide_dist_path.join("pyodide.asm.js"),
-            BUNDLED_PYODIDE_ASM_JS,
-        )?;
-        write_bytes_if_changed(
-            &self.pyodide_dist_path.join("pyodide.asm.wasm"),
-            BUNDLED_PYODIDE_ASM_WASM,
-        )?;
-        write_bytes_if_changed(
-            &self.pyodide_dist_path.join("pyodide-lock.json"),
-            BUNDLED_PYODIDE_LOCK,
-        )?;
-        write_bytes_if_changed(
-            &self.pyodide_dist_path.join("python_stdlib.zip"),
-            BUNDLED_PYTHON_STDLIB_ZIP,
-        )?;
-        // Pyodide loads a lockfile package from its package cache before it
-        // downloads it, so seeding the cache keeps bundled packages offline.
-        let pyodide_cache_path = pyodide_cache_path(&self.pyodide_dist_path);
-        for asset in BUNDLED_PYODIDE_PACKAGE_ASSETS {
-            check_materialization_cancelled(&cancelled)?;
-            write_bytes_if_changed(&self.pyodide_dist_path.join(asset.file_name), asset.bytes)?;
-            write_bytes_if_changed(&pyodide_cache_path.join(asset.file_name), asset.bytes)?;
+        if self.include_pyodide {
+            // Pyodide loads a lockfile package from its package cache before it
+            // downloads it, so seeding the cache keeps bundled packages offline.
+            // The cache is writable by the guest, so each VM owns a copy.
+            fs::create_dir_all(&self.pyodide_cache_path)?;
+            for asset in BUNDLED_PYODIDE_PACKAGE_ASSETS {
+                check_materialization_cancelled(&cancelled)?;
+                write_bytes_if_changed(
+                    &self.pyodide_cache_path.join(asset.file_name),
+                    asset.bytes,
+                )?;
+            }
         }
         check_materialization_cancelled(&cancelled)?;
         write_file_if_changed(
@@ -2931,6 +2999,146 @@ impl NodeImportCacheMaterialization {
         )?;
         Ok(())
     }
+}
+
+/// Build a shared asset directory in a private staging directory, mark its
+/// files read-only, and publish it with one atomic rename. Concurrent callers
+/// may both build, but exactly one rename wins and readers never observe a
+/// partially written directory.
+fn publish_shared_asset_dir(
+    assets: &SharedAssetDir,
+    cancelled: &AtomicBool,
+) -> Result<(), io::Error> {
+    static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(1);
+    let _publish_guard = assets
+        .publish_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let root_dir = assets.root_dir.as_path();
+    let marker_path = assets.marker_path.as_path();
+    if marker_path.is_file() {
+        assets.ready.store(true, Ordering::Release);
+        return Ok(());
+    }
+    let parent = root_dir
+        .parent()
+        .ok_or_else(|| io::Error::other("shared asset directory has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let file_name = root_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::other("shared asset directory name is not UTF-8"))?;
+    let staging = parent.join(format!(
+        "{file_name}.staging-{}",
+        NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        fs::create_dir(&staging)?;
+        (assets.write)(&staging, cancelled)?;
+        check_materialization_cancelled(cancelled)?;
+        write_file_if_changed(
+            &staging.join(".materialized"),
+            NODE_IMPORT_CACHE_ASSET_VERSION,
+        )?;
+        make_files_read_only(&staging)?;
+        match fs::rename(&staging, root_dir) {
+            Ok(()) => Ok(()),
+            Err(_) if marker_path.is_file() => Ok(()),
+            Err(error) if root_dir.exists() => {
+                // An incomplete directory from an external actor: replace it.
+                fs::remove_dir_all(root_dir)?;
+                fs::rename(&staging, root_dir).map_err(|retry| {
+                    io::Error::new(
+                        retry.kind(),
+                        format!(
+                            "failed to publish {} ({error}): {retry}",
+                            root_dir.display()
+                        ),
+                    )
+                })
+            }
+            Err(error) => Err(error),
+        }
+    })();
+    if staging.exists() {
+        if let Err(error) = remove_node_import_cache_root(&staging) {
+            tracing::warn!(path = %staging.display(), %error, "failed to remove shared asset staging directory");
+        }
+    }
+    result?;
+    assets.ready.store(true, Ordering::Release);
+    Ok(())
+}
+
+fn make_files_read_only(dir: &Path) -> Result<(), io::Error> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            make_files_read_only(&path)?;
+        } else {
+            let mut permissions = fs::metadata(&path)?.permissions();
+            permissions.set_readonly(true);
+            fs::set_permissions(&path, permissions)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_core_assets(root: &Path, cancelled: &AtomicBool) -> Result<(), io::Error> {
+    let asset_root = root.join("assets");
+    fs::create_dir_all(asset_root.join("builtins"))?;
+    fs::create_dir_all(asset_root.join("denied"))?;
+    fs::create_dir_all(asset_root.join("polyfills"))?;
+
+    write_file_if_changed(&root.join("loader.mjs"), &render_loader_source())?;
+    write_file_if_changed(&root.join("register.mjs"), &render_register_source())?;
+    write_file_if_changed(&root.join("python-runner.mjs"), NODE_PYTHON_RUNNER_SOURCE)?;
+    write_file_if_changed(
+        &root.join("timing-bootstrap.mjs"),
+        NODE_TIMING_BOOTSTRAP_SOURCE,
+    )?;
+    write_file_if_changed(&root.join("prewarm.mjs"), NODE_PREWARM_SOURCE)?;
+    write_file_if_changed(&root.join("wasm-runner.mjs"), NODE_WASM_RUNNER_SOURCE)?;
+
+    for asset in BUILTIN_ASSETS {
+        check_materialization_cancelled(cancelled)?;
+        write_file_if_changed(
+            &asset_root
+                .join("builtins")
+                .join(format!("{}.mjs", asset.name)),
+            &render_builtin_asset_source(asset),
+        )?;
+    }
+
+    for asset in DENIED_BUILTIN_ASSETS {
+        write_file_if_changed(
+            &asset_root
+                .join("denied")
+                .join(format!("{}.mjs", asset.name)),
+            &render_denied_asset_source(asset.module_specifier),
+        )?;
+    }
+
+    write_file_if_changed(
+        &asset_root
+            .join("polyfills")
+            .join(format!("{PATH_POLYFILL_ASSET_NAME}.mjs")),
+        &render_path_polyfill_source(),
+    )
+}
+
+fn write_pyodide_assets(dist: &Path, cancelled: &AtomicBool) -> Result<(), io::Error> {
+    write_file_if_changed(&dist.join("pyodide.mjs"), &render_patched_pyodide_mjs())?;
+    write_bytes_if_changed(&dist.join("pyodide.asm.js"), BUNDLED_PYODIDE_ASM_JS)?;
+    write_bytes_if_changed(&dist.join("pyodide.asm.wasm"), BUNDLED_PYODIDE_ASM_WASM)?;
+    write_bytes_if_changed(&dist.join("pyodide-lock.json"), BUNDLED_PYODIDE_LOCK)?;
+    write_bytes_if_changed(&dist.join("python_stdlib.zip"), BUNDLED_PYTHON_STDLIB_ZIP)?;
+    for asset in BUNDLED_PYODIDE_PACKAGE_ASSETS {
+        check_materialization_cancelled(cancelled)?;
+        write_bytes_if_changed(&dist.join(asset.file_name), asset.bytes)?;
+    }
+    Ok(())
 }
 
 /// Returns the sha256 that the bundled `pyodide-lock.json` pins for a package
@@ -3956,7 +4164,6 @@ pub fn pyodide_cache_path(pyodide_dist_path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::pyodide_cache_path;
     use super::{
         run_node_import_cache_root_cleanup_once, NodeImportCache,
         NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS,
@@ -4063,7 +4270,7 @@ mod tests {
                 "AGENTOS_PYODIDE_PACKAGE_CACHE_DIR",
                 // Bundled wheels are seeded into the real distribution's package cache.
                 if pyodide_index_url == import_cache.pyodide_dist_path() {
-                    pyodide_cache_path(pyodide_index_url)
+                    import_cache.pyodide_cache_path().to_path_buf()
                 } else {
                     pyodide_index_url.join("pyodide-package-cache")
                 },

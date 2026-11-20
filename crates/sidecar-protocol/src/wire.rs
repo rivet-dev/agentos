@@ -815,7 +815,7 @@ impl crate::generated_protocol::v1::OwnershipScope {
 }
 
 pub const PROTOCOL_NAME: &str = "agentos-sidecar";
-pub const PROTOCOL_VERSION: u16 = 11;
+pub const PROTOCOL_VERSION: u16 = 12;
 // 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
 // entire base-filesystem snapshot, while still bounding a single frame.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;

@@ -14,16 +14,42 @@ const closed=Promise.all([once(idle,'close'),once(active,'close')]);server.close
 const echoed=once(upgraded,'data');upgraded.write('still-open');const [bytes]=await echoed;
 const ended=once(upgraded,'close');upgraded.destroy();await ended;upgradedPeer.destroy();const stopped=once(server,'close');server.close();await stopped;
 console.log(JSON.stringify({active:active.destroyed,idle:idle.destroyed,upgrade:bytes.toString()}));`;
-	const host = spawnSync(process.execPath, ["--input-type=module", "-e", source], { encoding: "utf8", timeout: 10000, maxBuffer: 16384 });
+	const host = spawnSync(
+		process.execPath,
+		["--input-type=module", "-e", source],
+		{ encoding: "utf8", timeout: 10000, maxBuffer: 16384 },
+	);
 	expect(host.status, host.stderr).toBe(0);
-	const sidecar = await AgentOs.createSidecar(); let vm: AgentOs | undefined;
+	const sidecar = await AgentOs.createSidecar();
+	let vm: AgentOs | undefined;
 	try {
-		vm = await AgentOs.create({ sidecar: { kind: "explicit", handle: sidecar }, defaultSoftware: false, permissions: { network: "deny" } });
-		let stdout = "", stderr = "";
-		const child = await vm.process.spawn("node", ["--input-type=module", "-e", source], { timeoutMs: 10000,
-			onStdout: bytes => { stdout += Buffer.from(bytes).toString(); }, onStderr: bytes => { stderr += Buffer.from(bytes).toString(); },
+		vm = await AgentOs.create({
+			sidecar: { kind: "explicit", handle: sidecar },
+			defaultSoftware: false,
+			permissions: { network: "deny" },
 		});
+		let stdout = "",
+			stderr = "";
+		const child = await vm.process.spawn(
+			"node",
+			["--input-type=module", "-e", source],
+			{
+				timeoutMs: 10000,
+				onStdout: (bytes) => {
+					stdout += Buffer.from(bytes).toString();
+				},
+				onStderr: (bytes) => {
+					stderr += Buffer.from(bytes).toString();
+				},
+			},
+		);
 		expect((await vm.process.wait(child.pid)).exitCode, stderr).toBe(0);
 		expect(JSON.parse(stdout)).toEqual(JSON.parse(host.stdout));
-	} finally { try { await vm?.dispose(); } finally { await sidecar.dispose(); } }
+	} finally {
+		try {
+			await vm?.dispose();
+		} finally {
+			await sidecar.dispose();
+		}
+	}
 }, 20000);

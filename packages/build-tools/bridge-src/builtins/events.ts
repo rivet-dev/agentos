@@ -14,8 +14,13 @@ const addProtectedEventListener =
 if (typeof addProtectedEventListener !== "function")
 	throw new Error("Missing event/abort prelude protected listener owner");
 delete eventAbortBootstrap.__agentOsAddProtectedEventListener;
-const getEventTargetListeners = eventAbortBootstrap.__agentOsGetEventTargetListeners as (target: unknown, type: unknown) => unknown[] | undefined;
-if (typeof getEventTargetListeners !== "function") throw new Error("Missing event listener prelude owner");
+const getEventTargetListeners =
+	eventAbortBootstrap.__agentOsGetEventTargetListeners as (
+		target: unknown,
+		type: unknown,
+	) => unknown[] | undefined;
+if (typeof getEventTargetListeners !== "function")
+	throw new Error("Missing event listener prelude owner");
 delete eventAbortBootstrap.__agentOsGetEventTargetListeners;
 
 const EventEmitter =
@@ -109,7 +114,9 @@ function getEventListeners(emitter, eventName) {
 	}
 	const listeners = getEventTargetListeners(emitter, eventName);
 	if (listeners !== undefined) return listeners;
-	throw new TypeError("The emitter argument must be an EventEmitter or EventTarget");
+	throw new TypeError(
+		"The emitter argument must be an EventEmitter or EventTarget",
+	);
 }
 
 function getMaxListeners(emitter) {

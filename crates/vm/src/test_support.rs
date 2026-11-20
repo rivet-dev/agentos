@@ -10,13 +10,15 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
 pub fn register_session(manager: &mut VmManager<LocalVmHost>, connection: &str, session: &str) {
-    manager.connections.insert(
-        connection.into(),
-        ConnectionState {
+    manager
+        .connections
+        .entry(connection.into())
+        .or_insert_with(|| ConnectionState {
             auth_token: String::new(),
-            sessions: BTreeSet::from([session.into()]),
-        },
-    );
+            sessions: BTreeSet::new(),
+        })
+        .sessions
+        .insert(session.into());
     manager.sessions.insert(
         session.into(),
         SessionState {
@@ -28,6 +30,11 @@ pub fn register_session(manager: &mut VmManager<LocalVmHost>, connection: &str, 
             vm_ids: BTreeSet::new(),
         },
     );
+}
+
+pub fn set_process_event_quantum(manager: &mut VmManager<LocalVmHost>, quantum: usize) {
+    assert!(quantum > 0);
+    manager.config.runtime.fairness.vm_quantum_operations = quantum;
 }
 
 pub fn contains_vm(manager: &VmManager<LocalVmHost>, vm_id: &str) -> bool {
@@ -334,10 +341,11 @@ pub fn configure_empty_vm_public_output_pressure(
     by_bytes: bool,
 ) -> [usize; 5] {
     use crate::executor::backend::{ExecutionEvent, OutputStream, PayloadLimit};
-    assert!(!manager
+    assert!(manager
         .pending_process_events
-        .iter()
-        .any(|event| event.vm_id == vm_id));
+        .vm_iter(vm_id)
+        .next()
+        .is_none());
     assert!(!manager
         .deferred_process_event_envelope
         .as_ref()

@@ -283,7 +283,7 @@ pub(crate) fn install(
     let installer = if from_snapshot {
         match scope.get_context_data_from_snapshot_once::<v8::Array>(SNAPSHOT_INSTALLER_DATA_INDEX)
         {
-            Ok(installer) => Some(installer),
+            Ok(installer) => (installer.length() != 0).then_some(installer),
             Err(v8::DataError::NoData { .. }) => None,
             Err(error) => return Err(format!("bridge installer snapshot data invalid: {error:?}")),
         }

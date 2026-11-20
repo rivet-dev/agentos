@@ -1,7 +1,7 @@
 import { exposeCustomGlobal } from "../global-exposure.js";
+import { streamStdlibModuleNs } from "../prelude.js";
 import { require_buffer } from "../vendor/buffer.js";
 import { __toESM } from "../vendor/esbuild-runtime.js";
-import { streamStdlibModuleNs } from "../prelude.js";
 import { builtinPathStdlibModule } from "./builtin-modules.js";
 import { deferCloseIfChildInheritedFd } from "./child-process.js";
 import { builtinCryptoModule } from "./crypto.js";
@@ -1547,8 +1547,12 @@ var FileReadSource = class {
 					void this._abort(this._signal?.reason);
 				});
 			} else {
-				this._abortListener = () => { void this._abort(this._signal?.reason); };
-				this._signal.addEventListener("abort", this._abortListener, { once: true });
+				this._abortListener = () => {
+					void this._abort(this._signal?.reason);
+				};
+				this._signal.addEventListener("abort", this._abortListener, {
+					once: true,
+				});
 			}
 		}
 		if (this.fd === null) {
@@ -1590,7 +1594,8 @@ var FileReadSource = class {
 	_handleCloseListener;
 	_abortListener;
 	_detachAbortSignal() {
-		if (this._abortListener) this._signal.removeEventListener("abort", this._abortListener);
+		if (this._abortListener)
+			this._signal.removeEventListener("abort", this._abortListener);
 		this._abortListener = undefined;
 	}
 	_emitOpen(fd) {
@@ -1952,14 +1957,17 @@ var FileReadSource = class {
 const CanonicalFileReadable =
 	streamStdlibModuleNs.Readable ?? streamStdlibModuleNs.default?.Readable;
 if (typeof CanonicalFileReadable !== "function") {
-	throw new Error("node:stream did not provide the canonical Readable constructor");
+	throw new Error(
+		"node:stream did not provide the canonical Readable constructor",
+	);
 }
 
 // The source owns guest descriptors and custom fs/FileHandle operations.
 // Canonical Readable owns decoding, iteration, and consumption backpressure.
 var ReadStream = class extends CanonicalFileReadable {
 	constructor(path, options = {}) {
-		options = typeof options === "string" ? { encoding: options } : options ?? {};
+		options =
+			typeof options === "string" ? { encoding: options } : (options ?? {});
 		const state = normalizeStreamStartEnd(options);
 		super({
 			highWaterMark: state.highWaterMark,
@@ -1967,37 +1975,68 @@ var ReadStream = class extends CanonicalFileReadable {
 			autoDestroy: state.autoClose,
 			emitClose: options.emitClose !== false,
 		});
-		const source = this._source = new FileReadSource(path, { ...options, encoding: undefined });
+		const source = new FileReadSource(path, {
+			...options,
+			encoding: undefined,
+		});
+		this._source = source;
 		source.pause();
-		source.on("open", fd => this.emit("open", fd));
-		source.on("data", chunk => { if (!this.push(chunk)) source.pause(); });
-		source.on("end", () => { this._sourceEnded = true; this.push(null); });
-		source.on("error", error => {
+		source.on("open", (fd) => this.emit("open", fd));
+		source.on("data", (chunk) => {
+			if (!this.push(chunk)) source.pause();
+		});
+		source.on("end", () => {
+			this._sourceEnded = true;
+			this.push(null);
+		});
+		source.on("error", (error) => {
 			if (source.autoClose) this.destroy(error);
 			else this.emit("error", error);
 		});
 		source.on("close", () => {
-			if (!this.destroyed && (!this._sourceEnded || !source.autoClose)) this.destroy();
+			if (!this.destroyed && (!this._sourceEnded || !source.autoClose))
+				this.destroy();
 		});
 	}
 	_source;
 	_sourceEnded = false;
-	get fd() { return this._source?.fd ?? null; }
-	set fd(value) { this._source.fd = value; }
-	get path() { return this._source?.path; }
-	get pending() { return this._source?.pending ?? true; }
-	get bytesRead() { return this._source?.bytesRead ?? 0; }
-	get start() { return this._source?.start; }
-	get end() { return this._source?.end; }
-	get autoClose() { return this._source?.autoClose ?? true; }
+	get fd() {
+		return this._source?.fd ?? null;
+	}
+	set fd(value) {
+		this._source.fd = value;
+	}
+	get path() {
+		return this._source?.path;
+	}
+	get pending() {
+		return this._source?.pending ?? true;
+	}
+	get bytesRead() {
+		return this._source?.bytesRead ?? 0;
+	}
+	get start() {
+		return this._source?.start;
+	}
+	get end() {
+		return this._source?.end;
+	}
+	get autoClose() {
+		return this._source?.autoClose ?? true;
+	}
 	set autoClose(value) {
 		this._source.autoClose = Boolean(value);
 		this._readableState.autoDestroy = Boolean(value);
 	}
-	_read() { this._source.resume(); }
+	_read() {
+		this._source.resume();
+	}
 	_destroy(error, callback) {
 		const source = this._source;
-		if (!source || source.closed) { callback(error); return; }
+		if (!source || source.closed) {
+			callback(error);
+			return;
+		}
 		source.once("close", () => callback(error));
 		// The outer stream reports errors; the original owner closes its fd.
 		source.destroy();
@@ -2005,7 +2044,8 @@ var ReadStream = class extends CanonicalFileReadable {
 	close(callback) {
 		if (callback) {
 			if (this.closed) queueMicrotask(() => callback(null));
-			else this._source.once("close", () => queueMicrotask(() => callback(null)));
+			else
+				this._source.once("close", () => queueMicrotask(() => callback(null)));
 		}
 		this.destroy();
 	}
@@ -2364,12 +2404,23 @@ var ReadStreamClass = ReadStream;
 var WriteStreamClass = WriteStream;
 var ReadStreamFactory = function ReadStream2(path, options) {
 	validateEncodingOption(options);
-	return Reflect.construct(ReadStreamClass, [path, options], new.target ?? ReadStreamFactory);
+	return Reflect.construct(
+		ReadStreamClass,
+		[path, options],
+		new.target ?? ReadStreamFactory,
+	);
 };
 ReadStreamFactory.prototype = ReadStream.prototype;
 Object.setPrototypeOf(ReadStreamFactory, CanonicalFileReadable);
-Object.defineProperty(ReadStreamFactory, "name", { value: "ReadStream", configurable: true });
-Object.defineProperty(ReadStream.prototype, "constructor", { value: ReadStreamFactory, writable: true, configurable: true });
+Object.defineProperty(ReadStreamFactory, "name", {
+	value: "ReadStream",
+	configurable: true,
+});
+Object.defineProperty(ReadStream.prototype, "constructor", {
+	value: ReadStreamFactory,
+	writable: true,
+	configurable: true,
+});
 var WriteStreamFactory = function WriteStream2(path, options) {
 	validateEncodingOption(options);
 	validateWriteStreamStartOption(options ?? {});
@@ -2996,8 +3047,13 @@ function joinDirEntryPath(dirPath, entryName) {
 }
 function createReaddirDirent(name, kind, dirPath) {
 	const slash = name.lastIndexOf("/");
-	return slash < 0 ? new Dirent(name, kind, dirPath)
-		: new Dirent(name.slice(slash + 1), kind, joinDirEntryPath(dirPath, name.slice(0, slash)));
+	return slash < 0
+		? new Dirent(name, kind, dirPath)
+		: new Dirent(
+				name.slice(slash + 1),
+				kind,
+				joinDirEntryPath(dirPath, name.slice(0, slash)),
+			);
 }
 function normalizeReaddirEntries(entries, dirPath, withFileTypes) {
 	if (!Array.isArray(entries)) {
@@ -3042,7 +3098,9 @@ function decodeRawReaddirEntries(entries, dirPath, withFileTypes) {
 			nameLength,
 		).toString("utf8");
 		offset += nameLength;
-		decoded.push(withFileTypes ? createReaddirDirent(name, kind, dirPath) : name);
+		decoded.push(
+			withFileTypes ? createReaddirDirent(name, kind, dirPath) : name,
+		);
 	}
 	return decoded;
 }
@@ -3061,7 +3119,7 @@ async function fsReadFileAsync(path, options) {
 		// A whole-file bridge response can exceed its byte budget even though
 		// the file fits the VM. The existing FileHandle reader uses bounded
 		// kernel reads, keeps the opened file identity and observes cancellation.
-		const flag = typeof options === "object" ? options?.flag ?? "r" : "r";
+		const flag = typeof options === "object" ? (options?.flag ?? "r") : "r";
 		const handle = new FileHandle(fs.openSync(path, flag));
 		try {
 			return await handle.readFile(options);
@@ -3095,9 +3153,12 @@ async function fsWriteFileAsync(file, data, options) {
 	}
 	const normalized =
 		typeof options === "string" ? { encoding: options } : options;
-	const largeInput = typeof data === "string"
-		? import_buffer.Buffer.byteLength(data, normalized?.encoding ?? "utf8") > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES
-		: ArrayBuffer.isView(data) && data.byteLength > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES;
+	const largeInput =
+		typeof data === "string"
+			? import_buffer.Buffer.byteLength(data, normalized?.encoding ?? "utf8") >
+				FILE_HANDLE_WRITE_MAX_CHUNK_BYTES
+			: ArrayBuffer.isView(data) &&
+				data.byteLength > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES;
 	if (
 		largeInput ||
 		normalized?.flag !== void 0 ||
@@ -3148,7 +3209,10 @@ async function fsReaddirAsync(path, options) {
 	validateEncodingOption(options);
 	const rawPath = normalizePathLike(path);
 	try {
-		const entriesJson = await _fsAsync.readDir.apply(void 0, [resolveOperationPath(path), { recursive: options?.recursive === true }]);
+		const entriesJson = await _fsAsync.readDir.apply(void 0, [
+			resolveOperationPath(path),
+			{ recursive: options?.recursive === true },
+		]);
 		return normalizeReaddirEntries(
 			decodeBridgeJson(entriesJson),
 			rawPath,
@@ -3502,9 +3566,12 @@ var fs = {
 			if (options?.flush) fs.fsyncSync(fd);
 			return;
 		}
-		const largeInput = typeof data === "string"
-			? import_buffer.Buffer.byteLength(data, options?.encoding ?? "utf8") > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES
-			: ArrayBuffer.isView(data) && data.byteLength > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES;
+		const largeInput =
+			typeof data === "string"
+				? import_buffer.Buffer.byteLength(data, options?.encoding ?? "utf8") >
+					FILE_HANDLE_WRITE_MAX_CHUNK_BYTES
+				: ArrayBuffer.isView(data) &&
+					data.byteLength > FILE_HANDLE_WRITE_MAX_CHUNK_BYTES;
 		if (
 			largeInput ||
 			options?.flag !== void 0 ||
@@ -3563,7 +3630,10 @@ var fs = {
 		const pathStr = resolveOperationPath(path);
 		let entries: ReturnType<typeof _fs.readDir.applySyncPromise>;
 		try {
-			entries = _fs.readDir.applySyncPromise(void 0, [pathStr, { recursive: options?.recursive === true }]);
+			entries = _fs.readDir.applySyncPromise(void 0, [
+				pathStr,
+				{ recursive: options?.recursive === true },
+			]);
 		} catch (err) {
 			if (bridgeErrorCode(err) === "ENOENT") {
 				throw createFsError(

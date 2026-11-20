@@ -86,6 +86,21 @@ describeIf(hasAwkPackageBinary, "awk command", { timeout: wasmBackendTestTimeout
 		return { stdout, stderr, exitCode };
 	}
 
+	it("exits a BEGIN-only program while stdin remains open", async () => {
+		await mountFixture();
+		// runAwk deliberately does not write or close this process's stdin.
+		const result = await runAwk(['BEGIN { print "AWK" }']);
+		expect(result.exitCode, result.stderr).toBe(0);
+		expect(result.stdout).toBe("AWK\n");
+	});
+
+	it("does not open input operands for a BEGIN-only program", async () => {
+		await mountFixture();
+		const result = await runAwk(['BEGIN { print "x" }', "/nonexistent/input"]);
+		expect(result.exitCode, result.stderr).toBe(0);
+		expect(result.stdout).toBe("x\n");
+	});
+
 	it("extracts fields from a file", async () => {
 		await mountFixture();
 

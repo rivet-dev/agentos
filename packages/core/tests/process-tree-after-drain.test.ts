@@ -23,6 +23,7 @@ describe("process topology after output routing retirement", () => {
 			exitTime: 2,
 			exitCode: code,
 			exitSignal: signal,
+			resolveOutputEnd: () => {},
 			onStdout: new Set(),
 			onStderr: new Set(),
 		};
@@ -67,7 +68,6 @@ describe("process topology after output routing retirement", () => {
 			signalRefreshes: new Map(),
 			signalStates: new Map(),
 			localMounts: [],
-			drainTrailingProcessOutput: async () => {},
 		});
 		const vm = Reflect.construct(AgentOs, [
 			proxy,
@@ -105,11 +105,10 @@ describe("process topology after output routing retirement", () => {
 			new Set(),
 			new Set(),
 		);
-		const retirement = Reflect.get(
-			proxy,
-			"releaseProcessTrackingAfterDrain",
-		) as (entry: unknown) => Promise<void>;
-		await retirement.call(proxy, tracked);
+		const retirement = Reflect.get(proxy, "releaseProcessTracking") as (
+			entry: unknown,
+		) => void;
+		retirement.call(proxy, tracked);
 		expect(proxy.__trackingSizesForTest()).toMatchObject({
 			trackedProcesses: 0,
 			trackedProcessesById: 0,

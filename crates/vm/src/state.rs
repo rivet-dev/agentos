@@ -14,7 +14,6 @@ use crate::executor::PythonExecution;
 use crate::executor::PythonExecutionEngine;
 use crate::executor::WasmExecutionEngine;
 use crate::executor::{
-    HostRpcRequest, StandaloneWasmBackend, WasmExecution,
     backend::{
         DescendantOutputOwnership, DescendantWaitOwnership, DirectHostReplyHandle,
         ExecutionBackendKind, ExecutionEvent, ExecutionWakeHandle, HostServiceError,
@@ -23,6 +22,7 @@ use crate::executor::{
         BoundedUsize, BoundedVec, KernelPollInterest, SocketAddress,
         SocketDomain as HostSocketDomain, SocketKind as HostSocketKind, WaitTarget,
     },
+    HostRpcRequest, StandaloneWasmBackend, WasmExecution,
 };
 use crate::protocol::{
     ExecutionCompletedResponse, ExecutionDescriptor, ExecutionOutputCapture, ExecutionOutputEvent,
@@ -32,11 +32,11 @@ use crate::protocol::{
 };
 use crate::protocol::{ProcessOutputReplayEvent, StreamChannel};
 use crate::wire::DEFAULT_MAX_FRAME_BYTES;
-use agentos_driver_tokio::DriverHandle;
 use agentos_driver_tokio::accounting::{
     LimitError, Reservation, ResourceClass, ResourceLedger, SharedReservation,
 };
 use agentos_driver_tokio::fairness::FairWorkTurn;
+use agentos_driver_tokio::DriverHandle;
 use agentos_resource_accounting::queue_tracker::{self, QueueGauge, TrackedLimit};
 use agentos_vm_config as vm_config;
 use agentos_vm_config::PermissionsPolicy;
@@ -48,7 +48,7 @@ use agentos_vm_kernel::root_fs::RootFilesystemMode;
 use agentos_vm_kernel::socket_table::SocketId;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use socket2::Socket;
 use std::borrow::Borrow as StdBorrow;
 use std::cell::{Cell, Ref, RefCell, RefMut};
@@ -64,9 +64,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
-use tokio::sync::Notify;
 use tokio::sync::mpsc::{Receiver as TokioReceiver, Sender as TokioSender};
 use tokio::sync::oneshot::Sender as SyncSender;
+use tokio::sync::Notify;
 
 const DEFAULT_MAX_SOCKET_READINESS_SUBSCRIBERS: usize = 16_384;
 
@@ -1998,9 +1998,9 @@ pub(crate) struct QuarantinedVmGeneration {
     pub(crate) runtime_context: agentos_driver_tokio::DriverHandle,
     pub(crate) capabilities: agentos_driver_tokio::capability::CapabilityRegistry,
     pub(crate) reason: VmQuarantineReason,
-    /// A canceled close may have unobserved external work. Zero local counts
-    /// cannot prove its completion, so retain this generation until restart.
-    pub(crate) sqlite_close_unconfirmed: bool,
+    /// An external SQLite close or blocking kernel teardown may still own
+    /// the generation. Zero local counts cannot prove completion.
+    pub(crate) teardown_unconfirmed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2030,7 +2030,7 @@ impl QuarantinedVmGeneration {
     }
 
     pub(crate) fn can_reap(&self) -> bool {
-        if self.sqlite_close_unconfirmed || self.reason != VmQuarantineReason::TeardownDeadline {
+        if self.teardown_unconfirmed || self.reason != VmQuarantineReason::TeardownDeadline {
             return false;
         }
         let snapshot = self.reconciliation_snapshot();
@@ -2314,6 +2314,10 @@ pub(crate) struct ActiveProcess {
     /// until the guest unlocks the file or the process exits.
     pub(crate) wasm_flock_fds: BTreeMap<String, u32>,
     pub(crate) pending_execution_events: VecDeque<ActiveExecutionEvent>,
+    /// One event the shared process-event queue had no room for, held like a
+    /// blocked writer's buffer: it is delivered before the queue, and it is
+    /// outside the queue's limits so a large write can drain in chunks.
+    pub(crate) paused_execution_event: Option<crate::execution::PolledExecutionEvent>,
     pub(crate) pending_execution_event_bytes: usize,
     pub(crate) pending_execution_event_count_limit: usize,
     pub(crate) pending_execution_event_bytes_limit: usize,
@@ -4633,11 +4637,9 @@ mod socket_readiness_registry_tests {
         let error = registry
             .register(42, kernel_target(2, 1, "other"))
             .expect_err("registry must enforce its configured bound");
-        assert!(
-            error
-                .to_string()
-                .contains("ERR_AGENTOS_KERNEL_READINESS_TARGET_LIMIT")
-        );
+        assert!(error
+            .to_string()
+            .contains("ERR_AGENTOS_KERNEL_READINESS_TARGET_LIMIT"));
     }
 
     #[test]
@@ -4671,11 +4673,9 @@ mod socket_readiness_registry_tests {
         // capability. It must not recreate readiness with a late END wake.
         let late_transport_target = subscribers.targets().pop().expect("registered target");
         registration.retire();
-        assert!(
-            !late_transport_target
-                .publish_readiness(agentos_driver_tokio::readiness::ReadyFlags::END)
-                .expect("retired readiness publish must be ignored")
-        );
+        assert!(!late_transport_target
+            .publish_readiness(agentos_driver_tokio::readiness::ReadyFlags::END)
+            .expect("retired readiness publish must be ignored"));
         assert_eq!(wake_target.readiness_publishes.load(Ordering::Acquire), 1);
         assert!(subscribers.targets().is_empty());
     }
@@ -4712,11 +4712,9 @@ mod socket_readiness_registry_tests {
 
         assert!(take_notify_permit(&owner_notify));
         let target = subscribers.targets().pop().expect("registered target");
-        assert!(
-            target
-                .publish_readiness(agentos_driver_tokio::readiness::ReadyFlags::READABLE)
-                .expect("runtime-neutral readiness publish")
-        );
+        assert!(target
+            .publish_readiness(agentos_driver_tokio::readiness::ReadyFlags::READABLE)
+            .expect("runtime-neutral readiness publish"));
         assert!(take_notify_permit(&owner_notify));
     }
 

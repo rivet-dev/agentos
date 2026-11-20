@@ -8,7 +8,12 @@ struct SerializerDelegate {
     path: &'static str,
 }
 
-pub(crate) fn throw_limit(scope: &mut v8::HandleScope, limit: usize, requested: usize, path: &'static str) {
+pub(crate) fn throw_limit(
+    scope: &mut v8::HandleScope,
+    limit: usize,
+    requested: usize,
+    path: &'static str,
+) {
     let message = v8::String::new(
         scope,
         &format!("V8 serialization requested {requested} bytes, exceeding {limit}; raise {path}"),
@@ -125,7 +130,7 @@ impl v8::ValueDeserializerImpl for DeserializerDelegate {
         let length = length as usize;
         macro_rules! view {
             ($name:ident, $size:expr) => {{
-                if length % $size != 0 {
+                if !length.is_multiple_of($size) {
                     return None;
                 }
                 v8::$name::new(scope, buffer, 0, length / $size).map(Into::into)
@@ -227,6 +232,9 @@ pub(crate) fn deserialize<'s>(
         .ok_or_else(|| "Unable to deserialize cloned data".into())
 }
 
-pub(crate) fn read_default_host_object<'s>(scope: &mut v8::HandleScope<'s>, reader: &dyn ValueDeserializerHelper) -> Option<v8::Local<'s, v8::Object>> {
+pub(crate) fn read_default_host_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    reader: &dyn ValueDeserializerHelper,
+) -> Option<v8::Local<'s, v8::Object>> {
     v8::ValueDeserializerImpl::read_host_object(&DeserializerDelegate, scope, reader)
 }

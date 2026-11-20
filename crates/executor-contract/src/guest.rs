@@ -50,6 +50,9 @@ pub struct GuestRuntimeConfig {
     /// Optional code evaluated by V8-family adapters when creating a reusable
     /// snapshot. Non-V8 executors preserve but otherwise ignore this field.
     pub snapshot_userland_code: Option<String>,
+    /// Module paths preloaded in a reusable V8 module snapshot.
+    #[serde(default)]
+    pub snapshot_entrypoints: Vec<String>,
     /// Trusted sidecar script evaluated before the entrypoint is linked.
     pub prelude_script: Option<String>,
 }

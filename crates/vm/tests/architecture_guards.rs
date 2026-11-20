@@ -327,7 +327,10 @@ fn managed_blocking_socket_operations_wait_through_posix_poll() {
             .and_then(|body| body.split(managed_start).nth(1))
             .and_then(|body| body.split(managed_end).next())
             .unwrap_or_else(|| panic!("{operation} managed datagram path"));
-        assert!(managed.contains(delegation), "managed {operation} must use the checked datagram wait helper");
+        assert!(
+            managed.contains(delegation),
+            "managed {operation} must use the checked datagram wait helper"
+        );
         assert!(!managed.contains("pumpSpawnedChildrenOrWaitRestartable"));
     }
 }
@@ -727,9 +730,8 @@ fn bounded_pr_corpus_includes_c_backed_coreutils_commands() {
             && wasi_libc.contains("--connect-timeout 30")
             && wasi_libc.contains("--tries=5")
             && wasi_libc.contains("--waitretry=2")
-            && wasi_libc.contains(
-                "https://codeload.github.com/llvm/llvm-project/tar.gz/refs/tags/"
-            )
+            && wasi_libc
+                .contains("https://codeload.github.com/llvm/llvm-project/tar.gz/refs/tags/")
             && wasi_libc
                 .contains("e2204b9903cd9d7ee833a2f56a18bef40a33df4793e31cc090906b32cbd8a1f5")
             && wasi_libc.contains("llvm-project archive checksum mismatch"),
@@ -1229,7 +1231,8 @@ fn compatibility_wasm_rpc_inventory_matches_runner_literals() {
             Some(tail[..end].to_owned())
         })
         .collect::<BTreeSet<_>>();
-    assert!(dynamic_targets.is_empty(),
+    assert!(
+        dynamic_targets.is_empty(),
         "compatibility WASM runner callSyncRpc targets must be literal; add every target to the frozen inventory: {dynamic_targets:?}"
     );
     let inventory_section = inventory
@@ -1360,9 +1363,7 @@ fn compatibility_wasm_filesystem_inventory_uses_only_typed_kernel_dispatch() {
 
     assert!(
         router.contains("_ if full_filesystem =>")
-            && router.contains(
-                "filesystem::decode(request, full_filesystem, max_reply_bytes)?"
-            ),
+            && router.contains("filesystem::decode(request, full_filesystem, max_reply_bytes)?"),
         "the compatibility-WASM router must delegate unmatched calls to the bounded typed filesystem decoder"
     );
     let wasm_mapper = process
@@ -1731,6 +1732,7 @@ const FS_ALLOW: &[&str] = &[
     "crates/vm-host-interface/src/local.rs",
     "crates/sidecar/src/transport.rs",
     "crates/vm/src/state.rs",
+    "crates/vm/src/temp_reclaim.rs",
     "crates/vm/src/vm.rs",
     "crates/vm/src/service.rs",
     "crates/vm/src/execution/",
@@ -1764,6 +1766,9 @@ const FS_ALLOW: &[&str] = &[
     "crates/executor-v8-runtime/src/execution.rs",
     "crates/executor-v8-runtime/src/host_call.rs",
     "crates/executor-v8-runtime/src/snapshot.rs",
+    // Stores sidecar-owned V8 snapshots in a private host cache. Guest files
+    // and mount data never choose the cache directory or file names.
+    "crates/executor-v8-runtime/src/snapshot_disk_cache.rs",
     // Session-phase perf recorder writes to an operator-provided file path
     // (AGENTOS_V8_SESSION_PHASES_FILE). Host-only diagnostics, same class as
     // execution.rs/host_call.rs above.
@@ -1873,6 +1878,10 @@ const ENV_ALLOW: &[&str] = &[
     "crates/executor-v8-runtime/src/execution.rs",
     "crates/executor-v8-runtime/src/host_call.rs",
     "crates/executor-v8-runtime/src/snapshot.rs",
+    // Process-only allocator overrides and host cache location. Guest
+    // environment variables never reach either lookup.
+    "crates/executor-v8-runtime/src/native_heap.rs",
+    "crates/executor-v8-runtime/src/snapshot_disk_cache.rs",
     // Browser sidecar reads a test-only vm.fetch timeout override (bucket 1:
     // process-wide test/debug knob, native-only); not VM policy.
     // Warm-isolate pool sizing knob (AGENTOS_V8_WARM_ISOLATES), read at
@@ -1886,6 +1895,7 @@ const ENV_ALLOW: &[&str] = &[
     // Session-phase perf diagnostics toggles (AGENTOS_V8_SESSION_PHASES*),
     // read from operator env. Not guest-reachable.
     "crates/executor-v8-runtime/src/session.rs",
+    "crates/executor-v8-runtime/src/isolate.rs",
 ];
 
 fn fs_class() -> BannedClass {
@@ -2016,19 +2026,31 @@ fn env_reads_confined_to_chokepoints() {
             "if std::env::var(\"AGENTOS_ALLOW_INSECURE_LOCAL_PACKAGE_HTTP\").as_deref() == Ok(\"1\") {",
         ),
     ] {
-        let source = std::fs::read_to_string(root.join(path)).expect("read exact host env boundary");
+        let source =
+            std::fs::read_to_string(root.join(path)).expect("read exact host env boundary");
         let mut tracker = CfgTestTracker::new();
-        let reads = source.lines().filter_map(|raw| {
-            let in_test = tracker.in_test(raw);
-            let code = strip_line_comment(raw).trim();
-            (!in_test && line_matches(code, env_class().needles)).then_some(code)
-        }).collect::<Vec<_>>();
-        assert_eq!(reads, [expected], "{path} must retain only its exact reviewed host env read");
-        let function = source.split(start).nth(1)
+        let reads = source
+            .lines()
+            .filter_map(|raw| {
+                let in_test = tracker.in_test(raw);
+                let code = strip_line_comment(raw).trim();
+                (!in_test && line_matches(code, env_class().needles)).then_some(code)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reads,
+            [expected],
+            "{path} must retain only its exact reviewed host env read"
+        );
+        let function = source
+            .split(start)
+            .nth(1)
             .and_then(|body| body.split(end).next())
             .expect("reviewed host env configuration function");
         assert!(
-            function.lines().any(|line| strip_line_comment(line).trim() == expected),
+            function
+                .lines()
+                .any(|line| strip_line_comment(line).trim() == expected),
             "{path} env read moved outside {start}"
         );
     }
@@ -3095,10 +3117,7 @@ fn kernel_resource_accounting_has_no_runtime_or_tokio_dependency_cycle() {
         dependency_keys(&root.join("crates/resource-accounting/Cargo.toml"));
     assert_eq!(
         resource_dependencies,
-        BTreeSet::from([
-            String::from("event-listener"),
-            String::from("tracing"),
-        ]),
+        BTreeSet::from([String::from("event-listener"), String::from("tracing"),]),
         "resource accounting must remain independent of executors, Tokio, VFS, and product layers; tracing is its only telemetry edge"
     );
 
@@ -3303,7 +3322,7 @@ fn protocol_ingress_router_only_registers_and_starts_owned_work() {
         );
     }
     assert!(
-        router.contains("operations.admit(")
+        router.contains("operations.admit_in_lane(")
             && router.contains("progress_requests.admit_owned(")
             && router.contains("schedule_prepared_request("),
         "protocol ingress router must reserve, register, and start independently supervised work"
@@ -3665,13 +3684,24 @@ fn pending_process_event_limits_are_typed_and_actionable() {
         .expect("end pending process-event capacity check")
         .0;
 
+    let aggregate = check
+        .split_once("let failure =")
+        .expect("aggregate pending event admission")
+        .1;
+    for limit in [
+        "limits.process.pendingEventCount",
+        "limits.process.pendingEventBytes",
+    ] {
+        assert!(
+            aggregate.contains(&format!("\"{limit}\"")),
+            "missing typed aggregate diagnostic for {limit}"
+        );
+    }
     assert!(
-        check.matches("VmError::host_resource_limit(").count() >= 2,
-        "pending event count and byte limits must return typed resource-limit errors"
-    );
-    assert!(
-        !check.contains("VmError::InvalidState"),
-        "bounded queue admission failures are resource limits, not invalid internal state"
+        aggregate.matches("VmError::host_resource_limit(").count() >= 2
+            && aggregate.contains("VmError::VmOutputLimit(")
+            && !aggregate.contains("VmError::InvalidState"),
+        "aggregate count and byte limits must return typed VM-scoped resource errors"
     );
     let typed_details = state
         .split_once("pub(crate) fn host_resource_limit(")
@@ -3807,18 +3837,15 @@ fn top_level_python_start_uses_the_async_runtime_adapter() {
         "top-level Python startup must await cache materialization and prewarm instead of blocking a Tokio worker"
     );
     assert!(
-        compact.contains(
-            "python_engine.bundled_pyodide_dist_path_for_vm_async(&vm_id,&runtime).await"
-        ),
+        compact.contains("python_engine.bundled_pyodide_paths_for_vm_async(&vm_id,&runtime).await"),
         "top-level Pyodide cache materialization must not run synchronously before the async Python start"
     );
     assert!(
         compact.contains("drop(vm);letstarted=pending_execution.await.map_err(python_error);"),
         "top-level Python startup must release mutable VM state before awaiting runtime warmup"
     );
-    assert!(compact.contains(
-        "drop(vm);letpyodide_assets=python_engine.bundled_pyodide_dist_path_for_vm_async("
-    ));
+    assert!(compact
+        .contains("drop(vm);letpyodide_assets=python_engine.bundled_pyodide_paths_for_vm_async("));
 }
 
 #[test]
@@ -4013,9 +4040,8 @@ fn common_network_reactor_has_no_executor_specific_control_or_encoding() {
     let unix = std::fs::read_to_string(root.join("crates/vm/src/execution/network/unix.rs"))
         .expect("read Unix reactor source");
     assert!(
-        unix.contains(
-            "target.pending_connections.len() >= target.pending_connection_limit"
-        ) && unix.contains("listener_accept_capacity(backlog, reactor_limits)"),
+        unix.contains("target.pending_connections.len() >= target.pending_connection_limit")
+            && unix.contains("listener_accept_capacity(backlog, reactor_limits)"),
         "Unix pre-accept metadata must be admitted against the same bounded listener capacity as its completion lane"
     );
 }
