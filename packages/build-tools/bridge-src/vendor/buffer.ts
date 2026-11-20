@@ -808,6 +808,9 @@ var require_buffer = __commonJS({
 			}
 			if (typeof val === "string") {
 				val = Buffer4.from(val, encoding);
+			} else if (isInstance(val, Uint8Array) && !Buffer4.isBuffer(val)) {
+				// Node accepts any Uint8Array needle, not only Buffer.
+				val = Buffer4.from(val.buffer, val.byteOffset, val.byteLength);
 			}
 			if (Buffer4.isBuffer(val)) {
 				if (val.length === 0) {
@@ -829,7 +832,7 @@ var require_buffer = __commonJS({
 				}
 				return arrayIndexOf(buffer, [val], byteOffset, encoding, dir);
 			}
-			throw new TypeError("val must be string, number or Buffer");
+			throw new TypeError("val must be string, number, Buffer or Uint8Array");
 		}
 		function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
 			let indexSize = 1;
