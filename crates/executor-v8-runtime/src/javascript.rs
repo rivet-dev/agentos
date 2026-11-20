@@ -6661,13 +6661,15 @@ impl<'a, R: ModuleFsReader> ModuleResolver<'a, R> {
             return Ok(Some(builtin));
         }
         if specifier.starts_with("file:") {
-            return match guest_path_from_file_url(specifier) {
-                Some(file_path) => self.resolve_path(&file_path, mode),
-                None => Ok(None),
+            let resolved = match guest_path_from_file_url(specifier) {
+                Some(file_path) => self.resolve_path(&file_path, mode)?,
+                None => None,
             };
+            return self.realpath_resolved_module(resolved);
         }
         if specifier.starts_with('/') {
-            return self.resolve_path(specifier, mode);
+            let resolved = self.resolve_path(specifier, mode)?;
+            return self.realpath_resolved_module(resolved);
         }
 
         let normalized_from_path = self
@@ -6699,6 +6701,7 @@ impl<'a, R: ModuleFsReader> ModuleResolver<'a, R> {
                 None => self.resolve_node_modules(specifier, &normalized_from, mode)?,
             }
         };
+        let resolved = self.realpath_resolved_module(resolved)?;
 
         if resolved.is_some() || module_resolution_miss_is_stable(&normalized_from) {
             self.cache
@@ -6706,6 +6709,25 @@ impl<'a, R: ModuleFsReader> ModuleResolver<'a, R> {
                 .insert(cache_key, resolved.clone());
         }
         Ok(resolved)
+    }
+
+    /// Node returns the realpath of a resolved module file (no
+    /// `--preserve-symlinks`). A file reached through a symlink, such as a
+    /// pnpm `node_modules/<pkg>` link, and through its real path must be one
+    /// module instance, and its own imports must resolve from its real
+    /// directory.
+    fn realpath_resolved_module(
+        &mut self,
+        resolved: Option<String>,
+    ) -> Result<Option<String>, HostServiceError> {
+        let Some(resolved) = resolved else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.reader
+                .canonical_guest_path(&resolved)?
+                .unwrap_or(resolved),
+        ))
     }
 
     pub fn load_file(&mut self, path: &str) -> Result<Option<String>, HostServiceError> {
@@ -8817,7 +8839,12 @@ mod tests {
                 &mut self,
                 path: &str,
             ) -> Result<Option<String>, HostServiceError> {
-                panic!("parent-independent resolution must not canonicalize {path}");
+                // The resolved target is realpathed, as in Node; the referrer
+                // must never be touched.
+                match path {
+                    "/allowed.cjs" => Ok(Some(path.to_owned())),
+                    _ => panic!("parent-independent resolution must not canonicalize {path}"),
+                }
             }
 
             fn read_to_string(&mut self, path: &str) -> Result<Option<String>, HostServiceError> {
