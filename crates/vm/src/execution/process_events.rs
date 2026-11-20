@@ -2066,12 +2066,27 @@ where
         process_id: &str,
     ) -> Result<(), VmError> {
         let notify = Arc::clone(&self.process_event_notify);
-        let wake_lane = host_dispatch::deferred_posix_poll_wake_lane(self, vm_id, process_id)?;
-        let socket_paths = self
-            .vms
-            .get(vm_id)
-            .map(|vm| build_socket_path_context(&vm))
-            .transpose()?;
+        // Every process-event turn rechecks every live process, so build the
+        // socket path context (which copies the VM's mount table) only for a
+        // pending combined poll. Building it for every idle process made each
+        // turn cost O(live VMs x mounts) on the service thread.
+        let combined_poll_pending = self.vms.get(vm_id).is_some_and(|vm| {
+            vm.active_processes
+                .get(process_id)
+                .and_then(|process| process.deferred_kernel_poll.as_ref())
+                .is_some_and(|poll| poll.combined)
+        });
+        let combined_poll_context = if combined_poll_pending {
+            let wake_lane = host_dispatch::deferred_posix_poll_wake_lane(self, vm_id, process_id)?;
+            let socket_paths = self
+                .vms
+                .get(vm_id)
+                .map(|vm| build_socket_path_context(&vm))
+                .transpose()?;
+            socket_paths.map(|socket_paths| (socket_paths, wake_lane))
+        } else {
+            None
+        };
         let Some(mut vm) = self.vms.get_mut(vm_id) else {
             return Ok(());
         };
@@ -2095,13 +2110,17 @@ where
             .as_ref()
             .is_some_and(|poll| poll.combined)
         {
+            let Some((socket_paths, wake_lane)) = combined_poll_context else {
+                // The poll became combined after the check above; serve it on
+                // the next turn, when the context is built.
+                notify.notify_one();
+                return Ok(());
+            };
             return host_dispatch::service_deferred_posix_poll(
                 generation,
                 &runtime,
                 wait_handle,
-                socket_paths
-                    .as_ref()
-                    .expect("registered VM has a socket path context"),
+                &socket_paths,
                 kernel_readiness,
                 capabilities,
                 managed_descriptions,
