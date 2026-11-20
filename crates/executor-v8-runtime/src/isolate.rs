@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex, Once};
+use std::sync::{mpsc, Arc, Once};
 use std::thread;
 
 use crate::ipc::ExecutionError;
@@ -12,7 +12,6 @@ use agentos_resource_accounting::queue_tracker::{
 };
 
 static V8_INIT: Once = Once::new();
-static V8_ISOLATE_LIFECYCLE: Mutex<()> = Mutex::new(());
 pub(crate) const MAX_UNHANDLED_PROMISE_REJECTIONS: usize = 1024;
 
 unsafe extern "C" {
@@ -980,7 +979,12 @@ pub(crate) fn create_guest_isolate(
     // native stacks before creating an isolate, never from a guest callback.
     let terminal_stack = plan_native_terminal_stack()
         .expect("ERR_AGENTOS_NATIVE_STACK_RESERVE: native isolate setup failed");
-    let mut isolate = with_isolate_lifecycle_lock(|| v8::Isolate::new(params));
+    // Isolate create and drop need no process-wide lock: V8's process-wide
+    // WebAssembly code-pointer table is internally synchronized. The crashes once
+    // attributed to overlapping lifecycles came from V8 state bound to a
+    // transient initialization thread and from missing pkey permissions, which
+    // `init_v8_platform` and `prepare_current_thread` fix.
+    let mut isolate = v8::Isolate::new(params);
     install_native_terminal_stack(&mut isolate, terminal_stack);
     configure_isolate(&mut isolate);
     install_heap_limit_guard(&mut isolate);
@@ -1129,23 +1133,10 @@ extern "C" fn external_memory_gc_callback(
     }
 }
 
-/// Run V8 isolate create/drop work under a process-wide lifecycle lock.
-///
-/// rusty_v8 130.0.7 embeds a V8 13.0-era process-wide WebAssembly code pointer
-/// table. Isolate construction allocates wasm builtin handles from that table and
-/// isolate destruction frees them again, so create/drop must not overlap across
-/// session threads.
-pub fn with_isolate_lifecycle_lock<T>(f: impl FnOnce() -> T) -> T {
-    let _guard = V8_ISOLATE_LIFECYCLE
-        .lock()
-        .expect("V8 isolate lifecycle lock poisoned");
-    f()
-}
-
 pub fn drop_isolate(isolate: Option<v8::OwnedIsolate>) {
     if let Some(mut isolate) = isolate {
         crate::bridge::release_vm_context_registry(&mut isolate);
-        with_isolate_lifecycle_lock(|| drop(isolate));
+        drop(isolate);
     }
 }
 
@@ -1177,11 +1168,11 @@ mod memory_budget_tests {
                 );
                 match disposal {
                     0 => drop_isolate(Some(isolate)),
-                    1 => with_isolate_lifecycle_lock(|| drop(isolate)),
-                    _ => with_isolate_lifecycle_lock(move || {
-                        // Implicit drop inside the lifecycle lock, without the helper.
+                    1 => drop(isolate),
+                    _ => {
+                        // Implicit drop at scope end, without the helper.
                         let _owned_isolate = isolate;
-                    }),
+                    }
                 }
                 exceeded
             };
@@ -1207,10 +1198,10 @@ mod memory_budget_tests {
                 );
                 match disposal {
                     0 => drop_isolate(Some(isolate)),
-                    1 => with_isolate_lifecycle_lock(|| drop(isolate)),
-                    _ => with_isolate_lifecycle_lock(move || {
+                    1 => drop(isolate),
+                    _ => {
                         let _owned_isolate = isolate;
-                    }),
+                    }
                 }
                 budget
             };
@@ -1252,7 +1243,7 @@ mod memory_budget_tests {
         };
         let reported = take_heap_limit_exceeded(&isolate);
         isolate.cancel_terminate_execution();
-        with_isolate_lifecycle_lock(|| drop(isolate));
+        drop(isolate);
         assert!(
             reported,
             "heap callback did not report its limit: terminated={terminated}, headroom={headroom}"
@@ -1299,7 +1290,7 @@ mod memory_budget_tests {
             .warned
             .load(Ordering::Relaxed);
         isolate.cancel_terminate_execution();
-        with_isolate_lifecycle_lock(|| drop(isolate));
+        drop(isolate);
         assert!(
             reported && warned,
             "GC callback did not report its limit: rejected={rejected}, terminated={terminated}, reported={reported}, warned={warned}, external_bytes={external_bytes}"
@@ -1316,7 +1307,7 @@ mod memory_budget_tests {
         install_external_memory_guard(&mut isolate);
         let budget = Arc::downgrade(isolate.get_slot::<Arc<ArrayBufferBudget>>().unwrap());
         let backing = v8::ArrayBuffer::new_backing_store(&mut isolate, 32).make_shared();
-        with_isolate_lifecycle_lock(|| drop(isolate));
+        drop(isolate);
         assert!(
             budget.upgrade().is_some(),
             "live backing store owns its allocator"

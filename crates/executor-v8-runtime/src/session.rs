@@ -648,8 +648,7 @@ struct SessionAssignment {
 #[cfg(not(test))]
 struct PrecreatedIsolate {
     // Keep both V8 owners optional so `Drop` can enforce the required order:
-    // every Global must be released before its isolate, and isolate destruction
-    // must share the process-wide lifecycle lock with isolate creation.
+    // every Global must be released before its isolate.
     isolate: Option<crate::owned_microtasks::SessionIsolate>,
     context: Option<v8::Global<v8::Context>>,
     bridge_code: Arc<str>,

@@ -442,7 +442,7 @@ fn create_snapshot_inner_in_process(
         Some(_) => Some(builtin_property_names_of_restored_context()?),
         None => None,
     };
-    crate::isolate::with_isolate_lifecycle_lock(|| {
+    (|| {
         let terminal_stack = crate::isolate::plan_native_terminal_stack()?;
         let params = crate::isolate::bounded_create_params(SNAPSHOT_HELPER_HEAP_LIMIT_MB);
         let mut isolate = v8::Isolate::snapshot_creator(Some(refs), Some(params));
@@ -536,7 +536,7 @@ fn create_snapshot_inner_in_process(
         }
 
         Ok(blob.to_vec())
-    })
+    })()
 }
 
 /// Wall-clock deadline for one snapshot helper run. Graph modules are guest
