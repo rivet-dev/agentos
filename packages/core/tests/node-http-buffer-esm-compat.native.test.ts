@@ -67,7 +67,10 @@ test("a guest ServerResponse appends headers and flushes them through _implicitH
 	});
 	await ready.promise;
 
-	const response = await vm.fetch(18884, new Request("http://localhost:18884/"));
+	const response = await vm.fetch(
+		18884,
+		new Request("http://localhost:18884/"),
+	);
 
 	expect(response.status).toBe(201);
 	expect(response.headers.getSetCookie()).toEqual(["a=1", "b=2", "c=3"]);

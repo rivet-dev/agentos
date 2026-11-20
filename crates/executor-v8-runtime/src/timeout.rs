@@ -225,7 +225,11 @@ impl CpuBudgetGuard {
                 // neither the warning point nor the budget can be reached
                 // before this delay. A VM parked on I/O uses almost no CPU, so
                 // it wakes about once per budget instead of every 50 ms.
-                let next_edge_ms = if used < warn_at_ms { warn_at_ms } else { budget_ms };
+                let next_edge_ms = if used < warn_at_ms {
+                    warn_at_ms
+                } else {
+                    budget_ms
+                };
                 let delay = Duration::from_millis(next_edge_ms.saturating_sub(used))
                     .max(CPU_BUDGET_POLL_INTERVAL);
                 tokio::time::sleep(delay).await;
