@@ -8361,6 +8361,45 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "clearScreenDown",
         ],
         "readline/promises" => &["Interface", "Readline", "createInterface"],
+        "querystring" => &[
+            "decode",
+            "encode",
+            "escape",
+            "parse",
+            "stringify",
+            "unescape",
+            "unescapeBuffer",
+        ],
+        "punycode" => &["decode", "encode", "toASCII", "toUnicode", "ucs2", "version"],
+        "dgram" => &["Socket", "createSocket"],
+        "domain" => &["Domain", "active", "create", "createDomain"],
+        "cluster" => &[
+            "SCHED_NONE",
+            "SCHED_RR",
+            "Worker",
+            "disconnect",
+            "fork",
+            "isMaster",
+            "isPrimary",
+            "isWorker",
+            "schedulingPolicy",
+            "settings",
+            "setupMaster",
+            "setupPrimary",
+            "workers",
+        ],
+        "inspector" => &["Network", "Session", "close", "console", "open", "url", "waitForDebugger"],
+        "repl" => &[
+            "REPLServer",
+            "REPL_MODE_SLOPPY",
+            "REPL_MODE_STRICT",
+            "Recoverable",
+            "builtinModules",
+            "start",
+            "writer",
+        ],
+        "trace_events" => &["createTracing", "getEnabledCategories"],
+        "wasi" => &["WASI"],
         "sqlite" => &["DatabaseSync", "StatementSync", "constants"],
         "stream" => &[
             "Duplex",
@@ -9252,6 +9291,35 @@ mod tests {
                 .is_none(),
             "a local default-CommonJS guess must not hide live VFS package metadata"
         );
+    }
+
+    #[test]
+    fn every_builtin_esm_wrapper_has_named_exports() {
+        // A named ESM import of a builtin links only against names the
+        // wrapper exports, so a builtin without a named-export list breaks
+        // every named import of it.
+        const NODE_BUILTINS: &[&str] = &[
+            "assert", "assert/strict", "async_hooks", "buffer", "child_process", "cluster",
+            "console", "constants", "crypto", "dgram", "diagnostics_channel", "dns",
+            "dns/promises", "domain", "events", "fs", "fs/promises", "http", "http2", "https",
+            "inspector", "module", "net", "os", "path", "path/posix", "path/win32",
+            "perf_hooks", "process", "punycode", "querystring", "readline",
+            "readline/promises", "repl", "sqlite", "stream", "stream/consumers",
+            "stream/promises", "stream/web", "string_decoder", "sys", "timers",
+            "timers/promises", "tls", "trace_events", "tty", "url", "util", "util/types",
+            "v8", "vm", "wasi", "worker_threads", "zlib",
+        ];
+        for name in NODE_BUILTINS {
+            assert!(normalize_builtin_specifier(name).is_some(), "{name} not a builtin");
+            let source = build_builtin_module_wrapper(name);
+            assert!(
+                source.contains("export const ") || source.contains("export {") || source.contains("export function ") || source.contains("export class "),
+                "node:{name} ESM wrapper has no named exports:\n{source}"
+            );
+        }
+        let querystring = build_builtin_module_wrapper("querystring");
+        assert!(querystring.contains("export const parse "));
+        assert!(querystring.contains("export const stringify "));
     }
 
     #[test]

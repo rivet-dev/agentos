@@ -105,3 +105,22 @@ console.log(JSON.stringify({
 		invalid: "TypeError",
 	});
 });
+
+test("guest ESM imports named exports from node:querystring", async () => {
+	const result = await runGuestModule(`
+import { parse, stringify, escape } from "node:querystring";
+import querystring from "node:querystring";
+console.log(JSON.stringify({
+	parsed: { ...parse("a=1&b=2&b=3") },
+	stringified: stringify({ x: "1 2", y: ["a", "b"] }),
+	escaped: escape("a b"),
+	sameAsDefault: parse === querystring.parse,
+}));
+`);
+	expect(result).toEqual({
+		parsed: { a: "1", b: ["2", "3"] },
+		stringified: "x=1%202&y=a&y=b",
+		escaped: "a%20b",
+		sameAsDefault: true,
+	});
+});
