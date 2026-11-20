@@ -356,7 +356,7 @@ export interface AgentOsSidecarRuntimeConfig {
 		maxControlBytes?: number;
 	};
 	executor?: {
-		/** Optional ceiling for concurrent V8 executors. Omit to leave admission uncapped. */
+		/** Sidecar-wide ceiling for live guest executors (one per live guest process). Omit to use the sidecar default of 4,096. Over the limit, starts fail with `ERR_AGENTOS_VM_EXECUTOR_LIMIT`. */
 		maxActiveVms?: number;
 	};
 }

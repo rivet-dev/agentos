@@ -39,8 +39,10 @@ Guest V8 execution is deliberately different:
   the only non-V8 platform thread that enters that isolate.
 - Synchronous guest JavaScript or a synchronous bridge wait can block that
   executor, but cannot occupy a Tokio worker or another VM's executor.
-- Executor admission is bounded by default to the larger of eight and the CPU
-  parallelism available to the sidecar process. Waiting guest parents retain
+- Executor admission is bounded by default to 4,096 live guest executors per
+  sidecar process, independent of CPU count, because idle VMs hold an executor
+  but use almost no CPU. A warning is logged at 80% of the limit, and a start
+  over it fails with `ERR_AGENTOS_VM_EXECUTOR_LIMIT`. Waiting guest parents retain
   their slots while their children run. Operators can set an explicit positive
   limit with `runtime.executor.maxActiveVms`, separately from socket and task
   counts.
