@@ -71,7 +71,7 @@ jobs:
           gpg --dearmor < "$RUNNER_TEMP/llvm.asc" | sudo tee /usr/share/keyrings/agentos-llvm.gpg >/dev/null
           echo 'deb [signed-by=/usr/share/keyrings/agentos-llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' | sudo tee /etc/apt/sources.list.d/agentos-llvm.list
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clang-21 libclang-21-dev
+          sudo apt-get install -y --no-install-recommends clang-21 libclang-21-dev pkg-config libglib2.0-dev
           echo 'LIBCLANG_PATH=/usr/lib/llvm-21/lib' >> "$GITHUB_ENV"
           echo "RUSTY_V8_BINDGEN_RESOURCE_DIR=$(clang-21 -print-resource-dir)" >> "$GITHUB_ENV"
       - name: Install arm64 Linux cross compilation and execution tools
