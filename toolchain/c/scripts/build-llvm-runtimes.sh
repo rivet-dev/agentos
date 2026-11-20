@@ -72,7 +72,13 @@ cmake \
   -DLIBUNWIND_ENABLE_STATIC=ON \
   -DCMAKE_INSTALL_PREFIX="$LLVM_RUNTIME_INSTALL_DIR"
 
-cmake --build "$LLVM_RUNTIME_BUILD_DIR" --target install -j"$(nproc 2>/dev/null || echo 4)"
+if [[ "${CARGO_BUILD_JOBS:-}" =~ ^[1-9][0-9]*$ ]]; then
+  LLVM_BUILD_JOBS="$CARGO_BUILD_JOBS"
+else
+  # Cargo also accepts relative counts and "default"; preserve the C default.
+  LLVM_BUILD_JOBS="$(nproc 2>/dev/null || echo 4)"
+fi
+cmake --build "$LLVM_RUNTIME_BUILD_DIR" --target install -j"$LLVM_BUILD_JOBS"
 
 # llvm-nm returns a non-zero status for archive members with no symbols, which
 # is expected here for several libunwind objects. Capture output explicitly so

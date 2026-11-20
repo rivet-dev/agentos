@@ -250,7 +250,7 @@ jobs:
     name: native · ${{ matrix.platform }}
     needs: changes
     if: needs.changes.outputs.native != 'none'
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && matrix.platform != 'linux-arm64-gnu' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -264,6 +264,9 @@ jobs:
           persist-credentials: false
       # The publish workflow's Dockerfile and build arguments in release mode, so
       # the size is what ships. Toolchain versions are read from publish.yaml.
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh docker
       - name: Build with the publish Dockerfile
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -272,7 +275,7 @@ jobs:
           CLANG: ${{ matrix.clang }}
         run: |
           publish_env() { sed -n "s/^  $1: \"\(.*\)\"$/\1/p" .github/workflows/publish.yaml; }
-          args=(--build-arg "TARGET=$TARGET" --build-arg BUILD_PROFILE=release --build-arg "CACHE_PLATFORM=$PLATFORM"
+          args=(--build-arg "CACHE_SCOPE=${CI_SLOT:-hosted}" --build-arg "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}" --build-arg "TARGET=$TARGET" --build-arg BUILD_PROFILE=release --build-arg "CACHE_PLATFORM=$PLATFORM"
             --build-arg "RUST_TOOLCHAIN=$(publish_env RUST_TOOLCHAIN)")
           if [ "$DOCKERFILE" = darwin ]; then
             args+=(--build-arg "CLANG=$CLANG")
@@ -280,8 +283,11 @@ jobs:
             args+=(--build-arg "LINUX_GNU_LLVM_VERSION=$(publish_env LINUX_GNU_LLVM_VERSION)"
               --build-arg "LINUX_GNU_SYSROOT_TAG=$(publish_env LINUX_GNU_SYSROOT_TAG)")
           fi
-          docker buildx build -f "docker/build/$DOCKERFILE.Dockerfile" "${args[@]}" -t pipboy-native --load .
-          cid="$(docker create pipboy-native)"
+          tag="pipboy-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${PLATFORM}"
+          cid=""
+          trap 'test -z "$cid" || docker rm -f "$cid" >/dev/null 2>&1; docker image rm "$tag" >/dev/null 2>&1 || true' EXIT
+          docker buildx build -f "docker/build/$DOCKERFILE.Dockerfile" "${args[@]}" -t "$tag" --load .
+          cid="$(docker create --label rivet.ci.extraction=true "$tag")"
           docker cp "$cid:/artifacts/agentos-native-sidecar" "$RUNNER_TEMP/agentos-native-sidecar"
           docker rm "$cid"
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0

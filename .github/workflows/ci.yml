@@ -93,9 +93,12 @@ jobs:
   wasm-commands:
     name: WASM Commands
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -106,6 +109,7 @@ jobs:
         with:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           workspaces: toolchain -> target
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
@@ -122,12 +126,15 @@ jobs:
   rust:
     name: Rust
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     env:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
       - uses: actions/checkout@v4
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh raw
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -138,6 +145,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           key: native-pr-${{ hashFiles('Cargo.lock') }}
       - name: Install V8 bridge build dependencies

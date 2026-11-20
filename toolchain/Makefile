@@ -110,14 +110,15 @@ RUST_STD_SRC := $(shell rustc --print sysroot)/lib/rustlib/src/rust
 
 # Vendor dependencies from crates.io into vendor/ (includes std deps for -Z build-std)
 vendor:
-	@if [ ! -d vendor ]; then \
+	@if [ ! -s vendor/.ci-vendor-complete ] || [ ! -s .cargo/config.toml ]; then \
 		echo "Vendoring dependencies (including std library deps)..."; \
 		mkdir -p .cargo; \
 		cargo vendor \
 			--sync "$(RUST_STD_SRC)/library/std/Cargo.toml" \
 			--sync "$(RUST_STD_SRC)/library/test/Cargo.toml" \
 			--sync test-programs/fd-mapping-contract/Cargo.toml \
-			vendor > .cargo/config.toml; \
+			vendor > .cargo/config.toml && \
+			printf 'complete\n' > vendor/.ci-vendor-complete; \
 	else \
 		echo "vendor/ exists — skipping (run 'make clean-vendor' to re-vendor)"; \
 	fi
