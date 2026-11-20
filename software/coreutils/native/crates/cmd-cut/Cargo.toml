@@ -11,4 +11,4 @@ name = "cut"
 path = "src/main.rs"
 
 [dependencies]
-uu_cut = "0.7.0"
+uu_cut = "0.8.0"

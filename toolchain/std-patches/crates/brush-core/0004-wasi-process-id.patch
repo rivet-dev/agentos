@@ -1,18 +1,14 @@
-Expose the real child pid supplied by AgentOS's patched WASI std process layer.
-
 --- a/src/sys/stubs/process.rs
 +++ b/src/sys/stubs/process.rs
-@@ -13,7 +13,12 @@
+@@ -13,6 +13,11 @@
  impl Child {
      /// Returns the process ID of the child process, if available.
      pub fn id(&self) -> Option<u32> {
--        None
 +        #[cfg(target_os = "wasi")]
 +        {
 +            return Some(self.inner.id());
 +        }
 +        #[cfg(not(target_os = "wasi"))]
-+        None
+         None
      }
  
-     /// Asynchronously waits for the child process to exit.

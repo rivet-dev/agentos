@@ -1,63 +1,44 @@
 --- a/src/interp.rs
 +++ b/src/interp.rs
-@@ -568,6 +568,10 @@
+@@ -627,6 +627,10 @@
+                     timing::format_duration_non_posixly(&timing.system),
+                 )?;
              }
-         }
- 
-+        if let Some(trap_result) = shell.run_pending_signal_traps().await? {
-+            return Ok(trap_result);
 +        }
 +
++        if let Some(trap_result) = shell.run_pending_signal_traps().await? {
++            return Ok(trap_result);
+         }
+ 
          Ok(result)
-     }
- }
 --- a/src/shell.rs
 +++ b/src/shell.rs
-@@ -971,6 +971,44 @@
-         Ok(())
+@@ -317,6 +317,25 @@
+             .set_global("_", crate::variables::ShellVariable::new(value));
      }
  
-+    /// Runs the trap command of each signal caught since the last check. Bash does this after
-+    /// the foreground command finishes. Returns the trap's result when it exits or returns.
-+    ///
-+    /// Subshells run in this process as clones of the shell, but a signal is sent to the shell
-+    /// itself, so only the top-level shell takes pending signals.
++    /// Runs caught signals between foreground commands in the top-level shell.
 +    pub(crate) async fn run_pending_signal_traps(
 +        &mut self,
 +    ) -> Result<Option<ExecutionResult>, error::Error> {
-+        if self.traps.handler_depth > 0 || self.is_subshell() {
++        if self.is_subshell() {
 +            return Ok(None);
 +        }
++        #[cfg(target_os = "wasi")]
 +        for signal in crate::sys::signal::take_pending_trap_signals() {
-+            let Some(handler) = self
-+                .traps
-+                .handlers
-+                .get(&traps::TrapSignal::Signal(signal))
-+                .cloned()
-+            else {
-+                continue;
-+            };
-+
-+            let mut params = self.default_exec_params();
-+            params.process_group_policy = ProcessGroupPolicy::SameProcessGroup;
-+
-+            let orig_last_exit_status = self.last_exit_status;
-+            self.traps.handler_depth += 1;
-+            let result = self.run_string(handler, &params).await;
-+            self.traps.handler_depth -= 1;
-+
-+            let result = result?;
++            let result = self.invoke_trap_handler(
++                crate::traps::TrapSignal::Signal(signal), &self.default_exec_params(),
++            ).await?;
 +            if result.is_return_or_exit() {
 +                return Ok(Some(result));
 +            }
-+            self.last_exit_status = orig_last_exit_status;
 +        }
 +        Ok(None)
 +    }
 +
-     async fn invoke_exit_trap_handler_if_registered(
-         &mut self,
-     ) -> Result<ExecutionResult, error::Error> {
+     /// Applies errexit semantics to a result if enabled and appropriate.
+     /// This should be called at "statement boundaries" where errexit should be checked.
+     ///
 --- a/src/sys/stubs/signal.rs
 +++ b/src/sys/stubs/signal.rs
 @@ -151,6 +151,80 @@

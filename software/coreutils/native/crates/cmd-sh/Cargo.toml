@@ -16,4 +16,4 @@ path = "src/main.rs"
 # tokio block_in_place paths), per the "behave like native Linux" rule.
 # `minimal` stays available as an explicit opt-out backend.
 [dependencies]
-brush-shell = { version = "0.3.0", default-features = false, features = ["reedline", "minimal"] }
+brush-shell = { version = "0.4.0", default-features = false, features = ["reedline", "minimal"] }

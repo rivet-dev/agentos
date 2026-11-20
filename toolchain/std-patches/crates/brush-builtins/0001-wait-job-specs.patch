@@ -1,34 +1,40 @@
-From: AgentOS Runtime <runtime@agentos.invalid>
-Subject: [PATCH] brush-builtins: wait for managed PID and job specs
-
-AgentOS background commands expose virtual process IDs through `$!`. Resolve
-numeric wait operands against those managed jobs, while retaining Brush's `%`
-job-spec resolution, so POSIX `wait $!` returns the child's actual status.
-
-Like bash, return 128 + the signal number as soon as a trapped signal arrives,
-so the trap runs without waiting for the job.
-
-diff --git a/src/wait.rs b/src/wait.rs
 --- a/src/wait.rs
 +++ b/src/wait.rs
-@@ -39,11 +39,41 @@
+@@ -1,7 +1,7 @@
+ use clap::Parser;
+ use std::io::Write;
+ 
+-use brush_core::{ExecutionExitCode, ExecutionResult, builtins, error};
++use brush_core::{ExecutionResult, builtins, error};
+ 
+ /// Wait for jobs to terminate.
+ #[derive(Parser)]
+@@ -19,7 +19,7 @@
+     #[arg(short = 'p', value_name = "VAR_NAME")]
+     variable_to_receive_id: Option<String>,
+ 
+-    /// Process IDs or job specs to wait for.
++    /// Specs of jobs to wait for.
+     ids: Vec<String>,
+ }
+ 
+@@ -39,41 +39,77 @@
          if self.variable_to_receive_id.is_some() {
              return error::unimp("wait -p");
          }
 +        // Bash returns from `wait` as soon as a trapped signal arrives so the trap can run.
 +        // Subshells run in this process and never take the shell's signals.
 +        let interruptible = !context.shell.is_subshell();
-         if !self.job_specs.is_empty() {
--            return error::unimp("wait with job specs");
++        if !self.ids.is_empty() {
 +            let mut result = ExecutionResult::success();
-+            for spec in &self.job_specs {
++            for spec in &self.ids {
 +                let job = if spec.starts_with('%') {
-+                    context.shell.jobs.resolve_job_spec(spec)
++                    context.shell.jobs_mut().resolve_job_spec(spec)
 +                } else {
 +                    spec.parse::<i32>().ok().and_then(|pid| {
 +                        context
 +                            .shell
-+                            .jobs
++                            .jobs_mut()
 +                            .jobs
 +                            .iter_mut()
 +                            .find(|job| job.representative_pid() == Some(pid))
@@ -43,20 +49,53 @@ diff --git a/src/wait.rs b/src/wait.rs
 +                    Err(status) => return Ok(ExecutionResult::new(status)),
 +                };
 +            }
-+            context.shell.jobs.poll()?;
++            context.shell.jobs_mut().poll()?;
 +            return Ok(result);
-         }
++        }
  
--        let jobs = context.shell.jobs.wait_all().await?;
-+        let jobs = match until_trapped_signal(interruptible, context.shell.jobs.wait_all()).await {
+-        let mut result = ExecutionResult::success();
++        let jobs = match until_trapped_signal(interruptible, context.shell.jobs_mut().wait_all()).await {
 +            Ok(jobs) => jobs?,
 +            Err(status) => return Ok(ExecutionResult::new(status)),
 +        };
  
-         if context.shell.options.enable_job_control {
-             for job in jobs {
-@@ -54,3 +84,32 @@
-         Ok(ExecutionResult::success())
+-        if !self.ids.is_empty() {
+-            for id in &self.ids {
+-                if id.starts_with('%') {
+-                    // It's a job spec.
+-                    if let Some(job) = context.shell.jobs_mut().resolve_job_spec(id) {
+-                        job.wait().await?;
+-                    } else {
+-                        writeln!(
+-                            context.stderr(),
+-                            "{}: no such job: {}",
+-                            context.command_name,
+-                            id
+-                        )?;
+-
+-                        result = ExecutionExitCode::GeneralError.into();
+-                    }
+-                } else {
+-                    // It's a process ID.
+-                    return error::unimp("wait with process IDs");
+-                }
+-            }
+-        } else {
+-            // Wait for all jobs.
+-            let jobs = context.shell.jobs_mut().wait_all().await?;
+-
+-            if context.shell.options().enable_job_control {
+-                for job in jobs {
+-                    writeln!(context.stdout(), "{job}")?;
+-                }
++        if context.shell.options().enable_job_control {
++            for job in jobs {
++                writeln!(context.stdout(), "{job}")?;
+             }
+         }
+ 
+-        Ok(result)
++        Ok(ExecutionResult::success())
      }
  }
 +

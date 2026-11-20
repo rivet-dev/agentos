@@ -1,14 +1,3 @@
---- a/src/factory.rs
-+++ b/src/factory.rs
-@@ -116,7 +116,7 @@
-     m.insert("type".into(), builtin::<type_::TypeCommand>());
-     #[cfg(all(feature = "builtin.ulimit", unix))]
-     m.insert("ulimit".into(), builtin::<ulimit::ULimitCommand>());
--    #[cfg(all(feature = "builtin.umask", unix))]
-+    #[cfg(all(feature = "builtin.umask", any(unix, target_arch = "wasm32")))]
-     m.insert("umask".into(), builtin::<umask::UmaskCommand>());
-     #[cfg(feature = "builtin.unalias")]
-     m.insert("unalias".into(), builtin::<unalias::UnaliasCommand>());
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -98,7 +98,7 @@
@@ -20,31 +9,33 @@
  mod umask;
  #[cfg(feature = "builtin.unalias")]
  mod unalias;
+--- a/src/factory.rs
++++ b/src/factory.rs
+@@ -133,7 +133,7 @@
+     m.insert("type".into(), builtin::<type_::TypeCommand, SE>());
+     #[cfg(all(feature = "builtin.ulimit", unix))]
+     m.insert("ulimit".into(), builtin::<ulimit::ULimitCommand, SE>());
+-    #[cfg(all(feature = "builtin.umask", unix))]
++    #[cfg(all(feature = "builtin.umask", any(unix, target_arch = "wasm32")))]
+     m.insert("umask".into(), builtin::<umask::UmaskCommand, SE>());
+     #[cfg(feature = "builtin.unalias")]
+     m.insert("unalias".into(), builtin::<unalias::UnaliasCommand, SE>());
 --- a/src/umask.rs
 +++ b/src/umask.rs
 @@ -1,7 +1,7 @@
  use brush_core::{ErrorKind, ExecutionResult, builtins};
  use cfg_if::cfg_if;
  use clap::Parser;
--#[cfg(not(target_os = "linux"))]
-+#[cfg(all(not(target_os = "linux"), not(target_arch = "wasm32")))]
+-#[cfg(not(any(target_os = "linux", target_os = "android")))]
++#[cfg(not(any(target_os = "linux", target_os = "android", target_arch = "wasm32")))]
  use nix::sys::stat::Mode;
  use std::io::Write;
  
-@@ -29,7 +29,7 @@
-     ) -> Result<brush_core::ExecutionResult, Self::Error> {
-         if let Some(mode) = &self.mode {
-             if mode.starts_with(|c: char| c.is_digit(8)) {
--                let parsed = nix::sys::stat::mode_t::from_str_radix(mode.as_str(), 8)?;
-+                let parsed = u32::from_str_radix(mode.as_str(), 8)?;
-                 set_umask(parsed)?;
-             } else {
-                 return brush_core::error::unimp("umask setting mode from symbolic value");
 @@ -58,7 +58,30 @@
  }
  
  cfg_if! {
--    if #[cfg(target_os = "linux")] {
+-    if #[cfg(any(target_os = "linux", target_os = "android"))] {
 +    if #[cfg(target_arch = "wasm32")] {
 +        #[link(wasm_import_module = "host_process")]
 +        unsafe extern "C" {
@@ -68,7 +59,7 @@
 +        fn get_umask() -> Result<u32, brush_core::Error> {
 +            call_host_process_umask(0, false)
 +        }
-+    } else if #[cfg(target_os = "linux")] {
++    } else if #[cfg(any(target_os = "linux", target_os = "android"))] {
          fn get_umask() -> Result<u32, brush_core::Error> {
              let umask = procfs::process::Process::myself().ok().and_then(|me| me.status().ok()).and_then(|status| status.umask);
              umask.ok_or_else(|| brush_core::ErrorKind::InvalidUmask.into())

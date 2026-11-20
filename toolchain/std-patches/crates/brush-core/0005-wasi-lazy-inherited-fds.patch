@@ -1,10 +1,7 @@
-Make inherited Linux descriptors available to WASI shell redirections without
-an unbounded /proc-style scan. AgentOS's patched Rust fd clone validates the
-descriptor through the bounded host fd table and returns EBADF when absent.
-
 --- a/src/interp.rs
 +++ b/src/interp.rs
-@@ -133,7 +133,13 @@
+@@ -131,8 +131,14 @@
+             openfiles::OpenFileEntry::NotPresent => None,
              openfiles::OpenFileEntry::NotSpecified => {
                  // We didn't have this fd specified one way or the other; we fallback
 -                // to what's represented in the shell's open files.
@@ -26,10 +23,10 @@ descriptor through the bounded host fd table and returns EBADF when absent.
  //! File descriptor utilities.
  
  use crate::{ShellFd, error, openfiles};
- 
++
 +#[cfg(target_os = "wasi")]
 +use std::os::wasi::io::BorrowedFd;
-+
+ 
  /// Stub implementation for platforms that do not support enumerating file descriptors.
  pub fn try_iter_open_fds() -> impl Iterator<Item = (ShellFd, openfiles::OpenFile)> {
      std::iter::empty()

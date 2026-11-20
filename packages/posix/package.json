@@ -28,8 +28,8 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@xterm/headless": "^6.0.0",
-    "minimatch": "^10.2.4",
+    "minimatch": "^11.0.1",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.12"
   }
 }

@@ -4,7 +4,7 @@ import {
 } from "@rivet-dev/agentos-runtime-core/host-functions-zod";
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import { z as z3 } from "zod3";
+import { z as z3 } from "zod3/v3";
 
 describe("zodToJsonSchema", () => {
 	test("converts objects with supported scalar constraints", () => {
@@ -73,7 +73,7 @@ describe("zodToJsonSchema", () => {
 							],
 						},
 						note: {
-							anyOf: [{ type: "string" }, { type: "null" }],
+							type: ["string", "null"],
 						},
 					},
 					required: ["mode", "note"],

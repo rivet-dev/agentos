@@ -1,0 +1,13 @@
+--- a/src/sys/wasm/mod.rs
++++ b/src/sys/wasm/mod.rs
+@@ -1,6 +1,10 @@
+ pub use crate::sys::stubs::async_pipe;
+ pub use crate::sys::stubs::commands;
++#[cfg(not(target_os = "wasi"))]
+ pub(crate) use crate::sys::stubs::env;
++#[cfg(target_os = "wasi")]
++#[path = "../unix/env.rs"]
++pub(crate) mod env;
+ pub use crate::sys::stubs::fd;
+ pub(crate) mod fs;
+ pub use crate::sys::stubs::input;

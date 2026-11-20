@@ -32,6 +32,6 @@
 		"typescript": "^5.9.2",
 		"@rivet-dev/agentos-test-harness": "workspace:*",
 		"ssh2": "^1.16.0",
-		"vitest": "^2.1.9"
+		"vitest": "^4.1.12"
 	}
 }

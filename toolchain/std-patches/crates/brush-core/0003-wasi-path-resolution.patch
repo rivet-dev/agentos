@@ -1,9 +1,9 @@
---- a/src/shell.rs
-+++ b/src/shell.rs
-@@ -1324,7 +1324,7 @@
-     ) -> Option<PathBuf> {
-         for dir_str in self.env_str("PATH").unwrap_or_default().split(':') {
-             let candidate_path = Path::new(dir_str).join(candidate_name.as_ref());
+--- a/src/shell/fs.rs
++++ b/src/shell/fs.rs
+@@ -126,7 +126,7 @@
+         let path = self.env_str("PATH").unwrap_or_default();
+         for one_dir in crate::sys::fs::split_paths(path.as_ref()) {
+             let candidate_path = one_dir.join(candidate_name.as_ref());
 -            if candidate_path.executable() {
 +            if candidate_path.is_file() && candidate_path.executable() {
                  return Some(candidate_path);

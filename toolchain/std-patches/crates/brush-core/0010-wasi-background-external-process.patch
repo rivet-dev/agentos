@@ -1,18 +1,3 @@
-From: AgentOS Runtime <runtime@agentos.invalid>
-Subject: [PATCH] brush-core: spawn background jobs as real children
-
-WASI cannot make progress on a background Tokio task while the foreground
-shell is blocked in a managed child wait. More importantly, an internal task
-has no process ID: `$!` is empty, an external `kill` cannot signal it, and
-`wait` can hang forever after a script tries to terminate the job.
-
-Spawn pipelines whose commands are proven external through the existing
-process path. Run functions, builtins, aliases, dynamically expanded commands,
-and compound lists in a new Brush child with the visible shell state restored.
-Every background job consequently has a real guest PID and participates in
-normal signal and wait semantics.
-
-diff --git a/src/interp.rs b/src/interp.rs
 --- a/src/interp.rs
 +++ b/src/interp.rs
 @@ -1,6 +1,7 @@
@@ -22,15 +7,12 @@ diff --git a/src/interp.rs b/src/interp.rs
 +use std::fmt::Write as FmtWrite;
  use std::io::Write;
  use std::path::{Path, PathBuf};
- use sys::commands::ExitStatusExt;
-@@ -239,10 +240,15 @@ impl Execute for ast::CompoundList {
+ 
+@@ -254,7 +255,15 @@
              let run_async = matches!(sep, ast::SeparatorOperator::Async);
  
              if run_async {
--                // TODO: Reenable launching in child process?
--                // let job = spawn_ao_list_in_child(ao_list, shell, params).await?;
--
--                let job = spawn_ao_list_in_task(ao_list, shell, params);
+-                let job = spawn_async_ao_list_in_task(ao_list, shell, params);
 +                let job = if ao_list.additional.is_empty()
 +                    && ao_list.first.timed.is_none()
 +                    && !ao_list.first.bang
@@ -42,13 +24,13 @@ diff --git a/src/interp.rs b/src/interp.rs
 +                };
                  let job_formatted = job.to_pid_style_string();
  
-                 if shell.options.interactive && !shell.is_subshell() {
-@@ -264,30 +270,207 @@ impl Execute for ast::CompoundList {
+                 if shell.options().interactive && !shell.is_subshell() {
+@@ -278,35 +287,211 @@
      }
  }
  
--fn spawn_ao_list_in_task<'a>(
-+fn pipeline_commands_are_external(pipeline: &ast::Pipeline, shell: &mut Shell) -> bool {
+-fn spawn_async_ao_list_in_task<'a, SE: extensions::ShellExtensions>(
++fn pipeline_commands_are_external(pipeline: &ast::Pipeline, shell: &mut Shell<impl extensions::ShellExtensions>) -> bool {
 +    pipeline.seq.iter().all(|command| {
 +        let ast::Command::Simple(command) = command else {
 +            return false;
@@ -66,7 +48,7 @@ diff --git a/src/interp.rs b/src/interp.rs
 +        {
 +            return false;
 +        }
-+        if shell.aliases.contains_key(command_name)
++        if shell.aliases().contains_key(command_name)
 +            || shell.funcs().get(command_name).is_some()
 +            || shell
 +                .builtins()
@@ -83,9 +65,9 @@ diff --git a/src/interp.rs b/src/interp.rs
 +    })
 +}
 +
-+async fn spawn_pipeline_as_background_job<'a>(
++async fn spawn_pipeline_as_background_job<'a, SE: extensions::ShellExtensions>(
 +    pipeline: &ast::Pipeline,
-+    shell: &'a mut Shell,
++    shell: &'a mut Shell<SE>,
 +    params: &ExecutionParameters,
 +) -> Result<&'a jobs::Job, error::Error> {
 +    let spawn_results = spawn_pipeline_processes(pipeline, shell, params).await?;
@@ -95,6 +77,9 @@ diff --git a/src/interp.rs b/src/interp.rs
 +            ExecutionSpawnResult::StartedProcess(child) => {
 +                tasks.push(jobs::JobTask::External(child));
 +            }
++            ExecutionSpawnResult::StartedTask(task) => {
++                tasks.push(jobs::JobTask::Internal(task));
++            }
 +            ExecutionSpawnResult::Completed(result) => {
 +                tasks.push(jobs::JobTask::Internal(tokio::spawn(
 +                    async move { Ok(result) },
@@ -103,7 +88,7 @@ diff --git a/src/interp.rs b/src/interp.rs
 +        }
 +    }
 +
-+    Ok(shell.jobs.add_as_current(jobs::Job::new(
++    Ok(shell.jobs_mut().add_as_current(jobs::Job::new(
 +        tasks,
 +        pipeline.to_string(),
 +        jobs::JobState::Running,
@@ -112,12 +97,12 @@ diff --git a/src/interp.rs b/src/interp.rs
 +
 +fn background_child_source(
 +    ao_list: &ast::AndOrList,
-+    shell: &Shell,
++    shell: &Shell<impl extensions::ShellExtensions>,
 +) -> Result<String, error::Error> {
 +    let mut source = String::new();
 +
 +    for (name, variable) in shell
-+        .env
++        .env()
 +        .iter()
 +        .filter(|(name, variable)| {
 +            variable.is_enumerable()
@@ -146,7 +131,7 @@ diff --git a/src/interp.rs b/src/interp.rs
 +        )?;
 +    }
 +
-+    for (name, value) in shell.aliases.iter().sorted_by_key(|(name, _)| *name) {
++    for (name, value) in shell.aliases().iter().sorted_by_key(|(name, _)| *name) {
 +        let assignment = std::format!("{name}={value}");
 +        writeln!(
 +            source,
@@ -160,7 +145,7 @@ diff --git a/src/interp.rs b/src/interp.rs
 +    }
 +
 +    source.push_str("set --");
-+    for parameter in &shell.positional_parameters {
++    for parameter in shell.current_shell_args() {
 +        write!(
 +            source,
 +            " {}",
@@ -173,7 +158,7 @@ diff --git a/src/interp.rs b/src/interp.rs
 +        .iter()
 +        .sorted_by_key(|option| option.name)
 +    {
-+        let sign = if option.definition.get(&shell.options) {
++        let sign = if option.definition.get(shell.options()) {
 +            '-'
 +        } else {
 +            '+'
@@ -184,7 +169,7 @@ diff --git a/src/interp.rs b/src/interp.rs
 +        .iter()
 +        .sorted_by_key(|option| option.name)
 +    {
-+        let sign = if option.definition.get(&shell.options) {
++        let sign = if option.definition.get(shell.options()) {
 +            '-'
 +        } else {
 +            '+'
@@ -195,7 +180,7 @@ diff --git a/src/interp.rs b/src/interp.rs
 +        .iter()
 +        .sorted_by_key(|option| option.name)
 +    {
-+        let sign = if option.definition.get(&shell.options) {
++        let sign = if option.definition.get(shell.options()) {
 +            "-s"
 +        } else {
 +            "-u"
@@ -207,24 +192,32 @@ diff --git a/src/interp.rs b/src/interp.rs
 +    Ok(source)
 +}
 +
-+fn spawn_ao_list_in_child<'a>(
++fn spawn_ao_list_in_child<'a, SE: extensions::ShellExtensions>(
      ao_list: &ast::AndOrList,
-     shell: &'a mut Shell,
+     shell: &'a mut Shell<SE>,
      params: &ExecutionParameters,
 -) -> &'a jobs::Job {
 -    // Clone the inputs.
 -    let mut cloned_shell = shell.clone();
--    let cloned_params = params.clone();
+-    let mut cloned_params = params.clone();
 -    let cloned_ao_list = ao_list.clone();
 -
 -    // Mark the child shell as not interactive; we don't want it messing with the terminal too much.
--    cloned_shell.options.interactive = false;
+-    cloned_shell.options_mut().interactive = false;
+-
+-    // Redirect stdin to null, per spec.
+-    if let Ok(null) = openfiles::null() {
+-        cloned_params.set_fd(openfiles::OpenFiles::STDIN_FD, null);
+-    }
 -
 -    let join_handle = tokio::spawn(async move {
 -        cloned_ao_list
 -            .execute(&mut cloned_shell, &cloned_params)
 -            .await
 -    });
+-
+-    shell.jobs_mut().add_as_current(jobs::Job::new(
+-        [jobs::JobTask::Internal(join_handle)],
 +) -> Result<&'a jobs::Job, error::Error> {
 +    let command_name = shell
 +        .env_str("BASH")
@@ -251,16 +244,15 @@ diff --git a/src/interp.rs b/src/interp.rs
 +    let child = match commands::execute_external_command(
 +        context,
 +        executable_path.to_string_lossy().as_ref(),
-+        &mut None,
++        None,
++        None,
 +        &args,
 +    )? {
 +        ExecutionSpawnResult::StartedProcess(child) => child,
-+        ExecutionSpawnResult::Completed(_) => unreachable!("external shell spawn completed inline"),
++        ExecutionSpawnResult::Completed(_) | ExecutionSpawnResult::StartedTask(_) => unreachable!("external shell spawn completed inline"),
 +    };
- 
--    shell.jobs.add_as_current(jobs::Job::new(
--        [jobs::JobTask::Internal(join_handle)],
-+    Ok(shell.jobs.add_as_current(jobs::Job::new(
++
++    Ok(shell.jobs_mut().add_as_current(jobs::Job::new(
 +        [jobs::JobTask::External(child)],
          ao_list.to_string(),
          jobs::JobState::Running,
@@ -269,10 +261,10 @@ diff --git a/src/interp.rs b/src/interp.rs
  }
  
  #[async_trait::async_trait]
-diff --git a/src/sys/stubs/commands.rs b/src/sys/stubs/commands.rs
 --- a/src/sys/stubs/commands.rs
 +++ b/src/sys/stubs/commands.rs
-@@ -46,5 +46,9 @@ pub trait ExitStatusExt {
+@@ -46,6 +46,10 @@
+ 
  impl ExitStatusExt for std::process::ExitStatus {
      fn signal(&self) -> Option<i32> {
 +        #[cfg(target_os = "wasi")]
@@ -282,5 +274,3 @@ diff --git a/src/sys/stubs/commands.rs b/src/sys/stubs/commands.rs
          None
      }
  }
--- 
-2.43.0

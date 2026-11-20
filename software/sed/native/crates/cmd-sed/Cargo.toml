@@ -11,4 +11,4 @@ name = "sed"
 path = "src/main.rs"
 
 [dependencies]
-sed = "0.1.1"
+sed = "0.2.0"

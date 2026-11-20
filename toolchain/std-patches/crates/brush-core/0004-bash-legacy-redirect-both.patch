@@ -1,27 +1,11 @@
 --- a/src/interp.rs
 +++ b/src/interp.rs
-@@ -1526,5 +1526,24 @@ pub(crate) async fn setup_redirect(
+@@ -1782,7 +1782,7 @@
+                         };
  
                          params.open_files.set_fd(fd_num, target_file);
-+                    } else if matches!(kind, ast::IoFileRedirectKind::DuplicateOutput)
-+                        && specified_fd_num.is_none()
-+                    {
-+                        // Bash treats an unnumbered `>& word` with a non-fd target as
-+                        // the legacy spelling of `&> word`.
-+                        let expanded_file_path = shell.absolute_path(Path::new(&expanded));
-+                        let mut options = std::fs::File::options();
-+                        options.create(true).write(true).truncate(true);
-+                        let stdout_file = shell
-+                            .open_file(&options, &expanded_file_path, params)
-+                            .map_err(|err| {
-+                                error::ErrorKind::RedirectionFailure(
-+                                    expanded_file_path.to_string_lossy().to_string(),
-+                                    err.to_string(),
-+                                )
-+                            })?;
-+                        let stderr_file = stdout_file.try_clone()?;
-+                        params.open_files.set_fd(OpenFiles::STDOUT_FD, stdout_file);
-+                        params.open_files.set_fd(OpenFiles::STDERR_FD, stderr_file);
-                     } else {
-                         return Err(error::ErrorKind::InvalidRedirection.into());
-                     }
+-                    } else if fd_num == 1 && !dash {
++                    } else if specified_fd_num.is_none() && !dash {
+                         // Special case for compatibility: redirect stdout and stderr to the file
+                         // given by `expanded`.
+                         setup_redirect_output_and_error_to(
