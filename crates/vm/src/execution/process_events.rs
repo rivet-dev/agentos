@@ -1411,29 +1411,39 @@ where
                     emitted_any = true;
                     work = work.saturating_add(1);
                 }
-                if self.pump_child_process_events_nowait(
+                let claims_before = host_services
+                    .len()
+                    .saturating_add(child_bridge_services.len());
+                let mut descendant_progress = self.pump_child_process_events_nowait(
                     &vm_id,
                     &mut host_services,
                     &mut child_bridge_services,
                     max_service_claims,
-                )? {
-                    emitted_any = true;
-                }
-                if self.pump_detached_child_process_events_nowait(
+                )?;
+                descendant_progress |= self.pump_detached_child_process_events_nowait(
                     &vm_id,
                     &mut host_services,
                     &mut child_bridge_services,
                     max_service_claims,
-                )? {
-                    emitted_any = true;
-                }
-                let root_ids = self
-                    .vms
-                    .get(&vm_id)
-                    .map(|vm| vm.active_processes.keys().cloned().collect::<Vec<_>>())
-                    .unwrap_or_default();
-                for root_id in root_ids {
-                    self.recheck_root_deferred_operations(&vm_id, &root_id, true)?;
+                )?;
+                emitted_any |= descendant_progress;
+                descendant_progress |= host_services
+                    .len()
+                    .saturating_add(child_bridge_services.len())
+                    > claims_before;
+                // A forced probe retires and respawns every parked wake task,
+                // so run it only when a descendant made progress this turn (as
+                // `pump_process_events` does). Forcing it for every VM on every
+                // turn made each guest event cost O(live VMs) task respawns.
+                if descendant_progress {
+                    let root_ids = self
+                        .vms
+                        .get(&vm_id)
+                        .map(|vm| vm.active_processes.keys().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    for root_id in root_ids {
+                        self.recheck_root_deferred_operations(&vm_id, &root_id, true)?;
+                    }
                 }
             }
             if self.route_claimed_pending_process_events()? > 0 {
