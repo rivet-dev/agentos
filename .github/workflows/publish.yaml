@@ -82,7 +82,7 @@ jobs:
 
   wasm-commands:
     name: WASM Commands
-    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && inputs.version != '' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
       - name: Attach persistent Incus caches
@@ -125,7 +125,7 @@ jobs:
           - platform: linux-arm64-gnu
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && matrix.platform != 'linux-arm64-gnu' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && inputs.version != '' && matrix.platform != 'linux-arm64-gnu' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Attach persistent Incus caches
@@ -195,7 +195,7 @@ jobs:
             runner: ubuntu-latest
             target: aarch64-apple-darwin
             clang: aarch64-apple-darwin20.4
-    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
+    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && inputs.version != '' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Attach persistent Incus caches

@@ -23,7 +23,11 @@ jobs:
         with:
           node-version: 24
       - uses: oven-sh/setup-bun@v2
-      - run: corepack enable yarn
+      - name: Enable Yarn for this job
+        run: |
+          mkdir -p "$RUNNER_TEMP/corepack-bin"
+          corepack enable --install-directory "$RUNNER_TEMP/corepack-bin" yarn
+          echo "$RUNNER_TEMP/corepack-bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
