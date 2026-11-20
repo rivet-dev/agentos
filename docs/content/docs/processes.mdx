@@ -84,6 +84,11 @@ Writing to stdin after the process exits fails with `EPIPE`, as a write to a
 pipe with no reader does on Linux. Closing stdin after the process exits
 succeeds.
 
+Guest `node` follows the Node CLI for the options it supports. `node` with no
+script, or with `-`, reads the program from stdin, and `--input-type=module`
+selects module mode. An option the guest runtime does not support fails with an
+error that names the flag instead of being treated as a script path.
+
 `get` and `list` report `startedAtMs` as a Unix timestamp in milliseconds.
 `tree` includes guest child processes as well as processes launched through the
 API, so it can show more than you started. Use the returned handle or `pid`

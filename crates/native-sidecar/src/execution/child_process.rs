@@ -4191,46 +4191,36 @@ where
                 });
             }
 
-            if process_args.is_empty() {
-                env.insert(String::from("AGENTOS_NODE_EVAL"), String::new());
-                prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, None)?;
+            let interactive = env
+                .get(EXECUTION_REQUEST_TTY_ENV)
+                .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+            let script_args =
+                match resolve_node_cli_invocation(&process_args, &mut env, interactive)? {
+                    NodeCliInvocation::Resolved {
+                        entrypoint,
+                        execution_args,
+                    } => {
+                        prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, None)?;
 
-                return Ok(ResolvedChildProcessExecution {
-                    command: command.clone(),
-                    process_args: vec![command.clone()],
-                    runtime: GuestRuntimeKind::JavaScript,
-                    entrypoint: String::from("-e"),
-                    execution_args: Vec::new(),
-                    env,
-                    guest_cwd,
-                    host_cwd,
-                    wasm_permission_tier: None,
-                    host_function_command: false,
-                });
-            }
+                        return Ok(ResolvedChildProcessExecution {
+                            command: command.clone(),
+                            process_args: std::iter::once(command.clone())
+                                .chain(process_args.iter().cloned())
+                                .collect(),
+                            runtime: GuestRuntimeKind::JavaScript,
+                            entrypoint,
+                            execution_args,
+                            env,
+                            guest_cwd,
+                            host_cwd,
+                            wasm_permission_tier: None,
+                            host_function_command: false,
+                        });
+                    }
+                    NodeCliInvocation::Script { args } => args,
+                };
 
-            if let Some((entrypoint, execution_args)) =
-                resolve_special_node_cli_invocation(&process_args, &mut env)
-            {
-                prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, None)?;
-
-                return Ok(ResolvedChildProcessExecution {
-                    command: command.clone(),
-                    process_args: std::iter::once(command.clone())
-                        .chain(process_args.iter().cloned())
-                        .collect(),
-                    runtime: GuestRuntimeKind::JavaScript,
-                    entrypoint,
-                    execution_args,
-                    env,
-                    guest_cwd,
-                    host_cwd,
-                    wasm_permission_tier: None,
-                    host_function_command: false,
-                });
-            }
-
-            let Some(entrypoint_specifier) = process_args.first() else {
+            let Some(entrypoint_specifier) = script_args.first() else {
                 return Err(SidecarError::InvalidState(format!(
                     "{command} child_process spawn requires an entrypoint"
                 )));
@@ -4275,12 +4265,12 @@ where
                 env.insert(String::from("AGENTOS_GUEST_ENTRYPOINT"), guest_entrypoint);
                 (
                     host_entrypoint.to_string_lossy().into_owned(),
-                    process_args.iter().skip(1).cloned().collect(),
+                    script_args.iter().skip(1).cloned().collect(),
                 )
             } else {
                 (
                     entrypoint_specifier.clone(),
-                    process_args.iter().skip(1).cloned().collect(),
+                    script_args.iter().skip(1).cloned().collect(),
                 )
             };
             let guest_entrypoint = env.get("AGENTOS_GUEST_ENTRYPOINT").cloned();

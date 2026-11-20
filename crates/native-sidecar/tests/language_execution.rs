@@ -193,8 +193,9 @@ fn attached_execution_is_ephemeral_and_does_not_capture_by_default() {
     dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
 }
 
-fn run_attached_stdin_reader(
+fn run_node_argv(
     name: &str,
+    args: Vec<String>,
     stdin: Option<Vec<u8>>,
 ) -> wire::ExecutionCompletedResponse {
     let mut sidecar = new_sidecar(name);
@@ -216,12 +217,7 @@ fn run_attached_stdin_reader(
         capture: Some(wire::ExecutionOutputCapture::All),
         retain_events: None,
     };
-    process.args = vec![
-        String::from("-e"),
-        String::from(
-            "let size = 0; process.stdin.on('data', (chunk) => { size += chunk.length; }).on('end', () => console.log(`read ${size} bytes to end`));",
-        ),
-    ];
+    process.args = args;
     process.stdin = stdin;
     process.timeout_ms = Some(5_000);
     let accepted = sidecar
@@ -233,17 +229,60 @@ fn run_attached_stdin_reader(
                 command: String::from("node"),
             }),
         ))
-        .expect("start attached stdin reader");
+        .expect("start node argv execution");
+    let inline_completion = accepted
+        .events
+        .iter()
+        .find_map(|event| match &event.payload {
+            wire::EventPayload::ExecutionCompletedEvent(completed) => Some(completed.clone()),
+            _ => None,
+        });
     let operation_id = accepted_execution_id(accepted);
-    let result = wait_for_execution(
-        &mut sidecar,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        &operation_id,
+    let result = inline_completion.map_or_else(
+        || {
+            wait_for_execution(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                &operation_id,
+            )
+        },
+        |completed| wire::ExecutionCompletedResponse {
+            execution: None,
+            outcome: completed.outcome,
+            exit_code: completed.exit_code,
+            error: completed.error,
+            stdout: None,
+            stderr: None,
+            stdout_truncated: None,
+            stderr_truncated: None,
+            evaluation_value: None,
+            type_script_check_result: None,
+        },
     );
     dispose_vm_and_close_session_wire(&mut sidecar, &connection_id, &session_id, &vm_id);
     result
+}
+
+fn run_attached_stdin_reader(
+    name: &str,
+    stdin: Option<Vec<u8>>,
+) -> wire::ExecutionCompletedResponse {
+    run_node_argv(
+        name,
+        vec![
+            String::from("-e"),
+            String::from(
+                "let size = 0; process.stdin.on('data', (chunk) => { size += chunk.length; }).on('end', () => console.log(`read ${size} bytes to end`));",
+            ),
+        ],
+        stdin,
+    )
+}
+
+fn stdout_text(result: &wire::ExecutionCompletedResponse) -> String {
+    String::from_utf8(result.stdout.clone().unwrap_or_default()).expect("UTF-8 stdout")
 }
 
 #[test]
@@ -264,6 +303,94 @@ fn attached_execution_without_stdin_gives_the_process_end_of_input() {
     assert_eq!(
         String::from_utf8(result.stdout.expect("captured stdout")).expect("UTF-8 stdout"),
         "read 0 bytes to end\n"
+    );
+}
+
+#[test]
+fn node_reads_its_program_from_stdin() {
+    let result = run_node_argv(
+        "language-execution-node-stdin-program",
+        Vec::new(),
+        Some(b"console.log('program from stdin');\n".to_vec()),
+    );
+    assert_eq!(
+        result.outcome,
+        wire::ExecutionOutcome::Succeeded,
+        "{result:?}"
+    );
+    assert_eq!(stdout_text(&result), "program from stdin\n");
+}
+
+#[test]
+fn node_reads_a_module_program_from_stdin() {
+    let result = run_node_argv(
+        "language-execution-node-stdin-module",
+        vec![String::from("--input-type=module")],
+        Some(
+            b"import { sep } from 'node:path';\n\
+              console.log(sep === '/' ? 'module from stdin' : 'unexpected separator');\n"
+                .to_vec(),
+        ),
+    );
+    assert_eq!(
+        result.outcome,
+        wire::ExecutionOutcome::Succeeded,
+        "{result:?}"
+    );
+    assert_eq!(stdout_text(&result), "module from stdin\n");
+}
+
+#[test]
+fn node_reads_a_dash_program_from_stdin() {
+    let result = run_node_argv(
+        "language-execution-node-stdin-dash",
+        vec![String::from("-")],
+        Some(b"console.log('dash program');\n".to_vec()),
+    );
+    assert_eq!(
+        result.outcome,
+        wire::ExecutionOutcome::Succeeded,
+        "{result:?}"
+    );
+    assert_eq!(stdout_text(&result), "dash program\n");
+}
+
+#[test]
+fn node_accepts_supported_cli_flags_before_eval() {
+    let result = run_node_argv(
+        "language-execution-node-cli-flags",
+        vec![
+            String::from("--no-warnings"),
+            String::from("--enable-source-maps"),
+            String::from("-e"),
+            String::from("console.log('flags ok');"),
+        ],
+        None,
+    );
+    assert_eq!(
+        result.outcome,
+        wire::ExecutionOutcome::Succeeded,
+        "{result:?}"
+    );
+    assert_eq!(stdout_text(&result), "flags ok\n");
+}
+
+#[test]
+fn node_rejects_unsupported_cli_flags_by_name() {
+    let result = run_node_argv(
+        "language-execution-node-cli-unsupported",
+        vec![
+            String::from("--totally-unknown"),
+            String::from("-e"),
+            String::from("console.log(1);"),
+        ],
+        None,
+    );
+    assert_eq!(result.outcome, wire::ExecutionOutcome::Failed);
+    let error = result.error.expect("unsupported flag error");
+    assert!(
+        error.message.contains("--totally-unknown"),
+        "flag name missing from error: {error:?}"
     );
 }
 

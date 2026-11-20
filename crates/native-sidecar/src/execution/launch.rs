@@ -27,7 +27,7 @@ const DEFAULT_ALLOWED_NODE_BUILTINS: &[&str] = &[
     "util",
     "zlib",
 ];
-const EXECUTION_REQUEST_TTY_ENV: &str = "AGENTOS_EXEC_TTY";
+pub(super) const EXECUTION_REQUEST_TTY_ENV: &str = "AGENTOS_EXEC_TTY";
 
 fn resolve_execute_request(
     vm: &VmState,
@@ -171,104 +171,97 @@ fn resolve_command_execution(
             });
         }
 
-        if args.is_empty() {
-            env.insert(String::from("AGENTOS_NODE_EVAL"), String::new());
-            prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, None)?;
-
-            return Ok(ResolvedChildProcessExecution {
-                command: String::from(JAVASCRIPT_COMMAND),
-                process_args: vec![command.to_owned()],
-                runtime: GuestRuntimeKind::JavaScript,
-                entrypoint: String::from("-e"),
-                execution_args: Vec::new(),
-                env,
-                guest_cwd,
-                host_cwd,
-                wasm_permission_tier: None,
-                host_function_command: false,
-            });
-        }
-
-        if let Some((entrypoint, execution_args)) =
-            resolve_special_node_cli_invocation(&args, &mut env)
-        {
-            prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, None)?;
-
-            return Ok(ResolvedChildProcessExecution {
-                command: String::from(JAVASCRIPT_COMMAND),
-                process_args: std::iter::once(command.to_owned())
-                    .chain(args.iter().cloned())
-                    .collect(),
-                runtime: GuestRuntimeKind::JavaScript,
+        let interactive = env
+            .get(EXECUTION_REQUEST_TTY_ENV)
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+        match resolve_node_cli_invocation(&args, &mut env, interactive)? {
+            NodeCliInvocation::Resolved {
                 entrypoint,
                 execution_args,
-                env,
-                guest_cwd,
-                host_cwd,
-                wasm_permission_tier: None,
-                host_function_command: false,
-            });
-        }
+            } => {
+                prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, None)?;
 
-        let Some(entrypoint_specifier) = args.first() else {
-            return Err(SidecarError::InvalidState(format!(
-                "{command} execution requires an entrypoint"
-            )));
-        };
-
-        let (entrypoint, execution_args, guest_entrypoint) = {
-            let requested_host_entrypoint =
-                resolve_host_entrypoint_within_vm_host_cwd(vm, entrypoint_specifier);
-            if requested_host_entrypoint.is_some() && !allow_host_path_overrides {
-                let requested_cwd = cwd.unwrap_or(guest_cwd.as_str());
-                return Err(SidecarError::InvalidState(format!(
-                    "execution cwd {requested_cwd} is outside sandbox root {}",
-                    vm.host_cwd.to_string_lossy()
-                )));
+                return Ok(ResolvedChildProcessExecution {
+                    command: String::from(JAVASCRIPT_COMMAND),
+                    process_args: std::iter::once(command.to_owned())
+                        .chain(args.iter().cloned())
+                        .collect(),
+                    runtime: GuestRuntimeKind::JavaScript,
+                    entrypoint,
+                    execution_args,
+                    env,
+                    guest_cwd,
+                    host_cwd,
+                    wasm_permission_tier: None,
+                    host_function_command: false,
+                });
             }
-            let host_entrypoint_override = allow_host_path_overrides
-                .then(|| resolve_host_entrypoint_within_vm_host_cwd(vm, entrypoint_specifier))
-                .flatten();
-            let guest_entrypoint = host_entrypoint_override
-                .as_ref()
-                .map(|(guest_entrypoint, _)| guest_entrypoint.clone())
-                .or_else(|| guest_entrypoint_for_specifier(&guest_cwd, entrypoint_specifier));
-            let entrypoint = host_entrypoint_override.map_or_else(
-                || {
-                    guest_entrypoint.as_ref().map_or_else(
-                        || entrypoint_specifier.clone(),
-                        |guest_entrypoint| {
-                            resolve_vm_guest_path_to_host(vm, guest_entrypoint)
-                                .to_string_lossy()
-                                .into_owned()
+            NodeCliInvocation::Script { args: script_args } => {
+                let entrypoint_specifier = script_args.first().ok_or_else(|| {
+                    SidecarError::InvalidState(format!(
+                        "{command} execution requires an entrypoint"
+                    ))
+                })?;
+
+                let (entrypoint, execution_args, guest_entrypoint) = {
+                    let requested_host_entrypoint =
+                        resolve_host_entrypoint_within_vm_host_cwd(vm, entrypoint_specifier);
+                    if requested_host_entrypoint.is_some() && !allow_host_path_overrides {
+                        let requested_cwd = cwd.unwrap_or(guest_cwd.as_str());
+                        return Err(SidecarError::InvalidState(format!(
+                            "execution cwd {requested_cwd} is outside sandbox root {}",
+                            vm.host_cwd.to_string_lossy()
+                        )));
+                    }
+                    let host_entrypoint_override = allow_host_path_overrides
+                        .then(|| {
+                            resolve_host_entrypoint_within_vm_host_cwd(vm, entrypoint_specifier)
+                        })
+                        .flatten();
+                    let guest_entrypoint = host_entrypoint_override
+                        .as_ref()
+                        .map(|(guest_entrypoint, _)| guest_entrypoint.clone())
+                        .or_else(|| {
+                            guest_entrypoint_for_specifier(&guest_cwd, entrypoint_specifier)
+                        });
+                    let entrypoint = host_entrypoint_override.map_or_else(
+                        || {
+                            guest_entrypoint.as_ref().map_or_else(
+                                || entrypoint_specifier.clone(),
+                                |guest_entrypoint| {
+                                    resolve_vm_guest_path_to_host(vm, guest_entrypoint)
+                                        .to_string_lossy()
+                                        .into_owned()
+                                },
+                            )
                         },
+                        |(_, host_entrypoint)| host_entrypoint,
+                    );
+                    (
+                        entrypoint,
+                        script_args.iter().skip(1).cloned().collect(),
+                        guest_entrypoint,
                     )
-                },
-                |(_, host_entrypoint)| host_entrypoint,
-            );
-            (
-                entrypoint,
-                args.iter().skip(1).cloned().collect(),
-                guest_entrypoint,
-            )
-        };
+                };
 
-        prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, guest_entrypoint)?;
+                prepare_guest_runtime_env(vm, &mut env, &guest_cwd, &host_cwd, guest_entrypoint)?;
 
-        return Ok(ResolvedChildProcessExecution {
-            command: String::from(JAVASCRIPT_COMMAND),
-            process_args: std::iter::once(command.to_owned())
-                .chain(args.iter().cloned())
-                .collect(),
-            runtime: GuestRuntimeKind::JavaScript,
-            entrypoint,
-            execution_args,
-            env,
-            guest_cwd,
-            host_cwd,
-            wasm_permission_tier: None,
-            host_function_command: false,
-        });
+                return Ok(ResolvedChildProcessExecution {
+                    command: String::from(JAVASCRIPT_COMMAND),
+                    process_args: std::iter::once(command.to_owned())
+                        .chain(args.iter().cloned())
+                        .collect(),
+                    runtime: GuestRuntimeKind::JavaScript,
+                    entrypoint,
+                    execution_args,
+                    env,
+                    guest_cwd,
+                    host_cwd,
+                    wasm_permission_tier: None,
+                    host_function_command: false,
+                });
+            }
+        }
     }
 
     if command.ends_with(".js") || command.ends_with(".mjs") || command.ends_with(".cjs") {
@@ -1826,53 +1819,122 @@ pub(super) fn resolve_python_command_execution(
     })
 }
 
-pub(super) fn resolve_special_node_cli_invocation(
+/// Node CLI flags that the guest runtime can accept as no-ops.
+///
+/// The guest Node runtime always has the behavior these flags request, or the
+/// behavior has no guest-visible equivalent, so consuming them keeps a real
+/// script or `-e` expression from being mistaken for the entrypoint.
+const NODE_CLI_NOOP_FLAGS: &[&str] = &[
+    "--no-warnings",
+    "--trace-warnings",
+    "--no-deprecation",
+    "--trace-deprecation",
+    "--throw-deprecation",
+    "--pending-deprecation",
+    "--enable-source-maps",
+    "--preserve-symlinks",
+    "--preserve-symlinks-main",
+    "--no-addons",
+    "--frozen-intrinsics",
+    "--experimental-vm-modules",
+    "--experimental-top-level-await",
+    "--experimental-json-modules",
+];
+
+const NODE_STDIN_COMMONJS_LOADER: &str = r#"
+const Module = require("node:module");
+const path = require("node:path");
+let source = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { source += chunk; });
+process.stdin.on("end", () => {
+  const filename = path.join(process.cwd(), "[stdin]");
+  const mod = new Module(filename, null);
+  mod.filename = filename;
+  mod.paths = Module._nodeModulePaths(process.cwd());
+  mod._compile(source, filename);
+});
+"#;
+
+const NODE_STDIN_MODULE_LOADER: &str = r#"
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+let source = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { source += chunk; });
+await new Promise((resolve) => process.stdin.on("end", resolve));
+const filename = path.join(process.cwd(), `[stdin]-${process.pid}-${Date.now()}.mjs`);
+fs.writeFileSync(filename, source);
+try {
+  await import(pathToFileURL(filename).href);
+} finally {
+  try {
+    fs.unlinkSync(filename);
+  } catch (error) {
+    if (error && error.code !== "ENOENT") throw error;
+  }
+}
+"#;
+
+pub(super) enum NodeCliInvocation {
+    /// The sidecar already resolved this invocation to an inline entrypoint.
+    Resolved {
+        entrypoint: String,
+        execution_args: Vec<String>,
+    },
+    /// The first remaining argument is the script path or specifier.
+    Script { args: Vec<String> },
+}
+
+/// Parse the Node CLI option prefix the guest runtime supports.
+///
+/// Node stops option parsing at the first non-option argument, so the returned
+/// script args keep everything from that argument onward. With no script left,
+/// Node reads the program from stdin, which the guest runtime implements with
+/// an eval loader that compiles the stdin source once EOF arrives.
+pub(super) fn resolve_node_cli_invocation(
     args: &[String],
     env: &mut BTreeMap<String, String>,
-) -> Option<(String, Vec<String>)> {
+    interactive: bool,
+) -> Result<NodeCliInvocation, SidecarError> {
     let mut index = 0;
+    let mut module_mode = env
+        .get("AGENTOS_GUEST_ENTRYPOINT_MODULE_MODE")
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    let mut stdin_program = false;
+    let mut stdin_args_start = None;
     while let Some(arg) = args.get(index) {
         match arg.as_str() {
-            "--input-type" => {
-                if !apply_node_input_type(env, args.get(index + 1)?) {
-                    return None;
-                }
-                index += 2;
-            }
-            value if value.starts_with("--input-type=") => {
-                if !apply_node_input_type(env, &value["--input-type=".len()..]) {
-                    return None;
-                }
+            "--" => {
                 index += 1;
+                break;
             }
-            _ => break,
-        }
-    }
-
-    let first = args.get(index)?;
-    match first.as_str() {
-        "-e" | "--eval" => {
-            env.insert(
-                String::from("AGENTOS_NODE_EVAL"),
-                args.get(index + 1).cloned().unwrap_or_default(),
-            );
-            Some((
-                String::from("-e"),
-                args.iter().skip(index + 2).cloned().collect(),
-            ))
-        }
-        "-v" | "--version" => {
-            env.insert(
-                String::from("AGENTOS_NODE_EVAL"),
-                String::from("console.log(process.version);"),
-            );
-            Some((String::from("-e"), args.to_vec()))
-        }
-        "--test" => {
-            env.insert(
-                String::from("AGENTOS_NODE_EVAL"),
-                String::from(
-                    r#"
+            "-e" | "--eval" => {
+                env.insert(
+                    String::from("AGENTOS_NODE_EVAL"),
+                    args.get(index + 1).cloned().unwrap_or_default(),
+                );
+                return Ok(NodeCliInvocation::Resolved {
+                    entrypoint: String::from("-e"),
+                    execution_args: args.iter().skip(index + 2).cloned().collect(),
+                });
+            }
+            "-v" | "--version" => {
+                env.insert(
+                    String::from("AGENTOS_NODE_EVAL"),
+                    String::from("console.log(process.version);"),
+                );
+                return Ok(NodeCliInvocation::Resolved {
+                    entrypoint: String::from("-e"),
+                    execution_args: args.to_vec(),
+                });
+            }
+            "--test" => {
+                env.insert(
+                    String::from("AGENTOS_NODE_EVAL"),
+                    String::from(
+                        r#"
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -1912,31 +1974,91 @@ if (summary.failed > 0) process.exitCode = 1;
   process.exitCode = 1;
 });
 "#,
-                ),
-            );
-            Some((
-                String::from("-e"),
-                args.iter().skip(index + 1).cloned().collect(),
-            ))
+                    ),
+                );
+                return Ok(NodeCliInvocation::Resolved {
+                    entrypoint: String::from("-e"),
+                    execution_args: args.iter().skip(index + 1).cloned().collect(),
+                });
+            }
+            "--input-type" => {
+                let value = args.get(index + 1).ok_or_else(|| {
+                    SidecarError::InvalidState(String::from(
+                        "ERR_AGENTOS_NODE_FLAG_VALUE: node flag --input-type requires a value",
+                    ))
+                })?;
+                module_mode = apply_node_input_type(env, value)?;
+                index += 2;
+            }
+            value if value.starts_with("--input-type=") => {
+                module_mode = apply_node_input_type(env, &value["--input-type=".len()..])?;
+                index += 1;
+            }
+            "-" => {
+                stdin_args_start = Some(index);
+                index += 1;
+                stdin_program = true;
+                break;
+            }
+            value if NODE_CLI_NOOP_FLAGS.contains(&value) => {
+                index += 1;
+            }
+            value if value.starts_with('-') && value.len() > 1 => {
+                return Err(SidecarError::InvalidState(format!(
+                    "ERR_AGENTOS_NODE_UNSUPPORTED_FLAG: node flag {value} is not supported by the guest Node runtime"
+                )));
+            }
+            _ => break,
         }
-        _ => None,
     }
+
+    if index >= args.len() {
+        stdin_program = true;
+    }
+    if stdin_program {
+        if interactive {
+            return Err(SidecarError::InvalidState(String::from(
+                "ERR_AGENTOS_NODE_REPL_UNSUPPORTED: interactive node requires a script; the guest Node runtime does not provide a REPL",
+            )));
+        }
+        env.insert(
+            String::from("AGENTOS_NODE_EVAL"),
+            String::from(if module_mode {
+                NODE_STDIN_MODULE_LOADER
+            } else {
+                NODE_STDIN_COMMONJS_LOADER
+            }),
+        );
+        return Ok(NodeCliInvocation::Resolved {
+            entrypoint: String::from("-e"),
+            execution_args: stdin_args_start.map_or_else(Vec::new, |start| args[start..].to_vec()),
+        });
+    }
+
+    Ok(NodeCliInvocation::Script {
+        args: args[index..].to_vec(),
+    })
 }
 
-fn apply_node_input_type(env: &mut BTreeMap<String, String>, value: &str) -> bool {
+fn apply_node_input_type(
+    env: &mut BTreeMap<String, String>,
+    value: &str,
+) -> Result<bool, SidecarError> {
     match value {
         "module" => {
             env.insert(
                 String::from("AGENTOS_GUEST_ENTRYPOINT_MODULE_MODE"),
                 String::from("1"),
             );
-            true
+            Ok(true)
         }
         "commonjs" => {
             env.remove("AGENTOS_GUEST_ENTRYPOINT_MODULE_MODE");
-            true
+            Ok(false)
         }
-        _ => false,
+        _ => Err(SidecarError::InvalidState(format!(
+            "ERR_AGENTOS_NODE_INVALID_INPUT_TYPE: node --input-type must be \"module\" or \"commonjs\", got {value:?}"
+        ))),
     }
 }
 
