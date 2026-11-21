@@ -2792,6 +2792,13 @@ function fdMetadataCall(fn, syscall) {
 		throw error;
 	}
 }
+// `throwIfNoEntry: false` makes statSync and lstatSync return undefined for a
+// missing entry. Node treats ENOENT and ENOTDIR as missing.
+function isMissingEntryWithoutThrow(err, options) {
+	if (options?.throwIfNoEntry !== false) return false;
+	const code = bridgeErrorCode(err);
+	return code === "ENOENT" || code === "ENOTDIR";
+}
 function bridgeCall(fn, syscall, path) {
 	try {
 		return fn();
@@ -3874,13 +3881,14 @@ var fs = {
 			return false;
 		}
 	},
-	statSync(path, _options) {
+	statSync(path, options) {
 		const rawPath = normalizePathLike(path);
 		const pathStr = resolveOperationPath(path);
 		let statJson: ReturnType<typeof _fs.stat.applySyncPromise>;
 		try {
 			statJson = _fs.stat.applySyncPromise(void 0, [pathStr]);
 		} catch (err) {
+			if (isMissingEntryWithoutThrow(err, options)) return undefined;
 			if (bridgeErrorCode(err) === "ENOENT") {
 				throw createFsError(
 					"ENOENT",
@@ -3894,13 +3902,15 @@ var fs = {
 		const stat = decodeBridgeJson(statJson);
 		return new Stats(stat);
 	},
-	lstatSync(path, _options) {
+	lstatSync(path, options) {
 		const pathStr = normalizePathLike(path);
-		const statJson = bridgeCall(
-			() => _fs.lstat.applySyncPromise(void 0, [pathStr]),
-			"lstat",
-			pathStr,
-		);
+		let statJson: ReturnType<typeof _fs.lstat.applySyncPromise>;
+		try {
+			statJson = _fs.lstat.applySyncPromise(void 0, [pathStr]);
+		} catch (err) {
+			if (isMissingEntryWithoutThrow(err, options)) return undefined;
+			throw toNodeFsError(err, "lstat", pathStr);
+		}
 		const stat = decodeBridgeJson(statJson);
 		return new Stats(stat);
 	},

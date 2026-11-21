@@ -43,6 +43,11 @@ const promise = (run) => run().then(() => null, shape);
 		realpath: await callback((cb) => fs.realpath(notDir, cb)),
 		missingReadFileSync: sync(() => fs.readFileSync(missing)),
 		missingLstat: await promise(() => fs.promises.lstat(missing)),
+		// Tools probe for optional files this way (Next.js looks for .git).
+		noThrowStatSync: String(fs.statSync(missing, { throwIfNoEntry: false })),
+		noThrowLstatSync: String(fs.lstatSync(missing, { throwIfNoEntry: false })),
+		noThrowStatSyncNotDir: String(fs.statSync(notDir, { throwIfNoEntry: false })),
+		noThrowStatSyncFile: fs.statSync("/m/file.txt", { throwIfNoEntry: false }).isFile(),
 	}));
 })();
 `;
@@ -79,6 +84,10 @@ test("fs errors under a host mount carry the POSIX code, errno, syscall, and pat
 		realpath: notDir("realpath"),
 		missingReadFileSync: missing("open"),
 		missingLstat: missing("lstat"),
+		noThrowStatSync: "undefined",
+		noThrowLstatSync: "undefined",
+		noThrowStatSyncNotDir: "undefined",
+		noThrowStatSyncFile: true,
 	});
 }, 30_000);
 
