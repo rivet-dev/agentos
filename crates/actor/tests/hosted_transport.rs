@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use agentos_actor::{
-    ActorProcessId, AgentOsActor, ConfigGet, ConfigPatch, FileContentInput, FilesystemReadFile,
-    FilesystemWriteFile, ProcessOutputRead, ACTOR_NAME,
+    ActorExecOptions, ActorProcessId, AgentOsActor, ConfigGet, ConfigPatch, FileContentInput,
+    FilesystemWriteFile, ProcessOutputRead, ProcessRun, ACTOR_NAME,
 };
 use anyhow::{Context, Result};
 use rivetkit::client::{Client, ClientConfig, GetOrCreateOptions};
-use rivetkit::TypedClientExt;
+use rivetkit::{TypedActorHandle, TypedClientExt};
 
 #[allow(dead_code)]
 mod support;
@@ -16,7 +16,7 @@ mod support;
 async fn native_hosted_jwt_scope_signature_and_expiry_match_http_and_websocket() -> Result<()> {
     use agentos_actor::VmStatus;
     use base64::Engine;
-    use rivetkit::{TypedActorConnection, TypedActorHandle};
+    use rivetkit::TypedActorConnection;
     let fixture = support::Fixture::from_env()?;
     let owner = Client::new(
         ClientConfig::new(&fixture.endpoint)
@@ -56,7 +56,7 @@ async fn native_hosted_jwt_scope_signature_and_expiry_match_http_and_websocket()
                 let actor = TypedActorHandle::<AgentOsActor>::new(client.get_for_id(ACTOR_NAME, id, Default::default())?);
                 check_authorization(actor.call(VmStatus {}), expected).await?;
                 let connection: TypedActorConnection<AgentOsActor> = actor.connect();
-                let checked = check_authorization(connection.call(VmStatus {}), expected).await;
+                let checked = check_connection_authorization(&connection, expected.is_some()).await;
                 tokio::time::timeout(Duration::from_secs(5), connection.disconnect()).await
                     .context("owned JWT connection cleanup exceeded5s")?;
                 checked
@@ -141,6 +141,43 @@ async fn check_authorization<T>(
     }
 }
 
+/// A RivetKit 3.0.7 Rust connection retries a refused WebSocket and keeps the
+/// pending action waiting. It reports the refusal only as a close before the
+/// connection opens, without the control plane's error code.
+async fn check_connection_authorization(
+    connection: &rivetkit::TypedActorConnection<AgentOsActor>,
+    refused: bool,
+) -> Result<()> {
+    if !refused {
+        return check_authorization(connection.call(agentos_actor::VmStatus {}), None).await;
+    }
+    let (closed, mut outcome) = tokio::sync::mpsc::unbounded_channel::<bool>();
+    let opened = closed.clone();
+    // A send fails only after this check returned and dropped the receiver.
+    connection
+        .inner()
+        .on_open(move || {
+            opened.send(true).ok();
+        })
+        .await;
+    connection
+        .inner()
+        .on_close(move || {
+            closed.send(false).ok();
+        })
+        .await;
+    let opened = tokio::time::timeout(Duration::from_secs(10), outcome.recv())
+        .await
+        .context(
+            "owned authorization control exceeded10s; timeout is not authentication evidence",
+        )?;
+    anyhow::ensure!(
+        opened == Some(false),
+        "forbidden connection unexpectedly opened"
+    );
+    Ok(())
+}
+
 /// Requires an owned local control plane/worker; its owner removes all test state.
 #[tokio::test]
 #[ignore = "explicit hosted integration: requires a matching native worker and local control plane"]
@@ -162,22 +199,15 @@ async fn native_hosted_transport_preserves_bytes_and_exact_integer_errors() -> R
             [format!("transport-rust-{}", uuid::Uuid::new_v4())],
             owned_actor_input()?,
         )?;
-        let bytes = vec![0, 255, 128, 65, 10];
         actor
             .call(FilesystemWriteFile {
                 path: "/workspace/transport.bin".into(),
-                content: FileContentInput::Bytes(bytes.clone()),
-            })
-            .await?;
-        let read = actor
-            .call(FilesystemReadFile {
-                path: "/workspace/transport.bin".into(),
-                max_bytes: Some(16),
+                content: FileContentInput::Bytes(vec![0, 255, 128, 65, 10]),
             })
             .await?;
         anyhow::ensure!(
-            read.0 == bytes,
-            "binary output changed across hosted transport"
+            guest_file_hex(&actor, "/workspace/transport.bin").await? == "00ff80410a",
+            "binary input changed across hosted transport"
         );
         let before = actor.call(ConfigGet {}).await?;
         let after = actor.call(ConfigPatch {
@@ -240,6 +270,31 @@ async fn native_hosted_transport_preserves_bytes_and_exact_integer_errors() -> R
     result
 }
 
+/// Reads a guest file back as hex text. The RivetKit 3.0.7 Rust client decodes
+/// action output into JSON values, which cannot hold the CBOR byte strings
+/// that `filesystem.readFile` and `process.output.read` return.
+async fn guest_file_hex(actor: &TypedActorHandle<AgentOsActor>, path: &str) -> Result<String> {
+    let script =
+        format!("process.stdout.write(require('fs').readFileSync('{path}').toString('hex'))");
+    let output = actor
+        .call(ProcessRun {
+            command: "node".into(),
+            args: vec!["-e".into(), script],
+            options: ActorExecOptions {
+                timeout_ms: Some(10_000),
+                capture_stdio: Some(true),
+                ..Default::default()
+            },
+        })
+        .await?;
+    anyhow::ensure!(
+        output.stderr.is_empty(),
+        "guest read of {path} failed: {}",
+        output.stderr
+    );
+    Ok(output.stdout)
+}
+
 fn owned_actor_input() -> Result<GetOrCreateOptions> {
     let input = std::env::var("AGENTOS_HOSTED_TEST_SOFTWARE_JSON")?;
     anyhow::ensure!(
@@ -266,7 +321,7 @@ fn owned_actor_input() -> Result<GetOrCreateOptions> {
 
 #[tokio::test]
 #[ignore = "explicit hosted integration: owned local worker, matching software and durable actor SQLite"]
-async fn native_hosted_retained_language_stream_cancel_and_restart() -> Result<()> {
+async fn native_hosted_retained_language_cancel_and_restart() -> Result<()> {
     use agentos_actor::{
         ActorExecutionOutputOptions, ActorInlineExecutionOptions, ActorJavaScriptExecutionOptions,
         ActorLanguageExecutionOptions, ActorOutputCapture, ActorSignal, ContextsCreate,
@@ -284,133 +339,99 @@ async fn native_hosted_retained_language_stream_cancel_and_restart() -> Result<(
             .token(std::env::var("AGENTOS_HOSTED_TEST_TOKEN")?)
             .disable_metadata_lookup(true),
     );
-    let result =
-        tokio::time::timeout(Duration::from_secs(90), async {
-            let actor = client.get_or_create_typed::<AgentOsActor>(
-                ACTOR_NAME,
-                [format!("lifecycle-rust-{}", uuid::Uuid::new_v4())],
-                owned_actor_input()?,
-            )?;
-            let context = actor
-                .call(ContextsCreate {
-                    context_id: "retained-control".into(),
-                })
-                .await?;
-            let options = ActorJavaScriptExecutionOptions {
-                inline: ActorInlineExecutionOptions {
-                    process: ActorLanguageExecutionOptions {
-                        context: Some(context.context.clone()),
-                        timeout_ms: Some(10_000),
-                        output: ActorExecutionOutputOptions {
-                            capture: Some(ActorOutputCapture::All),
-                            ..Default::default()
-                        },
+    let result = tokio::time::timeout(Duration::from_secs(90), async {
+        let actor = client.get_or_create_typed::<AgentOsActor>(
+            ACTOR_NAME,
+            [format!("lifecycle-rust-{}", uuid::Uuid::new_v4())],
+            owned_actor_input()?,
+        )?;
+        let context = actor
+            .call(ContextsCreate {
+                context_id: "retained-control".into(),
+            })
+            .await?;
+        let options = ActorJavaScriptExecutionOptions {
+            inline: ActorInlineExecutionOptions {
+                process: ActorLanguageExecutionOptions {
+                    context: Some(context.context.clone()),
+                    timeout_ms: Some(10_000),
+                    // Captured output is binary; see `guest_file_hex`.
+                    output: ActorExecutionOutputOptions {
+                        capture: Some(ActorOutputCapture::None),
                         ..Default::default()
                     },
                     ..Default::default()
                 },
                 ..Default::default()
-            };
-            let execute = actor
-                .call(JavaScriptExecute {
-                    source: "globalThis.__hostedValue = 41".into(),
-                    options: options.clone(),
-                })
-                .await?;
-            anyhow::ensure!(
-                execute.error.is_none(),
-                "retained execution failed: {:?}",
-                execute.error
-            );
-            let evaluated = actor
-                .call(JavaScriptEvaluate {
-                    expression: "globalThis.__hostedValue + 1".into(),
-                    options,
-                })
-                .await?;
-            anyhow::ensure!(
-                evaluated.value == Some(serde_json::json!(42)),
-                "retained value changed: {:?}",
-                evaluated.value
-            );
-            actor
-                .call(ContextsDelete {
-                    context: context.context,
-                })
-                .await?;
-            let process =
-                actor
-                    .call(ProcessSpawn {
-                        command: "node".into(),
-                        args: vec!["-e".into(),
-            "process.stdout.write(Buffer.from([0,255,128]));setInterval(()=>{},1000)".into()],
-                        options: Default::default(),
-                    })
-                    .await?;
-            let end = tokio::time::Instant::now() + Duration::from_secs(10);
-            let page = loop {
-                let page = actor
-                    .call(ProcessOutputRead {
-                        process,
-                        after: None,
-                        max_events: Some(16),
-                        max_bytes: Some(1024),
-                    })
-                    .await?;
-                let stdout = page
-                    .events
-                    .iter()
-                    .filter(|event| event.stream == agentos_client::ProcessStream::Stdout)
-                    .flat_map(|event| event.data.0.iter().copied())
-                    .collect::<Vec<_>>();
-                if stdout == [0, 255, 128] {
-                    break page;
-                }
-                anyhow::ensure!(
-                    tokio::time::Instant::now() < end,
-                    "stream output deadline exceeded"
-                );
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            };
-            anyhow::ensure!(!page.events.is_empty(), "stream was empty");
-            actor
-                .call(ProcessSignal {
-                    process,
-                    signal: ActorSignal::Term,
-                })
-                .await?;
-            let exit = actor.call(ProcessWait { process }).await?;
-            anyhow::ensure!(
-                exit.status.signal.map(|signal| signal.number()) == Some(15),
-                "wrong cancelled process status: {:?}",
-                exit.status
-            );
-            actor
-                .call(FilesystemWriteFile {
-                    path: "/workspace/durable.bin".into(),
-                    content: FileContentInput::Bytes(vec![0, 255, 128, 42]),
-                })
-                .await?;
-            let old = actor.call(VmStatus {}).await?;
-            let restarted = actor.call(VmRestart {}).await?;
-            anyhow::ensure!(
-                restarted.generation > old.generation,
-                "restart did not advance generation"
-            );
-            let bytes = actor
-                .call(FilesystemReadFile {
-                    path: "/workspace/durable.bin".into(),
-                    max_bytes: Some(16),
-                })
-                .await?;
-            anyhow::ensure!(
-                bytes.0 == [0, 255, 128, 42],
-                "durable bytes changed after restart"
-            );
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .context("timeout: hosted Rust lifecycle exceeded90s")?;
+            },
+            ..Default::default()
+        };
+        let execute = actor
+            .call(JavaScriptExecute {
+                source: "globalThis.__hostedValue = 41".into(),
+                options: options.clone(),
+            })
+            .await?;
+        anyhow::ensure!(
+            execute.error.is_none(),
+            "retained execution failed: {:?}",
+            execute.error
+        );
+        let evaluated = actor
+            .call(JavaScriptEvaluate {
+                expression: "globalThis.__hostedValue + 1".into(),
+                options,
+            })
+            .await?;
+        anyhow::ensure!(
+            evaluated.value == Some(serde_json::json!(42)),
+            "retained value changed: {:?}",
+            evaluated.value
+        );
+        actor
+            .call(ContextsDelete {
+                context: context.context,
+            })
+            .await?;
+        let process = actor
+            .call(ProcessSpawn {
+                command: "node".into(),
+                args: vec!["-e".into(), "setInterval(()=>{},1000)".into()],
+                options: Default::default(),
+            })
+            .await?;
+        actor
+            .call(ProcessSignal {
+                process,
+                signal: ActorSignal::Term,
+            })
+            .await?;
+        let exit = actor.call(ProcessWait { process }).await?;
+        anyhow::ensure!(
+            exit.status.signal.map(|signal| signal.number()) == Some(15),
+            "wrong cancelled process status: {:?}",
+            exit.status
+        );
+        actor
+            .call(FilesystemWriteFile {
+                path: "/workspace/durable.bin".into(),
+                content: FileContentInput::Bytes(vec![0, 255, 128, 42]),
+            })
+            .await?;
+        let old = actor.call(VmStatus {}).await?;
+        let restarted = actor.call(VmRestart {}).await?;
+        anyhow::ensure!(
+            restarted.generation > old.generation,
+            "restart did not advance generation"
+        );
+        anyhow::ensure!(
+            guest_file_hex(&actor, "/workspace/durable.bin").await? == "00ff802a",
+            "durable bytes changed after restart"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("timeout: hosted Rust lifecycle exceeded90s")?;
     client.dispose();
     result
 }
