@@ -163,8 +163,9 @@ describe("resolveRegistrySoftware", () => {
 		const release = manifest(["git"]);
 		release.artifacts[0].path = "http://registry.gameinc.io/git.aospkg";
 		serve("latest", release);
-		await expect(resolveRegistrySoftware("git", { registry: { url: registry.url } }))
-			.rejects.toThrow("artifact URL must use https");
+		await expect(
+			resolveRegistrySoftware("git", { registry: { url: registry.url } }),
+		).rejects.toThrow("artifact URL must use https");
 	});
 
 	it("reads an explicit version, which wins over the registry default", async () => {

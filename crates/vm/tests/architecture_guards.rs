@@ -1593,9 +1593,10 @@ impl CfgTestTracker {
             return true;
         }
 
-        if trimmed.starts_with("#[cfg(")
-            && trimmed.contains("test")
-            && !trimmed.contains("not(test)")
+        if trimmed == "#[test]"
+            || (trimmed.starts_with("#[cfg(")
+                && trimmed.contains("test")
+                && !trimmed.contains("not(test)"))
         {
             self.pending_cfg_test = true;
             return false;
@@ -1626,6 +1627,22 @@ impl CfgTestTracker {
 
         false
     }
+}
+
+#[test]
+fn architecture_tracker_excludes_test_functions_but_keeps_production_builders() {
+    let source = r#"
+#[test]
+fn fixture_runtime() {
+    tokio::runtime::Builder::new_current_thread();
+}
+fn production_runtime() {
+    tokio::runtime::Builder::new_multi_thread();
+}
+"#;
+    let production = production_source_text(source);
+    assert!(!production.contains("new_current_thread"));
+    assert!(production.contains("new_multi_thread"));
 }
 
 fn production_source_text(source: &str) -> String {
@@ -4135,14 +4152,6 @@ fn production_threads_match_the_reviewed_topology_manifest() {
         (
             "serialized-v8-maintenance",
             "crates/executor-v8-runtime/src/adapter_host.rs",
-        ),
-        (
-            "test-only-stdin-readiness",
-            "crates/executor-v8-runtime/src/javascript.rs",
-        ),
-        (
-            "test-only-backpressure-drainer",
-            "crates/executor-v8-runtime/src/javascript.rs",
         ),
         (
             "process-wasmtime-epoch-ticker",
