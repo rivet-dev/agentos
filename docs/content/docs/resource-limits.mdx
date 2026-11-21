@@ -206,7 +206,8 @@ same size: one for the V8 heap and one for `ArrayBuffer` memory, which also
 backs typed arrays, `Buffer`, and `SharedArrayBuffer`. The size is
 `limits.jsRuntime.v8HeapLimitMb` for JavaScript (128 MiB by default) and
 `limits.python.maxOldSpaceMb` for Python. A script that goes past the heap cap
-fails with `execution_heap_limit_exceeded`. An allocation that goes past the
+fails with `execution_heap_limit_exceeded`. A long-lived process that goes past
+it later, for example inside a request handler, exits with the same error. An allocation that goes past the
 `ArrayBuffer` cap throws `RangeError: Array buffer allocation failed`, and the
 sidecar reports the `v8_array_buffer_bytes` limit warning. Other VMs on the
 sidecar keep running in both cases.
