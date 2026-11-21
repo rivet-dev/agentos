@@ -46,7 +46,9 @@ first.on("exit", () => {
 `;
 
 test("a child forked after the first handle drain keeps its parent alive until it replies", async () => {
-	await vm.filesystem.writeFiles([{ path: "/tmp/worker.cjs", content: worker }]);
+	await vm.filesystem.writeFiles([
+		{ path: "/tmp/worker.cjs", content: worker },
+	]);
 	const result = await vm.process.execFile("node", ["-e", parent], {
 		timeoutMs: 20_000,
 		output: { capture: "all", maxBufferedBytes: 64 * 1024 },
