@@ -37,6 +37,27 @@ function _parseFileUrl(url) {
 	}
 	return url;
 }
+// Node accepts any parent with a `filename` (for example
+// `{ id, filename, paths }`), not only Module instances.
+function parentDirectory(parent) {
+	if (!parent) return "/";
+	if (typeof parent.path === "string") return parent.path;
+	if (typeof parent.filename === "string") return _pathDirname(parent.filename);
+	return "/";
+}
+function resolveModuleFile(request, parentDir) {
+	const resolved = _resolveModule.applySyncPromise(void 0, [
+		request,
+		parentDir,
+		"require",
+	]);
+	if (resolved === null) {
+		const err = new Error("Cannot find module '" + request + "'");
+		err.code = "MODULE_NOT_FOUND";
+		throw err;
+	}
+	return resolved;
+}
 function computeRequireResolvePaths(dirname, request) {
 	if (Module.isBuiltin(request)) {
 		return null;
@@ -91,6 +112,12 @@ function createModuleFormatBridgeMissingError(filename) {
 	);
 	error.code = "ERR_AGENTOS_MODULE_FORMAT_BRIDGE_MISSING";
 	return error;
+}
+function compileCommonjsWrapper(source, filename) {
+	if (typeof globalThis.__agentOsCompileCommonjsWrapper !== "function") {
+		throw createModuleFormatBridgeMissingError(filename);
+	}
+	return globalThis.__agentOsCompileCommonjsWrapper(source, filename);
 }
 function moduleFormat(filename) {
 	if (
@@ -192,15 +219,7 @@ var Module = class _Module {
 			const newline = source.indexOf("\n");
 			source = newline === -1 ? "" : "\n" + source.slice(newline + 1);
 		}
-		const contentWithSourceUrl = source + "\n//# sourceURL=" + String(filename);
-		const wrapper = new Function(
-			"exports",
-			"require",
-			"module",
-			"__filename",
-			"__dirname",
-			contentWithSourceUrl,
-		);
+		const wrapper = compileCommonjsWrapper(source, String(filename));
 		const moduleRequire = (request) => {
 			rejectRestrictedBuiltinRequest(request);
 			return _requireFrom(request, this.path);
@@ -237,18 +256,10 @@ var Module = class _Module {
 	};
 	static _cache = typeof _moduleCache !== "undefined" ? _moduleCache : {};
 	static _resolveFilename(request, parent, _isMain, _options) {
-		const parentDir = parent && parent.path ? parent.path : "/";
-		const resolved = _resolveModule.applySyncPromise(void 0, [
-			request,
-			parentDir,
-			"require",
-		]);
-		if (resolved === null) {
-			const err = new Error("Cannot find module '" + request + "'");
-			err.code = "MODULE_NOT_FOUND";
-			throw err;
-		}
-		return resolved;
+		// Node returns a builtin request unchanged ("buffer", "node:buffer"),
+		// even when node_modules holds a package of the same name.
+		if (Module.isBuiltin(request)) return request;
+		return resolveModuleFile(request, parentDirectory(parent));
 	}
 	static wrap(content) {
 		return (
@@ -279,8 +290,7 @@ var Module = class _Module {
 		return paths;
 	}
 	static _load(request, parent, _isMain) {
-		const parentDir = parent && parent.path ? parent.path : "/";
-		return _requireFrom(request, parentDir, _isMain === true);
+		return _requireFrom(request, parentDirectory(parent), _isMain === true);
 	}
 	static runMain() {}
 };
@@ -330,6 +340,7 @@ function markMainModule(module) {
 }
 function requireFrom(request, parentDir, isMain = false) {
 	const parentPath = typeof parentDir === "string" ? parentDir : "/";
+	let resolved: string;
 	if (Module.isBuiltin(request)) {
 		try {
 			return loadBuiltinModule(request);
@@ -338,12 +349,11 @@ function requireFrom(request, parentDir, isMain = false) {
 				throw error;
 			}
 		}
+		// The sidecar serves builtins that have no bridge module.
+		resolved = resolveModuleFile(request, parentPath);
+	} else {
+		resolved = Module._resolveFilename(request, { path: parentPath }, isMain);
 	}
-	const resolved = Module._resolveFilename(
-		request,
-		{ path: parentPath },
-		isMain,
-	);
 	if (Object.prototype.hasOwnProperty.call(_moduleCache, resolved)) {
 		if (isMain) markMainModule(_moduleCache[resolved]);
 		return _moduleCache[resolved].exports;
