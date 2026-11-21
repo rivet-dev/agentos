@@ -951,7 +951,8 @@ function createWatcherSnapshot(path, trackChildren = false) {
 				gid: stats.gid,
 				rdev: stats.rdev,
 				size: stats.size,
-				atimeMs: stats.atimeMs,
+				// Listing a watched directory updates its atime; access is not a change.
+				atimeMs: children ? void 0 : stats.atimeMs,
 				mtimeMs: stats.mtimeMs,
 				ctimeMs: stats.ctimeMs,
 				birthtimeMs: stats.birthtimeMs,
