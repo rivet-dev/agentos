@@ -101,6 +101,7 @@ pub(crate) use self::javascript::{
     javascript_sync_rpc_option_u32, route_javascript_net_write_result,
     service_javascript_crypto_sync_rpc, service_javascript_sync_rpc, HostServiceResponse,
     JavascriptSyncRpcServiceRequest, KernelPollFdRequest, LoopbackHttpDispatchRequest,
+    required_socket_paths,
 };
 use agentos_vm_config as vm_config;
 

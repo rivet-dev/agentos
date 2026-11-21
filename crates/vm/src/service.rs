@@ -5410,7 +5410,7 @@ where
                     bridge: &self.bridge,
                     vm_id,
                     dns: &vm.dns,
-                    socket_paths: &socket_paths,
+                    socket_paths: Some(&socket_paths),
                     kernel: &mut vm.kernel,
                     kernel_readiness,
                     process,

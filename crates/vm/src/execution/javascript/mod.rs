@@ -12,7 +12,7 @@ pub(crate) use self::rpc::{
     javascript_sync_rpc_arg_u64_optional, javascript_sync_rpc_bytes_arg,
     javascript_sync_rpc_encoding, javascript_sync_rpc_option_bool, javascript_sync_rpc_option_u32,
     service_javascript_sync_rpc, HostServiceResponse, JavascriptSyncRpcServiceRequest,
-    KernelPollFdRequest,
+    required_socket_paths, KernelPollFdRequest,
 };
 mod crypto;
 pub(crate) use self::crypto::service_javascript_crypto_sync_rpc;
