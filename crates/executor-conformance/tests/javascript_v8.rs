@@ -3303,6 +3303,76 @@ require("./nested/check.cjs");
     );
 }
 
+// Each expected value is what host Node 24 prints for the same tree.
+fn javascript_execution_commonjs_resolution_matches_host_node() {
+    let temp = tempdir().expect("create temp dir");
+    for (path, contents) in [
+        // The decoy sits next to main.cjs: an import() in loader.cjs that
+        // resolves against the wrong module loads it.
+        ("app/target.mjs", "export const value = 'decoy';\n"),
+        (
+            "app/lib/target.mjs",
+            "export const value = 'importer-relative';\n",
+        ),
+        (
+            "app/lib/loader.cjs",
+            "exports.load = () => import('./target.mjs').then((m) => m.value);\n",
+        ),
+        (
+            "app/main.cjs",
+            r#"
+const result = {};
+require("./lib/loader.cjs").load().then((value) => {
+  result["import() from a required module"] = value;
+  console.log(JSON.stringify(result));
+}, (error) => {
+  result["import() from a required module"] = "ERR " + error.message;
+  console.log(JSON.stringify(result));
+});
+"#,
+        ),
+    ] {
+        write_fixture(&temp.path().join(path), contents);
+    }
+
+    let mut engine = support::javascript_engine();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            limits: Default::default(),
+            argv0: None,
+            guest_runtime: Default::default(),
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./app/main.cjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            wasm_module_bytes: None,
+            inline_code: None,
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.exit_code, 0, "unexpected stderr: {stderr}");
+    let observed: Value = serde_json::from_slice(&result.stdout).unwrap_or_else(|error| {
+        panic!(
+            "parse stdout JSON: {error}: {}",
+            String::from_utf8_lossy(&result.stdout)
+        )
+    });
+    assert_eq!(
+        observed,
+        json!({
+            "import() from a required module": "importer-relative",
+        })
+    );
+}
+
 fn javascript_execution_rejects_native_node_addons() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(&temp.path().join("addon.node"), "not a native addon\n");
@@ -8329,6 +8399,7 @@ fn javascript_v8_suite() {
     javascript_execution_v8_util_format_with_options_matches_node();
     javascript_execution_provides_async_hooks_and_diagnostics_channel_stubs();
     javascript_execution_supports_require_resolve_for_guest_code();
+    javascript_execution_commonjs_resolution_matches_host_node();
     javascript_execution_rejects_native_node_addons();
     javascript_execution_surfaces_sync_rpc_requests_from_v8_modules();
     javascript_execution_v8_dgram_bridge_matches_sidecar_rpc_shapes();

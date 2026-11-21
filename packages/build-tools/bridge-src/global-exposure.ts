@@ -36,6 +36,12 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 			"V8-owned synchronous ESM loader used by Node-compatible require().",
 	},
 	{
+		name: "__agentOsCompileCommonjsWrapper",
+		classification: "hardened",
+		rationale:
+			"V8-owned CommonJS wrapper compiler that gives each module its own script origin.",
+	},
+	{
 		name: "process.cpuUsage",
 		classification: "hardened",
 		rationale: "Host process CPU usage bridge reference.",

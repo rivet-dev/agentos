@@ -92,6 +92,12 @@ function createModuleFormatBridgeMissingError(filename) {
 	error.code = "ERR_AGENTOS_MODULE_FORMAT_BRIDGE_MISSING";
 	return error;
 }
+function compileCommonjsWrapper(source, filename) {
+	if (typeof globalThis.__agentOsCompileCommonjsWrapper !== "function") {
+		throw createModuleFormatBridgeMissingError(filename);
+	}
+	return globalThis.__agentOsCompileCommonjsWrapper(source, filename);
+}
 function moduleFormat(filename) {
 	if (
 		typeof _moduleFormat === "undefined" ||
@@ -192,15 +198,7 @@ var Module = class _Module {
 			const newline = source.indexOf("\n");
 			source = newline === -1 ? "" : "\n" + source.slice(newline + 1);
 		}
-		const contentWithSourceUrl = source + "\n//# sourceURL=" + String(filename);
-		const wrapper = new Function(
-			"exports",
-			"require",
-			"module",
-			"__filename",
-			"__dirname",
-			contentWithSourceUrl,
-		);
+		const wrapper = compileCommonjsWrapper(source, String(filename));
 		const moduleRequire = (request) => {
 			rejectRestrictedBuiltinRequest(request);
 			return _requireFrom(request, this.path);
