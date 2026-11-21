@@ -2896,6 +2896,32 @@ function hasBridgeAsyncFn(name) {
 	const fn = getBridgeSyncFn(name);
 	return typeof fn === "function" || !!(fn && typeof fn.apply === "function");
 }
+var _pendingFsReadWaitId = 0;
+// A callback fs.read that waits on stdin is pending I/O, like a libuv fs
+// request: it keeps the event loop alive until the callback runs. The runtime
+// does not count `_kernelStdinRead` as liveness (process.stdin owns it), so a
+// process whose only work is `fs.read(0, cb)` (Go js/wasm, esbuild-wasm) would
+// exit with the read in flight.
+function holdEventLoopWhilePending(promise, fd) {
+	if (
+		typeof _registerHandle !== "function" ||
+		typeof _unregisterHandle !== "function"
+	) {
+		return promise;
+	}
+	const id = `fs.read:${fd}:${++_pendingFsReadWaitId}`;
+	_registerHandle(id, `fs.read(fd ${fd})`);
+	return promise.then(
+		(value) => {
+			_unregisterHandle(id);
+			return value;
+		},
+		(error) => {
+			_unregisterHandle(id);
+			throw error;
+		},
+	);
+}
 function createBridgeAsyncFacade(name) {
 	return {
 		apply(_thisArg, args) {
@@ -4662,50 +4688,51 @@ var fs = {
 					buffer.byteOffset + offset,
 					length,
 				);
-				_kernelStdinRead
-					.apply(void 0, [length, null], {
+				holdEventLoopWhilePending(
+					_kernelStdinRead.apply(void 0, [length, null], {
 						result: { promise: true },
-					})
-					.then(
-						(next) => {
-							if (next == null) {
-								queueMicrotask(() =>
-									cb(
-										createFsError(
-											"EAGAIN",
-											"EAGAIN: stdin readiness wait returned without data",
-											"read",
-										),
+					}),
+					fd,
+				).then(
+					(next) => {
+						if (next == null) {
+							queueMicrotask(() =>
+								cb(
+									createFsError(
+										"EAGAIN",
+										"EAGAIN: stdin readiness wait returned without data",
+										"read",
 									),
-								);
-								return;
-							}
-							if (next?.done) {
-								queueMicrotask(() => cb(null, 0, buffer));
-								return;
-							}
-							const dataBase64 = String(next?.dataBase64 ?? "");
-							if (!dataBase64) {
-								queueMicrotask(() =>
-									cb(
-										createFsError(
-											"EAGAIN",
-											"EAGAIN: stdin readiness wait returned an empty payload",
-											"read",
-										),
+								),
+							);
+							return;
+						}
+						if (next?.done) {
+							queueMicrotask(() => cb(null, 0, buffer));
+							return;
+						}
+						const dataBase64 = String(next?.dataBase64 ?? "");
+						if (!dataBase64) {
+							queueMicrotask(() =>
+								cb(
+									createFsError(
+										"EAGAIN",
+										"EAGAIN: stdin readiness wait returned an empty payload",
+										"read",
 									),
-								);
-								return;
-							}
-							const bytes = import_buffer.Buffer.from(dataBase64, "base64");
-							const bytesRead = Math.min(length, bytes.length);
-							target.set(bytes.subarray(0, bytesRead), 0);
-							queueMicrotask(() => cb(null, bytesRead, buffer));
-						},
-						(error) => {
-							queueMicrotask(() => cb(error));
-						},
-					);
+								),
+							);
+							return;
+						}
+						const bytes = import_buffer.Buffer.from(dataBase64, "base64");
+						const bytesRead = Math.min(length, bytes.length);
+						target.set(bytes.subarray(0, bytesRead), 0);
+						queueMicrotask(() => cb(null, bytesRead, buffer));
+					},
+					(error) => {
+						queueMicrotask(() => cb(error));
+					},
+				);
 				return;
 			}
 			const attemptRead = () => {
