@@ -3558,19 +3558,23 @@ fn session_thread(
                                         let ctx = v8::Local::new(scope, &exec_context);
                                         let scope = &mut v8::ContextScope::new(scope, ctx);
                                         let global = ctx.global(scope);
-                                        let key =
-                                            v8::String::new(scope, "_waitForActiveHandles").unwrap();
+                                        let key = v8::String::new(scope, "_waitForActiveHandles")
+                                            .unwrap();
                                         if let Some(func) = global.get(scope, key.into()) {
                                             if func.is_function() {
                                                 let func =
-                                                    v8::Local::<v8::Function>::try_from(func).unwrap();
+                                                    v8::Local::<v8::Function>::try_from(func)
+                                                        .unwrap();
                                                 let recv = v8::undefined(scope).into();
                                                 if let Some(result) = func.call(scope, recv, &[]) {
                                                     if result.is_promise() {
                                                         let promise =
-                                                            v8::Local::<v8::Promise>::try_from(result)
-                                                                .unwrap();
-                                                        if promise.state() == v8::PromiseState::Pending
+                                                            v8::Local::<v8::Promise>::try_from(
+                                                                result,
+                                                            )
+                                                            .unwrap();
+                                                        if promise.state()
+                                                            == v8::PromiseState::Pending
                                                         {
                                                             execution::set_pending_script_evaluation(
                                                                 scope, promise,
@@ -3604,7 +3608,8 @@ fn session_thread(
                                             &pending,
                                         );
 
-                                        if matches!(event_loop_status, EventLoopStatus::Terminated) {
+                                        if matches!(event_loop_status, EventLoopStatus::Terminated)
+                                        {
                                             terminated = true;
                                         }
                                         if let EventLoopStatus::Failed(next_code, next_error) =
@@ -4185,6 +4190,7 @@ fn event_loop_can_exit(
 
 /// True while the guest still has a registered handle or a ref'd timer and has
 /// not requested exit.
+#[cfg(not(test))]
 fn guest_liveness_remains(iso: &mut v8::Isolate, exec_context: &v8::Global<v8::Context>) -> bool {
     let scope = &mut v8::HandleScope::new(iso);
     let ctx = v8::Local::new(scope, exec_context);
