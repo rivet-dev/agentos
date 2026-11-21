@@ -4021,7 +4021,11 @@ where
                         if !(-1..=255).contains(&value) {
                             return Err(VmError::host("EINVAL", "IPV6_TCLASS must be -1 or0..255"));
                         }
-                        if value == -1 { 0 } else { value as u8 }
+                        if value == -1 {
+                            0
+                        } else {
+                            value as u8
+                        }
                     } else {
                         value as u8
                     } & !3;
@@ -4185,16 +4189,14 @@ where
                             "receive metadata requires a UDP route",
                         ));
                     };
-                    json!(
-                        context
-                            .process
-                            .udp_sockets
-                            .get(id)
-                            .ok_or_else(|| VmError::host("EBADF", "managed UDP route is stale"))?
-                            .receive_metadata_option(udp_receive_metadata_bit(name).ok_or_else(
-                                || VmError::host("EINVAL", "unknown receive metadata option")
-                            )?)? as u8
-                    )
+                    json!(context
+                        .process
+                        .udp_sockets
+                        .get(id)
+                        .ok_or_else(|| VmError::host("EBADF", "managed UDP route is stale"))?
+                        .receive_metadata_option(udp_receive_metadata_bit(name).ok_or_else(
+                            || VmError::host("EINVAL", "unknown receive metadata option")
+                        )?)? as u8)
                 }
                 SocketOptionName::Domain => json!(match description.domain {
                     HostSocketDomain::Unix => 1,
@@ -4215,39 +4217,27 @@ where
                         .route_for(context.process.kernel_pid)
                         .ok_or_else(|| VmError::host("ESTALE", "managed socket route is missing"))?
                     {
-                        ManagedHostNetRoute::UdpSocket(id) => json!(
-                            context
-                                .process
-                                .udp_sockets
-                                .get(id)
-                                .ok_or_else(|| VmError::host(
-                                    "EBADF",
-                                    "managed UDP route is stale"
-                                ))?
-                                .traffic_class(ipv6)?
-                        ),
-                        ManagedHostNetRoute::TcpSocket(id) => json!(
-                            context
-                                .process
-                                .tcp_sockets
-                                .get(id)
-                                .ok_or_else(|| VmError::host(
-                                    "EBADF",
-                                    "managed TCP route is stale"
-                                ))?
-                                .traffic_class(context.kernel, ipv6)?
-                        ),
-                        ManagedHostNetRoute::TcpListener(id) => json!(
-                            context
-                                .process
-                                .tcp_listeners
-                                .get(id)
-                                .ok_or_else(|| VmError::host(
-                                    "EBADF",
-                                    "managed TCP listener route is stale"
-                                ))?
-                                .traffic_class(context.kernel, ipv6)?
-                        ),
+                        ManagedHostNetRoute::UdpSocket(id) => json!(context
+                            .process
+                            .udp_sockets
+                            .get(id)
+                            .ok_or_else(|| VmError::host("EBADF", "managed UDP route is stale"))?
+                            .traffic_class(ipv6)?),
+                        ManagedHostNetRoute::TcpSocket(id) => json!(context
+                            .process
+                            .tcp_sockets
+                            .get(id)
+                            .ok_or_else(|| VmError::host("EBADF", "managed TCP route is stale"))?
+                            .traffic_class(context.kernel, ipv6)?),
+                        ManagedHostNetRoute::TcpListener(id) => json!(context
+                            .process
+                            .tcp_listeners
+                            .get(id)
+                            .ok_or_else(|| VmError::host(
+                                "EBADF",
+                                "managed TCP listener route is stale"
+                            ))?
+                            .traffic_class(context.kernel, ipv6)?),
                         ManagedHostNetRoute::Unbound | ManagedHostNetRoute::TcpBound { .. } => {
                             json!(if ipv6 {
                                 description.ipv6_traffic_class
@@ -5800,7 +5790,7 @@ mod managed_tests {
 
     #[test]
     fn every_frozen_network_family_rpc_has_a_typed_operation_route() {
-        use crate::execution::host_dispatch::inventory::{HostCapabilityFamily, capability_family};
+        use crate::execution::host_dispatch::inventory::{capability_family, HostCapabilityFamily};
         for method in WASM_RUNNER_RPC_INVENTORY
             .iter()
             .copied()
