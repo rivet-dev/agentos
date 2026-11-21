@@ -37,6 +37,14 @@ function _parseFileUrl(url) {
 	}
 	return url;
 }
+// Node accepts any parent with a `filename` (for example
+// `{ id, filename, paths }`), not only Module instances.
+function parentDirectory(parent) {
+	if (!parent) return "/";
+	if (typeof parent.path === "string") return parent.path;
+	if (typeof parent.filename === "string") return _pathDirname(parent.filename);
+	return "/";
+}
 function resolveModuleFile(request, parentDir) {
 	const resolved = _resolveModule.applySyncPromise(void 0, [
 		request,
@@ -251,8 +259,7 @@ var Module = class _Module {
 		// Node returns a builtin request unchanged ("buffer", "node:buffer"),
 		// even when node_modules holds a package of the same name.
 		if (Module.isBuiltin(request)) return request;
-		const parentDir = parent && parent.path ? parent.path : "/";
-		return resolveModuleFile(request, parentDir);
+		return resolveModuleFile(request, parentDirectory(parent));
 	}
 	static wrap(content) {
 		return (
@@ -283,8 +290,7 @@ var Module = class _Module {
 		return paths;
 	}
 	static _load(request, parent, _isMain) {
-		const parentDir = parent && parent.path ? parent.path : "/";
-		return _requireFrom(request, parentDir, _isMain === true);
+		return _requireFrom(request, parentDirectory(parent), _isMain === true);
 	}
 	static runMain() {}
 };

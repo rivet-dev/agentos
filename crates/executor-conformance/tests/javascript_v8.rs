@@ -3314,6 +3314,7 @@ fn javascript_execution_commonjs_resolution_matches_host_node() {
             r#"{"main":"browser.js"}"#,
         ),
         ("node_modules/process/browser.js", "module.exports = {};\n"),
+        ("node_modules/pkg/index.js", "module.exports = 'pkg';\n"),
         ("app/polyfills/process.js", "module.exports = 'polyfill';\n"),
         // The decoy sits next to main.cjs: an import() in loader.cjs that
         // resolves against the wrong module loads it.
@@ -3329,12 +3330,18 @@ fn javascript_execution_commonjs_resolution_matches_host_node() {
         (
             "app/main.cjs",
             r#"
+const Module = require("module");
 const result = {};
 const record = (key, run) => {
   try { result[key] = run(); } catch (error) { result[key] = "ERR " + error.code; }
 };
 for (const request of ["buffer", "buffer/", "process", "node:buffer", "./polyfills/process"]) {
   record("resolve " + request, () => require.resolve(request));
+}
+const from = __dirname + "/noop.js";
+const plainParent = { id: from, filename: from, paths: Module._nodeModulePaths(__dirname) };
+for (const request of ["pkg", "./polyfills/process", "missing-pkg"]) {
+  record("plain parent " + request, () => Module._resolveFilename(request, plainParent));
 }
 require("./lib/loader.cjs").load().then((value) => {
   result["import() from a required module"] = value;
@@ -3387,6 +3394,9 @@ require("./lib/loader.cjs").load().then((value) => {
             "resolve process": "process",
             "resolve node:buffer": "node:buffer",
             "resolve ./polyfills/process": "/root/app/polyfills/process.js",
+            "plain parent pkg": "/root/node_modules/pkg/index.js",
+            "plain parent ./polyfills/process": "/root/app/polyfills/process.js",
+            "plain parent missing-pkg": "ERR MODULE_NOT_FOUND",
             "import() from a required module": "importer-relative",
         })
     );
