@@ -105,7 +105,9 @@ server.listen(0, '127.0.0.1', () => console.log('ready ' + server.address().port
 	},
 ];
 
-test.each(cases)("a long-lived guest that outgrows the heap limit in $name exits with the heap-limit error", async ({
+test.each(
+	cases,
+)("a long-lived guest that outgrows the heap limit in $name exits with the heap-limit error", async ({
 	source,
 	trigger,
 }) => {
@@ -126,9 +128,9 @@ test.each(cases)("a long-lived guest that outgrows the heap limit in $name exits
 
 	// The process that was already running in the VM still answers.
 	await vm.process.writeStdin(bystander.pid, "ping\n");
-	expect(await withinExitDeadline(bystander.stdoutIncludes("echo:ping"))).not.toBe(
-		"pending",
-	);
+	expect(
+		await withinExitDeadline(bystander.stdoutIncludes("echo:ping")),
+	).not.toBe("pending");
 	await vm.process.closeStdin(bystander.pid);
 	expect(await vm.process.wait(bystander.pid)).toMatchObject({ exitCode: 0 });
 
