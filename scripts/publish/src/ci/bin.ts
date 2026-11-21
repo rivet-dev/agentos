@@ -35,6 +35,11 @@ import {
 	STANDALONE_RUST_CRATE_MANIFESTS,
 } from "../lib/rust-crates.js";
 import { bumpCargoVersions, bumpPackageJsons } from "../lib/version.js";
+import {
+	REHEARSAL_VERSION,
+	rehearseCratePublish,
+	stageCratesForPublish,
+} from "../lib/crates-publish.js";
 
 const log = scoped("ci");
 
@@ -200,42 +205,51 @@ program
 	});
 
 // ---------------------------------------------------------------------------
-// publish-crates — ordered, idempotent crates.io publish
+// stage-crates / publish-crates — crates.io staging, rehearsal, and ordered,
+// idempotent publish
 // ---------------------------------------------------------------------------
+program
+	.command("stage-crates")
+	.description("Stage the checkout for cargo publish (versions, V8 bridge, base filesystem)")
+	.option("--version <version>", "Version to publish (defaults to resolved context)")
+	.action(async (opts) => {
+		const repoRoot = findRepoRoot();
+		const version = opts.version ?? (await resolveContext()).version;
+		await stageCratesForPublish(repoRoot, version, {
+			repository: process.env.GITHUB_REPOSITORY,
+		});
+	});
+
 program
 	.command("publish-crates")
 	.description("Publish Rust crates to crates.io in dependency order")
 	.option("--version <version>", "Version to publish (defaults to resolved context)")
 	.option("--wait-seconds <n>", "Max wait for crates.io indexing per crate", "600")
-	.option("--dry-run", "Run cargo publish --dry-run for the first crate only")
+	.option(
+		"--rehearse",
+		`Stage at ${REHEARSAL_VERSION}, package and verify every crate, and check the publish order; uploads nothing and rewrites versions in the checkout`,
+	)
+	.option("--jobs <n>", "Parallel cargo jobs for --rehearse verification")
 	.option("--allow-dirty", "Pass --allow-dirty to cargo publish")
 	.action(async (opts) => {
 		const repoRoot = findRepoRoot();
-		const version = opts.version ?? (await resolveContext()).version;
 		const crates = discoverRustCrates(repoRoot);
-		const waitSeconds = Number(opts.waitSeconds);
-		if (!Number.isFinite(waitSeconds) || waitSeconds <= 0) {
-			throw new Error("--wait-seconds must be a positive number");
-		}
 		if (crates.length === 0) {
 			throw new Error("no publishable Rust crates discovered");
 		}
-
-		if (opts.dryRun) {
-			const crate = crates[0];
-			log.info(
-				`dry-running ${crate}; later crates require earlier versions to exist in the crates.io index`,
-			);
-			const standaloneManifest =
-				STANDALONE_RUST_CRATE_MANIFESTS[
-					crate as keyof typeof STANDALONE_RUST_CRATE_MANIFESTS
-				];
-			const args = standaloneManifest
-				? ["publish", "--manifest-path", standaloneManifest, "--dry-run"]
-				: ["publish", "-p", crate, "--dry-run"];
-			if (opts.allowDirty) args.push("--allow-dirty");
-			await $({ stdio: "inherit", cwd: repoRoot })`cargo ${args}`;
+		if (opts.rehearse) {
+			await rehearseCratePublish(repoRoot, crates, {
+				version: opts.version,
+				repository: process.env.GITHUB_REPOSITORY,
+				jobs: opts.jobs ? Number(opts.jobs) : undefined,
+			});
 			return;
+		}
+
+		const version = opts.version ?? (await resolveContext()).version;
+		const waitSeconds = Number(opts.waitSeconds);
+		if (!Number.isFinite(waitSeconds) || waitSeconds <= 0) {
+			throw new Error("--wait-seconds must be a positive number");
 		}
 
 		if (!process.env.CARGO_REGISTRY_TOKEN) {
