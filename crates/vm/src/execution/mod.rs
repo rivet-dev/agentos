@@ -98,7 +98,7 @@ pub(crate) use self::javascript::{
     javascript_sync_rpc_arg_u64_optional, javascript_sync_rpc_bytes_arg,
     javascript_sync_rpc_encoding, javascript_sync_rpc_may_make_fd_readable,
     javascript_sync_rpc_may_make_fd_writable, javascript_sync_rpc_option_bool,
-    javascript_sync_rpc_option_u32, route_javascript_net_write_result,
+    javascript_sync_rpc_option_u32, required_socket_paths, route_javascript_net_write_result,
     service_javascript_crypto_sync_rpc, service_javascript_sync_rpc, HostServiceResponse,
     JavascriptSyncRpcServiceRequest, KernelPollFdRequest, LoopbackHttpDispatchRequest,
 };
