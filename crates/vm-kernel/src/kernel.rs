@@ -2809,7 +2809,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     ) -> KernelResult<Vec<String>> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
-        self.check_dac_access(pid, path, DAC_READ | DAC_EXECUTE)?;
+        self.check_readdir_access(pid, path)?;
         let entries = self.read_dir_internal(Some(pid), path)?;
         self.resources.check_readdir_entries(entries.len())?;
         Ok(entries)
@@ -2823,7 +2823,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     ) -> KernelResult<Vec<VirtualDirEntry>> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
-        self.check_dac_access(pid, path, DAC_READ | DAC_EXECUTE)?;
+        self.check_readdir_access(pid, path)?;
         let entries = self.read_dir_with_types_internal(Some(pid), path)?;
         self.resources.check_readdir_entries(entries.len())?;
         Ok(entries)
@@ -11872,6 +11872,28 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             Err(error) if matches!(error.code(), "ENODATA" | "EOPNOTSUPP") => Ok(None),
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Linux `opendir` on a non-directory fails with ENOTDIR before any
+    /// permission check on the target, so check the file type first.
+    fn check_readdir_access(&mut self, pid: u32, path: &str) -> KernelResult<()> {
+        if is_proc_path(path) {
+            return Ok(());
+        }
+        self.check_dac_traversal(pid, path)?;
+        let identity = self
+            .processes
+            .get(pid)
+            .ok_or_else(|| KernelError::no_such_process(pid))?
+            .identity;
+        let stat = self.filesystem.stat(path)?;
+        if !stat.is_directory {
+            return Err(KernelError::new(
+                "ENOTDIR",
+                format!("not a directory: {path}"),
+            ));
+        }
+        self.check_dac_mode_with_acl(&identity, &stat, DAC_READ | DAC_EXECUTE, path)
     }
 
     fn check_dac_access(&mut self, pid: u32, path: &str, access: u32) -> KernelResult<()> {

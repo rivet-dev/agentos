@@ -264,11 +264,12 @@ const MAX_PENDING_BRIDGE_CALLS: usize = 16_384;
 pub(crate) const DEFAULT_BRIDGE_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn bridge_call_uses_session_lifetime(method: &str) -> bool {
-    // This read is the durable readiness wait behind Node's stdin stream. It
-    // can legitimately remain pending for the entire process lifetime and is
-    // canceled by session/process teardown. Admission and byte limits still
-    // bound the route while it is pending.
-    method == "_kernelStdinRead"
+    // These are the durable readiness waits behind Node's stdin stream and a
+    // child_process IPC channel. Each can legitimately stay pending for the
+    // whole process lifetime (an idle `fork()` channel) and is canceled by
+    // session/process teardown. Admission and byte limits still bound the
+    // route while it is pending.
+    matches!(method, "_kernelStdinRead" | "_processIpcPoll")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

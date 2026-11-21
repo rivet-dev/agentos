@@ -2532,6 +2532,68 @@ function createFsError(code, message, syscall, path) {
 	if (path) err.path = path;
 	return err;
 }
+// libuv's uv_strerror text, which Node puts in fs error messages.
+const POSIX_ERROR_DESCRIPTIONS = {
+	EPERM: "operation not permitted",
+	ENOENT: "no such file or directory",
+	EIO: "i/o error",
+	ENXIO: "no such device or address",
+	EBADF: "bad file descriptor",
+	EAGAIN: "resource temporarily unavailable",
+	ENOMEM: "not enough memory",
+	EACCES: "permission denied",
+	EBUSY: "resource busy or locked",
+	EEXIST: "file already exists",
+	EXDEV: "cross-device link not permitted",
+	ENOTDIR: "not a directory",
+	EISDIR: "illegal operation on a directory",
+	EINVAL: "invalid argument",
+	ENFILE: "file table overflow",
+	EMFILE: "too many open files",
+	ETXTBSY: "text file is busy",
+	EFBIG: "file too large",
+	ENOSPC: "no space left on device",
+	ESPIPE: "invalid seek",
+	EROFS: "read-only file system",
+	EMLINK: "too many links",
+	EPIPE: "broken pipe",
+	ENAMETOOLONG: "name too long",
+	ENOSYS: "function not implemented",
+	ENOTEMPTY: "directory not empty",
+	ELOOP: "too many symbolic links encountered",
+	ENOTSUP: "operation not supported on socket",
+	EOVERFLOW: "value too large for defined data type",
+};
+// Every fs failure that names a POSIX errno reaches the guest shaped like a
+// Node fs error: `code`, negative `errno`, `syscall`, `path`, and the
+// `CODE: description, syscall 'path'` message.
+// Node always runs an fs callback asynchronously and passes a failure to it;
+// it never throws an fs error from the callback form.
+function settleFsCallback(callback, run) {
+	let value: unknown;
+	try {
+		value = run();
+	} catch (error) {
+		queueMicrotask(() => callback(error));
+		return;
+	}
+	queueMicrotask(() => callback(null, value));
+}
+function toNodeFsError(err, syscall, path) {
+	const code = bridgeErrorCode(err);
+	if (!code || !Object.prototype.hasOwnProperty.call(POSIX_ERRNO, code)) {
+		return err;
+	}
+	const description =
+		POSIX_ERROR_DESCRIPTIONS[code] ?? code.slice(1).toLowerCase();
+	const target = typeof path === "string" ? ` '${path}'` : "";
+	return createFsError(
+		code,
+		`${code}: ${description}, ${syscall}${target}`,
+		syscall,
+		typeof path === "string" ? path : undefined,
+	);
+}
 // Like Node, `filter(src, dest)` runs before the pair is validated, and a false
 // result skips that path and everything under it.
 function cpFilterSkips(srcPath, destPath, opts) {
@@ -2601,6 +2663,22 @@ function bridgeErrorText(err) {
 }
 function bridgeErrorCode(err) {
 	const msg = bridgeErrorText(err);
+	if (msg.includes("ERR_ACCESS_DENIED")) {
+		return "ERR_ACCESS_DENIED";
+	}
+	if (
+		typeof err?.code === "string" &&
+		Object.prototype.hasOwnProperty.call(POSIX_ERRNO, err.code)
+	) {
+		return err.code;
+	}
+	// Kernel and host-mount errors name their errno (`ENOTDIR: ...`); trust it
+	// over the free-text heuristics below.
+	for (const match of msg.matchAll(/\bE[A-Z0-9]{2,}\b/g)) {
+		if (Object.prototype.hasOwnProperty.call(POSIX_ERRNO, match[0])) {
+			return match[0];
+		}
+	}
 	if (
 		msg.includes("ENOENT") ||
 		msg.includes("entry not found") ||
@@ -2652,48 +2730,7 @@ function bridgeCall(fn, syscall, path) {
 	try {
 		return fn();
 	} catch (err) {
-		const code = bridgeErrorCode(err);
-		if (code === "ENOENT") {
-			throw createFsError(
-				"ENOENT",
-				`ENOENT: no such file or directory, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		if (code === "EACCES") {
-			throw createFsError(
-				"EACCES",
-				`EACCES: permission denied, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		if (code === "EEXIST") {
-			throw createFsError(
-				"EEXIST",
-				`EEXIST: file already exists, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		if (code === "EINVAL") {
-			throw createFsError(
-				"EINVAL",
-				`EINVAL: invalid argument, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		if (code === "EXDEV") {
-			throw createFsError(
-				"EXDEV",
-				`EXDEV: cross-device link not permitted, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		throw err;
+		throw toNodeFsError(err, syscall, path);
 	}
 }
 function _globToRegex(pattern) {
@@ -2854,28 +2891,38 @@ function toPathString(path) {
 function getBridgeSyncFn(name) {
 	return typeof globalThis !== "undefined" ? globalThis[name] : void 0;
 }
-function createBridgeSyncFacade(name) {
+// `syscall` names the Node syscall of a path-based bridge call. Its errors
+// then reach callers as Node fs errors even where the call site rethrows.
+function createBridgeSyncFacade(name, syscall?: string) {
+	const call = (invoke, args) => {
+		if (!syscall) return invoke();
+		try {
+			return invoke();
+		} catch (err) {
+			throw toNodeFsError(err, syscall, args?.[0]);
+		}
+	};
 	return {
 		applySync(_thisArg, args) {
 			const fn = getBridgeSyncFn(name);
 			if (typeof fn === "function") {
-				return fn(...(args || []));
+				return call(() => fn(...(args || [])), args);
 			}
 			if (fn && typeof fn.applySync === "function") {
-				return fn.applySync(_thisArg, args);
+				return call(() => fn.applySync(_thisArg, args), args);
 			}
 			return void 0;
 		},
 		applySyncPromise(_thisArg, args) {
 			const fn = getBridgeSyncFn(name);
 			if (typeof fn === "function") {
-				return fn(...(args || []));
+				return call(() => fn(...(args || [])), args);
 			}
 			if (fn && typeof fn.applySync === "function") {
-				return fn.applySync(_thisArg, args);
+				return call(() => fn.applySync(_thisArg, args), args);
 			}
 			if (fn && typeof fn.applySyncPromise === "function") {
-				return fn.applySyncPromise(_thisArg, args);
+				return call(() => fn.applySyncPromise(_thisArg, args), args);
 			}
 			return void 0;
 		},
@@ -2896,70 +2943,111 @@ function hasBridgeAsyncFn(name) {
 	const fn = getBridgeSyncFn(name);
 	return typeof fn === "function" || !!(fn && typeof fn.apply === "function");
 }
-function createBridgeAsyncFacade(name) {
+var _pendingFsReadWaitId = 0;
+// A callback fs.read that waits on stdin is pending I/O, like a libuv fs
+// request: it keeps the event loop alive until the callback runs. The runtime
+// does not count `_kernelStdinRead` as liveness (process.stdin owns it), so a
+// process whose only work is `fs.read(0, cb)` (Go js/wasm, esbuild-wasm) would
+// exit with the read in flight.
+function holdEventLoopWhilePending(promise, fd) {
+	if (
+		typeof _registerHandle !== "function" ||
+		typeof _unregisterHandle !== "function"
+	) {
+		return promise;
+	}
+	const id = `fs.read:${fd}:${++_pendingFsReadWaitId}`;
+	_registerHandle(id, `fs.read(fd ${fd})`);
+	return promise.then(
+		(value) => {
+			_unregisterHandle(id);
+			return value;
+		},
+		(error) => {
+			_unregisterHandle(id);
+			throw error;
+		},
+	);
+}
+// Like createBridgeSyncFacade: `syscall` makes the call reject with a Node
+// fs error.
+function createBridgeAsyncFacade(name, syscall?: string) {
+	const call = (invoke, args) => {
+		if (!syscall) return invoke();
+		const normalize = (err) => toNodeFsError(err, syscall, args?.[0]);
+		let pending: unknown;
+		try {
+			pending = invoke();
+		} catch (err) {
+			return Promise.reject(normalize(err));
+		}
+		return Promise.resolve(pending).catch((err) => {
+			throw normalize(err);
+		});
+	};
 	return {
 		apply(_thisArg, args) {
 			const fn = getBridgeSyncFn(name);
 			if (typeof fn === "function") {
-				return fn(...(args || []));
+				return call(() => fn(...(args || [])), args);
 			}
 			if (fn && typeof fn.apply === "function") {
-				return fn.apply(_thisArg, args);
+				return call(() => fn.apply(_thisArg, args), args);
 			}
 			return Promise.resolve(void 0);
 		},
 	};
 }
 var _fs = {
-	readFile: createBridgeSyncFacade("_fsReadFile"),
-	writeFile: createBridgeSyncFacade("_fsWriteFile"),
-	readFileBinary: createBridgeSyncFacade("_fsReadFileBinary"),
-	writeFileBinary: createBridgeSyncFacade("_fsWriteFileBinary"),
-	writeFileBinaryRaw: createBridgeSyncFacade("_fsWriteFileBinaryRaw"),
-	readDir: createBridgeSyncFacade("_fsReadDir"),
-	mkdir: createBridgeSyncFacade("_fsMkdir"),
-	rmdir: createBridgeSyncFacade("_fsRmdir"),
+	readFile: createBridgeSyncFacade("_fsReadFile", "open"),
+	writeFile: createBridgeSyncFacade("_fsWriteFile", "open"),
+	readFileBinary: createBridgeSyncFacade("_fsReadFileBinary", "open"),
+	writeFileBinary: createBridgeSyncFacade("_fsWriteFileBinary", "open"),
+	writeFileBinaryRaw: createBridgeSyncFacade("_fsWriteFileBinaryRaw", "open"),
+	readDir: createBridgeSyncFacade("_fsReadDir", "scandir"),
+	mkdir: createBridgeSyncFacade("_fsMkdir", "mkdir"),
+	rmdir: createBridgeSyncFacade("_fsRmdir", "rmdir"),
 	exists: createBridgeSyncFacade("_fsExists"),
-	stat: createBridgeSyncFacade("_fsStat"),
-	unlink: createBridgeSyncFacade("_fsUnlink"),
-	rename: createBridgeSyncFacade("_fsRename"),
-	chmod: createBridgeSyncFacade("_fsChmod"),
-	chown: createBridgeSyncFacade("_fsChown"),
-	link: createBridgeSyncFacade("_fsLink"),
-	symlink: createBridgeSyncFacade("_fsSymlink"),
-	readlink: createBridgeSyncFacade("_fsReadlink"),
-	lstat: createBridgeSyncFacade("_fsLstat"),
-	truncate: createBridgeSyncFacade("_fsTruncate"),
-	utimes: createBridgeSyncFacade("_fsUtimes"),
-	lutimes: createBridgeSyncFacade("_fsLutimes"),
+	stat: createBridgeSyncFacade("_fsStat", "stat"),
+	unlink: createBridgeSyncFacade("_fsUnlink", "unlink"),
+	rename: createBridgeSyncFacade("_fsRename", "rename"),
+	chmod: createBridgeSyncFacade("_fsChmod", "chmod"),
+	chown: createBridgeSyncFacade("_fsChown", "chown"),
+	link: createBridgeSyncFacade("_fsLink", "link"),
+	symlink: createBridgeSyncFacade("_fsSymlink", "symlink"),
+	readlink: createBridgeSyncFacade("_fsReadlink", "readlink"),
+	lstat: createBridgeSyncFacade("_fsLstat", "lstat"),
+	truncate: createBridgeSyncFacade("_fsTruncate", "open"),
+	utimes: createBridgeSyncFacade("_fsUtimes", "utime"),
+	lutimes: createBridgeSyncFacade("_fsLutimes", "lutime"),
 };
 var _fsAsync = {
-	readFile: createBridgeAsyncFacade("_fsReadFileAsync"),
-	writeFile: createBridgeAsyncFacade("_fsWriteFileAsync"),
-	readFileBinary: createBridgeAsyncFacade("_fsReadFileBinaryAsync"),
-	writeFileBinary: createBridgeAsyncFacade("_fsWriteFileBinaryAsync"),
-	readDir: createBridgeAsyncFacade("_fsReadDirAsync"),
-	mkdir: createBridgeAsyncFacade("_fsMkdirAsync"),
-	rmdir: createBridgeAsyncFacade("_fsRmdirAsync"),
-	stat: createBridgeAsyncFacade("_fsStatAsync"),
-	unlink: createBridgeAsyncFacade("_fsUnlinkAsync"),
-	rename: createBridgeAsyncFacade("_fsRenameAsync"),
-	chmod: createBridgeAsyncFacade("_fsChmodAsync"),
-	chown: createBridgeAsyncFacade("_fsChownAsync"),
-	link: createBridgeAsyncFacade("_fsLinkAsync"),
-	symlink: createBridgeAsyncFacade("_fsSymlinkAsync"),
-	readlink: createBridgeAsyncFacade("_fsReadlinkAsync"),
-	lstat: createBridgeAsyncFacade("_fsLstatAsync"),
-	truncate: createBridgeAsyncFacade("_fsTruncateAsync"),
-	utimes: createBridgeAsyncFacade("_fsUtimesAsync"),
-	lutimes: createBridgeAsyncFacade("_fsLutimesAsync"),
-	access: createBridgeAsyncFacade("_fsAccessAsync"),
+	readFile: createBridgeAsyncFacade("_fsReadFileAsync", "open"),
+	writeFile: createBridgeAsyncFacade("_fsWriteFileAsync", "open"),
+	readFileBinary: createBridgeAsyncFacade("_fsReadFileBinaryAsync", "open"),
+	writeFileBinary: createBridgeAsyncFacade("_fsWriteFileBinaryAsync", "open"),
+	readDir: createBridgeAsyncFacade("_fsReadDirAsync", "scandir"),
+	mkdir: createBridgeAsyncFacade("_fsMkdirAsync", "mkdir"),
+	rmdir: createBridgeAsyncFacade("_fsRmdirAsync", "rmdir"),
+	stat: createBridgeAsyncFacade("_fsStatAsync", "stat"),
+	unlink: createBridgeAsyncFacade("_fsUnlinkAsync", "unlink"),
+	rename: createBridgeAsyncFacade("_fsRenameAsync", "rename"),
+	chmod: createBridgeAsyncFacade("_fsChmodAsync", "chmod"),
+	chown: createBridgeAsyncFacade("_fsChownAsync", "chown"),
+	link: createBridgeAsyncFacade("_fsLinkAsync", "link"),
+	symlink: createBridgeAsyncFacade("_fsSymlinkAsync", "symlink"),
+	readlink: createBridgeAsyncFacade("_fsReadlinkAsync", "readlink"),
+	lstat: createBridgeAsyncFacade("_fsLstatAsync", "lstat"),
+	truncate: createBridgeAsyncFacade("_fsTruncateAsync", "open"),
+	utimes: createBridgeAsyncFacade("_fsUtimesAsync", "utime"),
+	lutimes: createBridgeAsyncFacade("_fsLutimesAsync", "lutime"),
+	access: createBridgeAsyncFacade("_fsAccessAsync", "access"),
 };
-var _fdOpen = createBridgeSyncFacade("fs.openSync");
+var _fdOpen = createBridgeSyncFacade("fs.openSync", "open");
 var _fdClose = createBridgeSyncFacade("fs.closeSync");
 var _fdRead = createBridgeSyncFacade("fs.readSync");
 var _fsReadRaw = createBridgeSyncFacade("_fsReadRaw");
-var _fsReadFileRangeRaw = createBridgeSyncFacade("_fsReadFileRangeRaw");
+var _fsReadFileRangeRaw = createBridgeSyncFacade("_fsReadFileRangeRaw", "open");
 var _fdWrite = createBridgeSyncFacade("fs.writeSync");
 var _fsWriteRaw = createBridgeSyncFacade("_fsWriteRaw");
 var _fsWritevRaw = createBridgeSyncFacade("_fsWritevRaw");
@@ -2989,53 +3077,15 @@ function encodeBridgeBytes(value) {
 	};
 }
 function throwNormalizedFsBridgeError(err, syscall, path) {
-	const code = bridgeErrorCode(err);
-	if (code === "ENOENT") {
+	if (bridgeErrorCode(err) === "ERR_ACCESS_DENIED") {
 		throw createFsError(
-			"ENOENT",
-			`ENOENT: no such file or directory, ${syscall} '${path}'`,
-			syscall,
-			path,
-		);
-	}
-	if (code === "EROFS") {
-		throw createFsError(
-			"EROFS",
-			`EROFS: read-only file system, ${syscall} '${path}'`,
-			syscall,
-			path,
-		);
-	}
-	if (code === "ERR_ACCESS_DENIED") {
-		const error = createFsError(
 			"ERR_ACCESS_DENIED",
 			`ERR_ACCESS_DENIED: permission denied, ${syscall} '${path}'`,
 			syscall,
 			path,
 		);
-		error.code = "ERR_ACCESS_DENIED";
-		throw error;
 	}
-	if (code === "EACCES") {
-		throw createFsError(
-			"EACCES",
-			`EACCES: permission denied, ${syscall} '${path}'`,
-			syscall,
-			path,
-		);
-	}
-	if (
-		code &&
-		Object.prototype.hasOwnProperty.call(POSIX_ERRNO, code) &&
-		err &&
-		typeof err === "object"
-	) {
-		err.code = code;
-		err.errno ??= errnoForCode(code);
-		err.syscall ??= syscall;
-		err.path ??= path;
-	}
-	throw err;
+	throw toNodeFsError(err, syscall, path);
 }
 function joinDirEntryPath(dirPath, entryName) {
 	if (dirPath === "/") {
@@ -4662,50 +4712,51 @@ var fs = {
 					buffer.byteOffset + offset,
 					length,
 				);
-				_kernelStdinRead
-					.apply(void 0, [length, null], {
+				holdEventLoopWhilePending(
+					_kernelStdinRead.apply(void 0, [length, null], {
 						result: { promise: true },
-					})
-					.then(
-						(next) => {
-							if (next == null) {
-								queueMicrotask(() =>
-									cb(
-										createFsError(
-											"EAGAIN",
-											"EAGAIN: stdin readiness wait returned without data",
-											"read",
-										),
+					}),
+					fd,
+				).then(
+					(next) => {
+						if (next == null) {
+							queueMicrotask(() =>
+								cb(
+									createFsError(
+										"EAGAIN",
+										"EAGAIN: stdin readiness wait returned without data",
+										"read",
 									),
-								);
-								return;
-							}
-							if (next?.done) {
-								queueMicrotask(() => cb(null, 0, buffer));
-								return;
-							}
-							const dataBase64 = String(next?.dataBase64 ?? "");
-							if (!dataBase64) {
-								queueMicrotask(() =>
-									cb(
-										createFsError(
-											"EAGAIN",
-											"EAGAIN: stdin readiness wait returned an empty payload",
-											"read",
-										),
+								),
+							);
+							return;
+						}
+						if (next?.done) {
+							queueMicrotask(() => cb(null, 0, buffer));
+							return;
+						}
+						const dataBase64 = String(next?.dataBase64 ?? "");
+						if (!dataBase64) {
+							queueMicrotask(() =>
+								cb(
+									createFsError(
+										"EAGAIN",
+										"EAGAIN: stdin readiness wait returned an empty payload",
+										"read",
 									),
-								);
-								return;
-							}
-							const bytes = import_buffer.Buffer.from(dataBase64, "base64");
-							const bytesRead = Math.min(length, bytes.length);
-							target.set(bytes.subarray(0, bytesRead), 0);
-							queueMicrotask(() => cb(null, bytesRead, buffer));
-						},
-						(error) => {
-							queueMicrotask(() => cb(error));
-						},
-					);
+								),
+							);
+							return;
+						}
+						const bytes = import_buffer.Buffer.from(dataBase64, "base64");
+						const bytesRead = Math.min(length, bytes.length);
+						target.set(bytes.subarray(0, bytesRead), 0);
+						queueMicrotask(() => cb(null, bytesRead, buffer));
+					},
+					(error) => {
+						queueMicrotask(() => cb(error));
+					},
+				);
 				return;
 			}
 			const attemptRead = () => {
@@ -5092,14 +5143,6 @@ var fs = {
 				} catch (e) {
 					const err = e;
 					if (err.code === "ELOOP") throw e;
-					if (err.code === "ENOENT" || err.code === "ENOTDIR") {
-						throw createFsError(
-							"ENOENT",
-							`ENOENT: no such file or directory, realpath '${raw}'`,
-							"realpath",
-							raw,
-						);
-					}
 					// Any other errno must reach the caller: returning here handed back the
 					// partially resolved prefix as if it were the real path.
 					throwNormalizedFsBridgeError(err, "realpath", raw);
@@ -5123,8 +5166,9 @@ var fs = {
 				options = optionsOrCallback;
 			}
 			if (callback) {
+				validateCallback(callback);
 				validateEncodingOption(options);
-				callback(null, fs.realpathSync(path, options));
+				settleFsCallback(callback, () => fs.realpathSync(path, options));
 			} else {
 				return Promise.resolve(fs.realpathSync(path, options));
 			}
@@ -5138,8 +5182,11 @@ var fs = {
 					options = optionsOrCallback;
 				}
 				if (callback) {
+					validateCallback(callback);
 					validateEncodingOption(options);
-					callback(null, fs.realpathSync.native(path, options));
+					settleFsCallback(callback, () =>
+						fs.realpathSync.native(path, options),
+					);
 				} else {
 					return Promise.resolve(fs.realpathSync.native(path, options));
 				}
