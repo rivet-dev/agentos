@@ -481,6 +481,13 @@ pub trait VirtualFileSystem {
     fn symlink(&mut self, target: &str, link_path: &str) -> VfsResult<()>;
     fn read_link(&self, path: &str) -> VfsResult<String>;
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat>;
+    /// `lstat` for a path whose parent the caller already resolved one
+    /// component at a time: every ancestor is a directory and none is a
+    /// symlink. Path walkers use it so a backend does not re-resolve the parent
+    /// for every component, which makes a walk quadratic in path depth.
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        self.lstat(path)
+    }
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()>;
     /// Reserve an inode identity without creating a directory entry.
     fn reserve_unnamed_inode(

@@ -2141,7 +2141,11 @@ for (const specifier of imports) {
 }
 "#;
 
-const NODE_WASM_RUNNER_SOURCE: &str = include_str!("../assets/runners/wasm-runner.mjs");
+/// Managed WASM runner module, owned here and read by the V8 WASM executor.
+pub const NODE_WASM_RUNNER_SOURCE: &str = include_str!("../assets/runners/wasm-runner.mjs");
+/// WASI preview1 module the V8 WASM executor inlines into its runner
+/// bootstrap. Exposed so that crate never reads this crate's files directly.
+pub const NODE_WASI_MODULE_SOURCE: &str = include_str!("../assets/runners/wasi-module.js");
 
 static NEXT_NODE_IMPORT_CACHE_ID: AtomicU64 = AtomicU64::new(1);
 

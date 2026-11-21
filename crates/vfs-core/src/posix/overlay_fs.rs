@@ -1813,6 +1813,17 @@ impl VirtualFileSystem for OverlayFileSystem {
         self.merged_lstat(&resolved)
     }
 
+    // Every ancestor is already a resolved, non-symlink directory of the
+    // merged view, so the component walk in `lstat` would return `path`
+    // unchanged. Skipping it keeps a caller's walk linear in path depth.
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        validate_path(path)?;
+        if Self::normalized(path) != path {
+            return self.lstat(path);
+        }
+        self.merged_lstat(path)
+    }
+
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         let resolved_old = self.resolve_merged_path(old_path, false, 0)?;
         let resolved_new = self.resolved_creation_entry_path(new_path)?;

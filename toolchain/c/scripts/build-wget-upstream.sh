@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: build-wget-upstream.sh \
   --version <wget-version> \
-  --url <release-url> \
+  --sha256 <pinned-tarball-sha256> \
   --cache-dir <cache-dir> \
   --build-dir <build-dir> \
   --overlay-include-dir <include-dir> \
@@ -22,7 +22,7 @@ EOF
 }
 
 VERSION=""
-URL=""
+SHA256=""
 CACHE_DIR=""
 BUILD_DIR=""
 OVERLAY_INCLUDE_DIR=""
@@ -39,7 +39,7 @@ OUTPUT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
-    --url) URL="$2"; shift 2 ;;
+    --sha256) SHA256="$2"; shift 2 ;;
     --cache-dir) CACHE_DIR="$2"; shift 2 ;;
     --build-dir) BUILD_DIR="$2"; shift 2 ;;
     --overlay-include-dir) OVERLAY_INCLUDE_DIR="$2"; shift 2 ;;
@@ -60,23 +60,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$VERSION" || -z "$URL" || -z "$CACHE_DIR" || -z "$BUILD_DIR" || -z "$OVERLAY_INCLUDE_DIR" || -z "$OVERLAY_DIR" || -z "$MBEDTLS_INCLUDE" || -z "$MBEDTLS_LIBDIR" || -z "$ZLIB_INCLUDE" || -z "$ZLIB_LIBDIR" || -z "$CC_CMD" || -z "$AR_CMD" || -z "$RANLIB_CMD" || -z "$OUTPUT" ]]; then
+if [[ -z "$VERSION" || -z "$SHA256" || -z "$CACHE_DIR" || -z "$BUILD_DIR" || -z "$OVERLAY_INCLUDE_DIR" || -z "$OVERLAY_DIR" || -z "$MBEDTLS_INCLUDE" || -z "$MBEDTLS_LIBDIR" || -z "$ZLIB_INCLUDE" || -z "$ZLIB_LIBDIR" || -z "$CC_CMD" || -z "$AR_CMD" || -z "$RANLIB_CMD" || -z "$OUTPUT" ]]; then
   usage >&2
   exit 1
 fi
-
-fetch() {
-  local url="$1"
-  local out="$2"
-  if command -v curl >/dev/null 2>&1; then
-    curl --retry 3 --retry-all-errors -fSL "$url" -o "$out"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q "$url" -O "$out"
-  else
-    echo "Neither curl nor wget is available to fetch $url" >&2
-    exit 1
-  fi
-}
 
 mkdir -p "$CACHE_DIR"
 rm -rf "$BUILD_DIR"
@@ -85,8 +72,9 @@ mkdir -p "$BUILD_DIR"
 TARBALL="$CACHE_DIR/wget-${VERSION}.tar.gz"
 if [[ ! -f "$TARBALL" ]]; then
   echo "Fetching upstream GNU Wget ${VERSION} release tarball..."
-  fetch "$URL" "$TARBALL"
+  "$(dirname "$0")/fetch-gnu-release.sh" "wget/wget-${VERSION}.tar.gz" "$SHA256" "$TARBALL"
 fi
+printf '%s  %s\n' "$SHA256" "$TARBALL" | sha256sum --check
 
 echo "Extracting upstream GNU Wget ${VERSION}..."
 tar -xzf "$TARBALL" -C "$BUILD_DIR"

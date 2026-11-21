@@ -102,6 +102,10 @@ pub trait MountedFileSystem: Any + Send {
     fn symlink(&mut self, target: &str, link_path: &str) -> VfsResult<()>;
     fn read_link(&self, path: &str) -> VfsResult<String>;
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat>;
+    /// See [`VirtualFileSystem::lstat_resolved_parent`].
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        self.lstat(path)
+    }
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()>;
     fn reserve_unnamed_inode(
         &mut self,
@@ -554,6 +558,10 @@ where
         VirtualFileSystem::lstat(&self.inner, path)
     }
 
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        VirtualFileSystem::lstat_resolved_parent(&self.inner, path)
+    }
+
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         VirtualFileSystem::link(&mut self.inner, old_path, new_path)
     }
@@ -850,6 +858,10 @@ where
         (**self).lstat(path)
     }
 
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        (**self).lstat_resolved_parent(path)
+    }
+
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         (**self).link(old_path, new_path)
     }
@@ -1110,6 +1122,10 @@ where
 
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat> {
         self.inner.lstat(path)
+    }
+
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        self.inner.lstat_resolved_parent(path)
     }
 
     fn link(&mut self, _old_path: &str, new_path: &str) -> VfsResult<()> {
@@ -2217,6 +2233,14 @@ impl MountTable {
         }))
     }
 
+    /// True when the mount that holds `path` refuses every write. Follows
+    /// symlinks across mounts, like the write operations themselves.
+    pub fn path_is_on_read_only_mount(&self, path: &str) -> bool {
+        self.resolve_content_index(path).is_ok_and(|(index, _)| {
+            self.mounts[index].read_only || self.mounts[index].filesystem.is_read_only()
+        })
+    }
+
     pub fn path_uses_root_filesystem(&self, path: &str) -> bool {
         self.resolve_index(path)
             .is_ok_and(|(index, _)| self.mounts[index].path == "/")
@@ -2550,7 +2574,10 @@ impl MountTable {
         self.namespace_component_probes
             .set(self.namespace_component_probes.get() + 1);
         let (index, relative) = self.resolve_index(path)?;
-        match self.mounts[index].filesystem.lstat(&relative) {
+        match self.mounts[index]
+            .filesystem
+            .lstat_resolved_parent(&relative)
+        {
             Ok(stat) => Ok((stat, false)),
             Err(error) if error.code() == "ENOENT" => self
                 .missing_mount_directory_inner(index, &relative, false)?
@@ -3251,6 +3278,14 @@ impl VirtualFileSystem for MountTable {
         } else {
             Ok(target)
         }
+    }
+
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        if path_needs_component_walk(path) {
+            return self.lstat(path);
+        }
+        self.lstat_canonical_component(&normalize_path(path))
+            .map(|(stat, _)| stat)
     }
 
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat> {

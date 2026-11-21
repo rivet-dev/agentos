@@ -131,6 +131,72 @@ pub fn install_require_esm_sync_global(scope: &mut v8::HandleScope) {
     let key = v8::String::new(scope, "__agentOsRequireEsmSync").unwrap();
     let attributes = v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE;
     global.define_own_property(scope, key.into(), function.into(), attributes);
+    install_compile_commonjs_wrapper_global(scope);
+}
+
+/// Install the native compiler for CommonJS module wrappers. Like Node's
+/// `wrapSafe`, it gives each module a real script origin, so `import()` inside
+/// the module resolves against the module file and stack traces name it.
+fn install_compile_commonjs_wrapper_global(scope: &mut v8::HandleScope) {
+    let context = scope.get_current_context();
+    let global = context.global(scope);
+    let template = v8::FunctionTemplate::builder(compile_commonjs_wrapper_callback).build(scope);
+    let Some(function) = template.get_function(scope) else {
+        return;
+    };
+    let key = v8::String::new(scope, "__agentOsCompileCommonjsWrapper").unwrap();
+    let attributes = v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE;
+    global.define_own_property(scope, key.into(), function.into(), attributes);
+}
+
+const COMMONJS_WRAPPER_PARAMETERS: [&str; 5] =
+    ["exports", "require", "module", "__filename", "__dirname"];
+
+fn compile_commonjs_wrapper_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let (Ok(source), Ok(filename)) = (
+        v8::Local::<v8::String>::try_from(args.get(0)),
+        v8::Local::<v8::String>::try_from(args.get(1)),
+    ) else {
+        throw_module_error_with_code(
+            scope,
+            "CommonJS wrapper compilation expects a source string and a filename string",
+            "ERR_INVALID_ARG_TYPE",
+        );
+        return;
+    };
+    let origin = v8::ScriptOrigin::new(
+        scope,
+        filename.into(),
+        0,
+        0,
+        false,
+        -1,
+        None,
+        false,
+        false,
+        false,
+        None,
+    );
+    let mut source = v8::script_compiler::Source::new(source, Some(&origin));
+    let parameters: Vec<v8::Local<v8::String>> = COMMONJS_WRAPPER_PARAMETERS
+        .iter()
+        .map(|name| v8::String::new(scope, name).unwrap())
+        .collect();
+    // On a syntax error V8 leaves the exception pending; it propagates to the caller.
+    if let Some(function) = v8::script_compiler::compile_function(
+        scope,
+        &mut source,
+        &parameters,
+        &[],
+        v8::script_compiler::CompileOptions::NoCompileOptions,
+        v8::script_compiler::NoCacheReason::NoReason,
+    ) {
+        rv.set(function.into());
+    }
 }
 
 /// Compile stdin source as a real V8 ES module after the guest stdin pipe has

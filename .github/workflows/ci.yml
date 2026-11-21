@@ -345,6 +345,8 @@ jobs:
         run: |
           cargo test -p agentos-vm-config --quiet
           git diff --exit-code -- packages/core/src/generated
+      - name: Verify the generated hosted actor contract
+        run: pnpm --dir packages/agentos-bindgen check
       - name: Build PR sidecar binaries
         run: cargo build -p agentos-sidecar
       - name: Check VM architecture boundaries
@@ -503,6 +505,143 @@ jobs:
       - run: pnpm --dir secure-exec test
         env:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/ci-artifacts/agentos-sidecar/agentos-sidecar
+
+  # Selects the crates.io publish rehearsal on PRs. Pushes to main always run it.
+  crates-changes:
+    name: Crates publish inputs
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="$(git merge-base "$PR_BASE_SHA" HEAD)"
+          changed=false
+          # Manifests, build scripts, and the publish tooling, or Rust source
+          # that reads files at compile time (a packaged crate holds only its
+          # own directory).
+          if git diff --name-only "$base" HEAD \
+              | grep -qE '((^|/)Cargo\.(toml|lock)$|(^|/)build\.rs$|(^|/)\.gitignore$|^scripts/publish/|^\.github/workflows/(publish\.yaml|ci\.yml)$)' \
+            || git diff -U0 "$base" HEAD -- '*.rs' | grep -qE '^\+.*(include_(str|bytes)!|#\[path)'; then
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+  # Slower than the PR budget, so it stays out of CI / Required.
+  crates-rehearsal:
+    name: Rehearse crates.io publish
+    needs: [crates-changes]
+    if: ${{ always() && (github.event_name != 'pull_request' || needs.crates-changes.outputs.changed == 'true') }}
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - name: Rehearse crate publish
+        run: pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates --rehearse
+
+  # Selects the hosted integration tests on PRs. Pushes to main always run them.
+  hosted-changes:
+    name: Hosted test inputs
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.changes.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="$(git merge-base "$PR_BASE_SHA" HEAD)"
+          changed=false
+          # The hosted actor, its contract and client, the fixture, or the
+          # pinned RivetKit version (crate manifests and the npm catalog).
+          if git diff --name-only "$base" HEAD \
+              | grep -qE '^(crates/(actor|actor-contract|preload)/|packages/core/(src/hosted|tests/hosted-)|packages/agentos-bindgen/|examples/hosted/|scripts/(run-hosted-local\.mjs|hosted-local-config\.mjs|hosted-owned-supervisor\.py)$|\.github/workflows/ci\.yml$)' \
+            || git diff -U0 "$base" HEAD -- pnpm-workspace.yaml | grep -qiE '^[+-].*rivetkit'; then
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+  # Slower than the PR budget, so it stays out of CI / Required.
+  hosted-tests:
+    name: Hosted integration
+    needs: [hosted-changes, checks, wasm-commands]
+    if: ${{ always() && needs.checks.result == 'success' && needs.wasm-commands.result == 'success' && (github.event_name != 'pull_request' || needs.hosted-changes.outputs.changed == 'true') }}
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 30
+    env:
+      AGENTOS_SKIP_NATIVE_META_BUILD: '1'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: hosted-${{ hashFiles('Cargo.lock') }}
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...' --filter '@rivet-dev/agentos-build-tools...' --filter '@rivet-dev/agentos-example-hosted...'
+      - uses: actions/download-artifact@v4
+        with:
+          name: js-dist
+          path: ci-artifacts/js
+      - uses: actions/download-artifact@v4
+        with:
+          name: default-software
+          path: ci-artifacts/default-software
+      - name: Restore hosted test inputs
+        run: |
+          tar -xzf ci-artifacts/js/agentos-js-dist.tar.gz
+          tar -xzf ci-artifacts/default-software/agentos-default-software.tar.gz
+      - name: Build the hosted worker and the Rust hosted tests
+        run: |
+          cargo build -p agentos-sidecar --features hosted
+          cargo test -p agentos-actor --test hosted_transport --no-run --message-format=json \
+            | jq -r 'select(.profile.test == true and .target.name == "hosted_transport") | .executable' \
+            > "$RUNNER_TEMP/hosted-rust-test"
+          test -x "$(cat "$RUNNER_TEMP/hosted-rust-test")"
+      # The engine is the lockfile-pinned @rivetkit/engine-cli binary.
+      - name: Run the hosted tests against a local engine
+        run: |
+          node scripts/hosted-local-config.mjs \
+            --worker target/debug/agentos-sidecar \
+            --rust-test "$(cat "$RUNNER_TEMP/hosted-rust-test")" \
+            --out "$RUNNER_TEMP/hosted-config.json" \
+            --evidence "$RUNNER_TEMP/hosted-evidence"
+          node scripts/run-hosted-local.mjs --run "$RUNNER_TEMP/hosted-config.json"
+      - name: Show the hosted test output
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for log in "$RUNNER_TEMP"/hosted-evidence/*/{ts-*,rust-hosted}.std{out,err}.log; do
+            echo "::group::$log"
+            tail -n 200 "$log"
+            echo "::endgroup::"
+          done
 
   required:
     name: CI / Required

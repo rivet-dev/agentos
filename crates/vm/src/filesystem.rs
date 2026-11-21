@@ -1325,6 +1325,19 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 .map(Value::Bool)
                 .map_err(kernel_error)
         }
+        "fs.realpathSync" => {
+            let path = javascript_sync_rpc_path_arg(
+                kernel,
+                process,
+                &request.args,
+                0,
+                "filesystem realpath path",
+            )?;
+            kernel
+                .realpath_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path.as_str())
+                .map(Value::String)
+                .map_err(kernel_error)
+        }
         "fs.readlinkSync" | "fs.promises.readlink" => {
             let path = javascript_sync_rpc_path_arg(
                 kernel,

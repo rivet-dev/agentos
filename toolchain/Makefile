@@ -128,8 +128,9 @@ else
 	@echo "No patches found, using stock std"
 endif
 
-# Resolve Rust std source for vendoring build-std deps
-RUST_STD_SRC := $(shell rustc --print sysroot)/lib/rustlib/src/rust
+# Resolve Rust std source for vendoring build-std deps. Deferred so C-only
+# targets such as cmd/duckdb never invoke rustc.
+RUST_STD_SRC = $(shell rustc --print sysroot)/lib/rustlib/src/rust
 
 # Vendor dependencies from crates.io into vendor/ (includes std deps for -Z build-std)
 vendor:

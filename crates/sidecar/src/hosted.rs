@@ -1,5 +1,9 @@
 // Hosted composition is compiled only with the explicit `hosted` feature.
 
+use agentos_sidecar::process_entrypoint::{
+    parse_cache_min_free_bytes, parse_positive_option, validate_cache_directory,
+};
+
 struct ActorProcessOptions {
     package_cache: agentos_client::ProcessPackageCacheOptions,
     actor_budgets: agentos_actor::HostedActorBudgetOptions,
@@ -42,7 +46,7 @@ fn parse_actor_options(
                     .map_err(|error| format!("invalid --actor-budgets-json: {error:#}"))?;
             }
             "--worker-shutdown-timeout-ms" => {
-                shutdown_timeout_ms = super::parse_positive_option(name, &value)?;
+                shutdown_timeout_ms = parse_positive_option(name, &value)?;
                 if shutdown_timeout_ms > 300_000 {
                     return Err(String::from(
                         "--worker-shutdown-timeout-ms must not exceed 300000ms",
@@ -56,64 +60,62 @@ fn parse_actor_options(
                 package_cache.root = Some(std::path::PathBuf::from(value));
             }
             "--package-cache-min-free-bytes" => {
-                package_cache.min_free_bytes = super::parse_cache_min_free_bytes(name, &value)?;
+                package_cache.min_free_bytes = parse_cache_min_free_bytes(name, &value)?;
             }
             "--package-cache-max-bytes" => {
-                package_cache.max_bytes = super::parse_positive_option(name, &value)?;
+                package_cache.max_bytes = parse_positive_option(name, &value)?;
             }
             "--package-cache-max-entries" => {
-                package_cache.max_entries = super::parse_positive_option(name, &value)?;
+                package_cache.max_entries = parse_positive_option(name, &value)?;
             }
             "--package-cache-max-concurrent-acquisitions" => {
-                package_cache.max_concurrent_acquisitions =
-                    super::parse_positive_option(name, &value)?;
+                package_cache.max_concurrent_acquisitions = parse_positive_option(name, &value)?;
             }
             "--package-cache-max-pending-acquisitions" => {
-                package_cache.max_pending_acquisitions =
-                    super::parse_positive_option(name, &value)?;
+                package_cache.max_pending_acquisitions = parse_positive_option(name, &value)?;
             }
             "--package-cache-acquisition-timeout-ms" => {
-                package_cache.acquisition_timeout_ms = super::parse_positive_option(name, &value)?;
+                package_cache.acquisition_timeout_ms = parse_positive_option(name, &value)?;
             }
             "--package-cache-max-source-entries" => {
-                package_cache.max_source_entries = super::parse_positive_option(name, &value)?;
+                package_cache.max_source_entries = parse_positive_option(name, &value)?;
             }
             "--package-cache-source-ttl-ms" => {
-                package_cache.source_ttl_ms = super::parse_positive_option(name, &value)?;
+                package_cache.source_ttl_ms = parse_positive_option(name, &value)?;
             }
             "--preload-policy-json" => {
                 preload_policy = serde_json::from_str(&value)
                     .map_err(|error| format!("invalid --preload-policy-json: {error}"))?;
             }
             "--preload-startup-deadline-ms" => {
-                preload.startup_deadline_ms = super::parse_positive_option(name, &value)?;
+                preload.startup_deadline_ms = parse_positive_option(name, &value)?;
             }
             "--preload-plan-read-timeout-ms" => {
-                preload.plan_read_timeout_ms = super::parse_positive_option(name, &value)?;
+                preload.plan_read_timeout_ms = parse_positive_option(name, &value)?;
             }
             "--preload-max-plan-entries" => {
-                preload.max_plan_entries = super::parse_positive_option(name, &value)?;
+                preload.max_plan_entries = parse_positive_option(name, &value)?;
             }
             "--preload-max-plan-bytes" => {
-                preload.max_plan_bytes = super::parse_positive_option(name, &value)?;
+                preload.max_plan_bytes = parse_positive_option(name, &value)?;
             }
             "--preload-warm-concurrency" => {
-                preload.warm_concurrency = super::parse_positive_option(name, &value)?;
+                preload.warm_concurrency = parse_positive_option(name, &value)?;
             }
             "--preload-max-observation-entries" => {
-                preload.max_observation_entries = super::parse_positive_option(name, &value)?;
+                preload.max_observation_entries = parse_positive_option(name, &value)?;
             }
             "--preload-flush-interval-ms" => {
-                preload.flush_interval_ms = super::parse_positive_option(name, &value)?;
+                preload.flush_interval_ms = parse_positive_option(name, &value)?;
             }
             "--preload-action-timeout-ms" => {
-                preload.action_timeout_ms = super::parse_positive_option(name, &value)?;
+                preload.action_timeout_ms = parse_positive_option(name, &value)?;
             }
 
             _ => return Err(format!("unknown agentOS actor argument: {argument}")),
         }
     }
-    super::validate_cache_directory(&package_cache)?;
+    validate_cache_directory(&package_cache)?;
     package_cache
         .validate()
         .map_err(|error| format!("invalid agentOS actor package cache configuration: {error}"))?;
@@ -196,7 +198,7 @@ pub(super) fn run_actor(args: impl Iterator<Item = String>) -> Result<(), String
 fn prepare_actor_cache_directory(
     options: &mut agentos_client::ProcessPackageCacheOptions,
 ) -> Result<Option<tempfile::TempDir>, String> {
-    super::validate_cache_directory(options)?;
+    validate_cache_directory(options)?;
     if options.root.is_some() {
         return Ok(None);
     }

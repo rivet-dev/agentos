@@ -238,6 +238,16 @@ impl<V: VirtualFileSystem> VirtualFileSystem for DeviceLayer<V> {
         self.inner.lstat(path)
     }
 
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        if is_device_path(path) {
+            return Ok(device_stat(path));
+        }
+        if is_device_dir(path) {
+            return Ok(device_dir_stat(path));
+        }
+        self.inner.lstat_resolved_parent(path)
+    }
+
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         if is_device_path(old_path) {
             return Err(VfsError::permission_denied("link", old_path));

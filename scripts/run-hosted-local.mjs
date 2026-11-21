@@ -238,9 +238,14 @@ async function ownedProcess(label, argv, env, directory, maxMs, cwd) {
 			`${label} reached supervisor whole deadline`,
 		);
 		if (failure) throw failure;
+		// The 3.0.7 engine fail-stops with exit 1 when its storage services miss
+		// their own stop deadline. A requested stop that ends this way is not a
+		// hosted test failure.
 		assert(
 			value.childExit === 0 ||
-				(label === "engine" && value.childExit === -15 && value.softStopSent),
+				(label === "engine" &&
+					value.softStopSent &&
+					(value.childExit === -15 || value.childExit === 1)),
 			`${label} abnormal child exit: ${JSON.stringify(value)}`,
 		);
 		return { label, ...value, supervisorExit: processExit };

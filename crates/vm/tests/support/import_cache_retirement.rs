@@ -38,6 +38,12 @@ mod import_cache_retirement_tests {
         let process = process();
         let temporary = tempfile::tempdir().unwrap();
         let mut engine = JavascriptExecutionEngine::new(process.clone());
+        // A JavaScript engine owns a per-VM import cache only when one is
+        // configured; preparation alone does not create it.
+        engine.set_import_cache_base_dir(
+            "retirement-real-execution",
+            temporary.path().join("import-cache"),
+        );
         let context = engine.create_context(CreateJavascriptContextRequest {
             vm_id: "retirement-real-execution".into(),
             bootstrap_module: None,
@@ -602,8 +608,16 @@ mod import_cache_retirement_tests {
 
     #[test]
     fn manager_global_execve_cache_is_collected_and_physically_retired() {
+        // The cache base outlives the VM so only the manager's retirement can
+        // remove the cache root.
+        let cache_base = tempfile::tempdir().unwrap();
         ic_with_vm(|manager, vm_id| {
             let cwd = tempfile::tempdir().unwrap();
+            // A JavaScript engine owns a per-VM import cache only when one is
+            // configured; preparation alone does not create it.
+            manager
+                .javascript_engine
+                .set_import_cache_base_dir(vm_id, cache_base.path().to_path_buf());
             ic_prepare_node(&mut manager.javascript_engine, vm_id, cwd.path());
             let roots = ic_roots(
                 manager.javascript_engine.import_cache_cleanup_guards(vm_id),
@@ -661,14 +675,16 @@ mod import_cache_retirement_tests {
             )
             .unwrap();
             ic_prepare_wasm(&mut manager.wasm_engine, vm_id, &module);
-            let mut roots = ic_roots(manager.wasm_engine.import_cache_cleanup_guards(vm_id), 2);
+            // The nested JavaScript engine runs on the WASM engine's cache and
+            // owns none of its own, so each engine family has one slot.
+            let mut roots = ic_roots(manager.wasm_engine.import_cache_cleanup_guards(vm_id), 1);
             let engines = manager.vms.get(vm_id).unwrap().execution_engines.clone();
             {
                 let mut engine = engines.wasm("cache retirement owner control").unwrap();
                 ic_prepare_wasm(&mut engine, vm_id, &module);
-                roots.extend(ic_roots(engine.import_cache_cleanup_guards(vm_id), 2));
+                roots.extend(ic_roots(engine.import_cache_cleanup_guards(vm_id), 1));
             }
-            assert_eq!(roots.iter().collect::<BTreeSet<_>>().len(), 4);
+            assert_eq!(roots.iter().collect::<BTreeSet<_>>().len(), 2);
             ic_check_collected(manager, vm_id, &roots);
             roots
         });
@@ -726,14 +742,16 @@ mod import_cache_retirement_tests {
                 limits.clone(),
                 guest_runtime.clone(),
             );
-            let mut roots = ic_roots(manager.python_engine.import_cache_cleanup_guards(vm_id), 2);
+            // The nested JavaScript engine runs on the Python engine's cache
+            // and owns none of its own, so each engine family has one slot.
+            let mut roots = ic_roots(manager.python_engine.import_cache_cleanup_guards(vm_id), 1);
             let engines = manager.vms.get(vm_id).unwrap().execution_engines.clone();
             {
                 let mut engine = engines.python("cache retirement owner control").unwrap();
                 ic_prepare_python(&mut engine, vm_id, temporary.path(), limits, guest_runtime);
-                roots.extend(ic_roots(engine.import_cache_cleanup_guards(vm_id), 2));
+                roots.extend(ic_roots(engine.import_cache_cleanup_guards(vm_id), 1));
             }
-            assert_eq!(roots.iter().collect::<BTreeSet<_>>().len(), 4);
+            assert_eq!(roots.iter().collect::<BTreeSet<_>>().len(), 2);
             ic_check_collected(manager, vm_id, &roots);
             roots
         });
