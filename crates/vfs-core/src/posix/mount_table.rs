@@ -3253,6 +3253,14 @@ impl VirtualFileSystem for MountTable {
         }
     }
 
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        if path_needs_component_walk(path) {
+            return self.lstat(path);
+        }
+        self.lstat_canonical_component(&normalize_path(path))
+            .map(|(stat, _)| stat)
+    }
+
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat> {
         let (index, relative_path) = self.resolve_link_leaf_index(path)?;
         match self.mounts[index].filesystem.lstat(&relative_path) {

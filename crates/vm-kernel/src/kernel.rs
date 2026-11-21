@@ -11814,7 +11814,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             if pending.is_empty() && !follow_final_symlink {
                 return Ok(());
             }
-            let entry = self.filesystem.inner_mut().lstat(&candidate);
+            // `current` is fully resolved: this walk expanded every symlink
+            // before it, so the backend need not resolve the parent again.
+            let entry = self.filesystem.inner_mut().lstat_resolved_parent(&candidate);
             let stat = match entry {
                 Ok(stat) => stat,
                 // Creation checks admit a missing leaf; the caller still
