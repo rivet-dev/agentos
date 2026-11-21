@@ -340,7 +340,7 @@ function markMainModule(module) {
 }
 function requireFrom(request, parentDir, isMain = false) {
 	const parentPath = typeof parentDir === "string" ? parentDir : "/";
-	let resolved;
+	let resolved: string;
 	if (Module.isBuiltin(request)) {
 		try {
 			return loadBuiltinModule(request);
