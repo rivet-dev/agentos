@@ -142,7 +142,7 @@ engine fails with the typed `ERR_AGENTOS_EXECUTOR_UNAVAILABLE` error.
 | `agentos-executor-v8-runtime` | Process-global V8 platform ownership and reusable isolate/session mechanics | Node, Python, or standalone-WASM policy |
 | `agentos-executor-wasm-abi` | Shared agentOS WASM ABI definitions, validation, permission tiers, and stable WASM errors | A concrete V8 or Wasmtime engine |
 | `agentos-vm` | VM lifecycle, kernel/VFS/storage composition, executor dispatch through injected contracts, mounts, snapshots, direct embedded operations, and the engine-neutral extension lifecycle/capability adapter | Sidecar transport, Concrete extensions, or concrete engine implementation |
-| `agentos-sidecar` | The executable, wire transport, connection/session authentication, concrete extension selection, Tokio-driver construction, and concrete executor registration | Guest Linux semantics or engine internals |
+| `agentos-sidecar` | The executable and its `process_entrypoint::run` for other binaries that run the sidecar process mode, wire transport, connection/session authentication, concrete extension selection, Tokio-driver construction, and concrete executor registration | Guest Linux semantics or engine internals |
 | `agentos-sidecar-protocol` / `agentos-sidecar-client` | Execution-sidecar wire schema and client transport | VM policy or engine dispatch |
 | `agentos-rivetkit-ars-client` | RivetKit Actor Runtime Socket transport used for actor-owned durable state | General kernel sockets or VFS semantics |
 
