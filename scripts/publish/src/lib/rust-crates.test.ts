@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -67,6 +74,7 @@ test("Rust crate publish order satisfies internal dependencies", () => {
 	assertBefore("agentos-executor-wasm-v8", "agentos-vm");
 	assertBefore("agentos-executor-wasm-wasmtime", "agentos-vm");
 	assertBefore("agentos-sidecar-client", "agentos-vm");
+	assertBefore("agentos-client", "agentos-vm");
 	assertBefore("agentos-client", "agentos-sidecar");
 });
 
@@ -105,8 +113,8 @@ test("discovers the publishable Rust crate subset from a workspace", () => {
 
 		assert.deepEqual(discoverRustCrates(root), [
 			"agentos-sidecar-protocol",
-			"agentos-vm",
 			"agentos-client",
+			"agentos-vm",
 			"agentos-sidecar",
 		]);
 	});
@@ -147,4 +155,43 @@ test("hosted crates publish before their actual manifest dependents", () => {
 			assert(dependencyIndex < index, `${dependency} must publish before ${name}`);
 		}
 	}
+});
+
+// cargo publish resolves every non-dev dependency from crates.io, optional
+// ones included, so each crate must come after all of them in the order.
+test("every crate publishes after the agentOS crates its manifest depends on", () => {
+	const repoRoot = join(import.meta.dirname, "../../../..");
+	const cratesDir = join(repoRoot, "crates");
+	const order: readonly string[] = RUST_CRATES;
+	const seen = new Set<string>();
+	for (const member of readdirSync(cratesDir, { withFileTypes: true })) {
+		if (!member.isDirectory()) continue;
+		let manifest: string;
+		try {
+			manifest = readFileSync(join(cratesDir, member.name, "Cargo.toml"), "utf8");
+		} catch {
+			continue;
+		}
+		const name = manifest.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
+		if (!name || !order.includes(name)) continue;
+		seen.add(name);
+		const sections = manifest.matchAll(
+			/^\[((?:target\.[^\]]+\.)?(?:build-)?dependencies)\]\n([\s\S]*?)(?=^\[|(?![\s\S]))/gm,
+		);
+		for (const [, section, body] of sections) {
+			for (const [, dependency] of body.matchAll(
+				/^(agentos-[a-z0-9-]+)(?:\.workspace)?\s*=/gm,
+			)) {
+				assert(
+					order.includes(dependency),
+					`${name} [${section}] depends on ${dependency}, which is not published`,
+				);
+				assert(
+					order.indexOf(dependency) < order.indexOf(name),
+					`${dependency} must publish before ${name}`,
+				);
+			}
+		}
+	}
+	assert.deepEqual([...seen].sort(), [...order].sort());
 });
