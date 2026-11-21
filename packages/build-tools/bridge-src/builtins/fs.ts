@@ -2118,79 +2118,85 @@ var ReadStream = class extends CanonicalFileReadable {
 };
 
 var MAX_WRITE_STREAM_BYTES = 16 * 1024 * 1024;
+// Node's WriteStream is a function constructor: graceful-fs (and so webpack's
+// pack cache) initializes its own subclass instance with
+// `fs.WriteStream.apply(this, args)`, so the state must be set on `this`.
+function initWriteStream(filePath, _options) {
+	this._options = undefined;
+	this.bytesWritten = 0;
+	this.path = undefined;
+	this.pending = false;
+	this.writable = true;
+	this.writableAborted = false;
+	this.writableEnded = false;
+	this.writableFinished = false;
+	this.writableHighWaterMark = 16384;
+	this.writableLength = 0;
+	this.writableObjectMode = false;
+	this.writableCorked = 0;
+	this.destroyed = false;
+	this.closed = false;
+	this.errored = null;
+	this.writableNeedDrain = false;
+	this.fd = null;
+	this.autoClose = true;
+	this._chunks = [];
+	this._listeners = /* @__PURE__ */ new Map();
+	this._fileHandle = null;
+	this._streamFs = undefined;
+	this._position = null;
+	this._options = _options;
+	const fdOption = normalizeStreamFd(_options?.fd);
+	const startOption = _options?.start;
+	const highWaterMarkCandidate =
+		_options?.highWaterMark ?? _options?.bufferSize;
+	const openFlags = _options?.flags ?? "w";
+	this.path = filePath;
+	this.autoClose = _options?.autoClose !== false;
+	this.writableHighWaterMark =
+		typeof highWaterMarkCandidate === "number" &&
+		Number.isFinite(highWaterMarkCandidate) &&
+		highWaterMarkCandidate > 0
+			? Math.floor(highWaterMarkCandidate)
+			: 16384;
+	this._position = typeof startOption === "number" ? startOption : null;
+	this._streamFs = validateStreamFsOverride(_options?.fs, [
+		"open",
+		"close",
+		"write",
+	]);
+	if (_options?.fs !== void 0) {
+		validateStreamFsOverride(_options?.fs, ["writev"]);
+	}
+	if (fdOption instanceof FileHandle) {
+		this._fileHandle = fdOption;
+		this.fd = fdOption.fd;
+		return;
+	}
+	if (typeof fdOption === "number") {
+		this.fd = fdOption;
+		return;
+	}
+	const pathStr =
+		typeof this.path === "string"
+			? this.path
+			: this.path instanceof import_buffer.Buffer
+				? this.path.toString()
+				: null;
+	if (!pathStr) {
+		throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
+	}
+	this.fd = fs.openSync(pathStr, openFlags, _options?.mode);
+	queueMicrotask(() => {
+		if (this.fd !== null && this.fd >= 0) {
+			this.emit("open", this.fd);
+		}
+	});
+}
 var WriteStream = class {
 	constructor(filePath, _options) {
-		this._options = _options;
-		const fdOption = normalizeStreamFd(_options?.fd);
-		const startOption = _options?.start;
-		const highWaterMarkCandidate =
-			_options?.highWaterMark ?? _options?.bufferSize;
-		const openFlags = _options?.flags ?? "w";
-		this.path = filePath;
-		this.autoClose = _options?.autoClose !== false;
-		this.writableHighWaterMark =
-			typeof highWaterMarkCandidate === "number" &&
-			Number.isFinite(highWaterMarkCandidate) &&
-			highWaterMarkCandidate > 0
-				? Math.floor(highWaterMarkCandidate)
-				: 16384;
-		this._position = typeof startOption === "number" ? startOption : null;
-		this._streamFs = validateStreamFsOverride(_options?.fs, [
-			"open",
-			"close",
-			"write",
-		]);
-		if (_options?.fs !== void 0) {
-			validateStreamFsOverride(_options?.fs, ["writev"]);
-		}
-		if (fdOption instanceof FileHandle) {
-			this._fileHandle = fdOption;
-			this.fd = fdOption.fd;
-			return;
-		}
-		if (typeof fdOption === "number") {
-			this.fd = fdOption;
-			return;
-		}
-		const pathStr =
-			typeof this.path === "string"
-				? this.path
-				: this.path instanceof import_buffer.Buffer
-					? this.path.toString()
-					: null;
-		if (!pathStr) {
-			throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
-		}
-		this.fd = fs.openSync(pathStr, openFlags, _options?.mode);
-		queueMicrotask(() => {
-			if (this.fd !== null && this.fd >= 0) {
-				this.emit("open", this.fd);
-			}
-		});
+		initWriteStream.call(this, filePath, _options);
 	}
-	_options;
-	bytesWritten = 0;
-	path;
-	pending = false;
-	writable = true;
-	writableAborted = false;
-	writableEnded = false;
-	writableFinished = false;
-	writableHighWaterMark = 16384;
-	writableLength = 0;
-	writableObjectMode = false;
-	writableCorked = 0;
-	destroyed = false;
-	closed = false;
-	errored = null;
-	writableNeedDrain = false;
-	fd = null;
-	autoClose = true;
-	_chunks = [];
-	_listeners = /* @__PURE__ */ new Map();
-	_fileHandle = null;
-	_streamFs;
-	_position = null;
 	async _closeUnderlying() {
 		if (this._fileHandle) {
 			if (!this._fileHandle.closed) {
@@ -2490,7 +2496,11 @@ Object.defineProperty(ReadStream.prototype, "constructor", {
 var WriteStreamFactory = function WriteStream2(path, options) {
 	validateEncodingOption(options);
 	validateWriteStreamStartOption(options ?? {});
-	return new WriteStreamClass(path, options);
+	if (!(this instanceof WriteStreamClass)) {
+		return new WriteStreamClass(path, options);
+	}
+	initWriteStream.call(this, path, options);
+	return this;
 };
 WriteStreamFactory.prototype = WriteStream.prototype;
 function parseFlags(flags) {
@@ -3089,6 +3099,7 @@ var _fs = {
 	link: createBridgeSyncFacade("_fsLink", "link"),
 	symlink: createBridgeSyncFacade("_fsSymlink", "symlink"),
 	readlink: createBridgeSyncFacade("_fsReadlink", "readlink"),
+	realpath: createBridgeSyncFacade("_fsRealpath"),
 	lstat: createBridgeSyncFacade("_fsLstat", "lstat"),
 	truncate: createBridgeSyncFacade("_fsTruncate", "open"),
 	utimes: createBridgeSyncFacade("_fsUtimes", "utime"),
@@ -3148,6 +3159,23 @@ function encodeBridgeBytes(value) {
 		__agentOSType: "bytes",
 		base64: import_buffer.Buffer.from(value).toString("base64"),
 	};
+}
+// One kernel realpath call instead of an lstat/readlink round trip per
+// path component.
+function kernelRealpath(raw, lookup) {
+	try {
+		return _fs.realpath.applySyncPromise(void 0, [lookup]);
+	} catch (e) {
+		if (bridgeErrorCode(e) === "ENOENT") {
+			throw createFsError(
+				"ENOENT",
+				`ENOENT: no such file or directory, realpath '${raw}'`,
+				"realpath",
+				raw,
+			);
+		}
+		throwNormalizedFsBridgeError(e, "realpath", raw);
+	}
 }
 function throwNormalizedFsBridgeError(err, syscall, path) {
 	if (bridgeErrorCode(err) === "ERR_ACCESS_DENIED") {
@@ -5193,61 +5221,22 @@ var fs = {
 	realpathSync: Object.assign(
 		function realpathSync(path, options) {
 			validateEncodingOption(options);
-			const MAX_SYMLINK_DEPTH = 40;
-			let symlinksFollowed = 0;
 			const raw = normalizePathLike(path);
-			const pending = [];
-			for (const seg of raw.split("/")) {
+			// Node's realpathSync resolves `..` lexically before it follows
+			// links; realpathSync.native leaves `..` to the kernel walk.
+			const segments = [];
+			for (const seg of resolveOperationPath(raw).split("/")) {
 				if (!seg || seg === ".") continue;
-				if (seg === "..") {
-					if (pending.length > 0) pending.pop();
-				} else pending.push(seg);
+				if (seg === "..") segments.pop();
+				else segments.push(seg);
 			}
-			const resolved = [];
-			while (pending.length > 0) {
-				const seg = pending.shift();
-				if (seg === ".") continue;
-				if (seg === "..") {
-					if (resolved.length > 0) resolved.pop();
-					continue;
-				}
-				resolved.push(seg);
-				const currentPath = "/" + resolved.join("/");
-				try {
-					const stat = fs.lstatSync(currentPath);
-					if (stat.isSymbolicLink()) {
-						if (++symlinksFollowed > MAX_SYMLINK_DEPTH) {
-							const err = new Error(
-								`ELOOP: too many levels of symbolic links, realpath '${raw}'`,
-							);
-							err.code = "ELOOP";
-							err.syscall = "realpath";
-							err.path = raw;
-							throw err;
-						}
-						const target = fs.readlinkSync(currentPath);
-						const targetSegs = target.split("/").filter(Boolean);
-						if (target.startsWith("/")) {
-							resolved.length = 0;
-						} else {
-							resolved.pop();
-						}
-						pending.unshift(...targetSegs);
-					}
-				} catch (e) {
-					const err = e;
-					if (err.code === "ELOOP") throw e;
-					// Any other errno must reach the caller: returning here handed back the
-					// partially resolved prefix as if it were the real path.
-					throwNormalizedFsBridgeError(err, "realpath", raw);
-				}
-			}
-			return "/" + resolved.join("/") || "/";
+			return kernelRealpath(raw, `/${segments.join("/")}`);
 		},
 		{
 			native(path, options) {
 				validateEncodingOption(options);
-				return fs.realpathSync(path);
+				const raw = normalizePathLike(path);
+				return kernelRealpath(raw, raw);
 			},
 		},
 	),
@@ -5264,7 +5253,11 @@ var fs = {
 				validateEncodingOption(options);
 				settleFsCallback(callback, () => fs.realpathSync(path, options));
 			} else {
-				return Promise.resolve(fs.realpathSync(path, options));
+				try {
+					return Promise.resolve(fs.realpathSync(path, options));
+				} catch (error) {
+					return Promise.reject(error);
+				}
 			}
 		},
 		{
@@ -5282,7 +5275,11 @@ var fs = {
 						fs.realpathSync.native(path, options),
 					);
 				} else {
-					return Promise.resolve(fs.realpathSync.native(path, options));
+					try {
+						return Promise.resolve(fs.realpathSync.native(path, options));
+					} catch (error) {
+						return Promise.reject(error);
+					}
 				}
 			},
 		},
