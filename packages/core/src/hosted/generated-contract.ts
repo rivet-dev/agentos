@@ -13,7 +13,7 @@ import type {
 export const AGENTOS_API_VERSION = "agentos-sdk.dev/v1alpha1" as const;
 export const AGENTOS_CONTRACT_MAJOR = 1 as const;
 export const AGENTOS_CONTRACT_HASH =
-	"sha256:9c5e0ec013530cb4bf52b77202cd0320c4375285377cc87bb4de4676584133d8" as const;
+	"sha256:ccea87b6633c9a7106c4d0b0df5f70fbadd7beb3414d6084f429581bc6da8399" as const;
 export const AGENTOS_CAPABILITIES = [
 	"config.merge-patch",
 	"network.pull-streaming",
@@ -561,6 +561,8 @@ export namespace Input {
 	export type JsRuntimeLimits = {
 		maxReadlineHistoryEntries?: number | bigint | null;
 		v8HeapLimitMb?: number | bigint | null;
+		v8SerializationLimitBytes?: number | bigint | null;
+		maxBlobBytes?: number | bigint | null;
 		syncRpcWaitTimeoutMs?: number | bigint | null;
 		cpuTimeLimitMs?: number | bigint | null;
 		wallClockLimitMs?: number | bigint | null;
@@ -1494,6 +1496,8 @@ export namespace Output {
 	export type JsRuntimeLimits = {
 		maxReadlineHistoryEntries?: number | bigint | null;
 		v8HeapLimitMb?: number | bigint | null;
+		v8SerializationLimitBytes?: number | bigint | null;
+		maxBlobBytes?: number | bigint | null;
 		syncRpcWaitTimeoutMs?: number | bigint | null;
 		cpuTimeLimitMs?: number | bigint | null;
 		wallClockLimitMs?: number | bigint | null;
