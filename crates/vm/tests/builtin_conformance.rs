@@ -1518,6 +1518,65 @@ fn fs_write_stream_called_as_function_on_subclass_matches_host_node() {
     run_isolated_builtin_conformance_test("fs-write-stream-function-call");
 }
 
+fn fs_realpath_matches_host_node_impl() {
+    assert_conformance(
+        "fs-realpath",
+        r#"
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "realpath-")));
+fs.mkdirSync(path.join(base, "real/deep"), { recursive: true });
+fs.writeFileSync(path.join(base, "real/deep/file.js"), "x");
+fs.symlinkSync("real/deep", path.join(base, "rel"));
+fs.symlinkSync(path.join(base, "rel"), path.join(base, "abs"));
+fs.symlinkSync("loop-b", path.join(base, "loop-a"));
+fs.symlinkSync("loop-a", path.join(base, "loop-b"));
+process.chdir(base);
+
+const show = (fn) => {
+  try {
+    const out = fn();
+    return path.isAbsolute(out) ? path.relative(base, out) : `relative:${out}`;
+  } catch (error) {
+    return `error:${error.code}`;
+  }
+};
+const cases = {};
+for (const [name, target] of Object.entries({
+  chain: path.join(base, "abs/file.js"),
+  dotdotAfterLink: path.join(base, "abs/../real"),
+  relative: "rel/file.js",
+  missing: path.join(base, "rel/missing.js"),
+  notDir: path.join(base, "real/deep/file.js/x"),
+  loop: path.join(base, "loop-a"),
+})) {
+  cases[name] = {
+    sync: show(() => fs.realpathSync(target)),
+    native: show(() => fs.realpathSync.native(target)),
+    callback: await new Promise((resolve) =>
+      fs.realpath(target, (error, out) =>
+        resolve(error ? `error:${error.code}` : path.relative(base, out)),
+      ),
+    ),
+    promise: await fs.promises.realpath(target).then(
+      (out) => path.relative(base, out),
+      (error) => `error:${error.code}`,
+    ),
+  };
+}
+console.log(JSON.stringify(cases));
+fs.rmSync(base, { recursive: true, force: true });
+"#,
+    );
+}
+
+#[test]
+fn fs_realpath_matches_host_node() {
+    run_isolated_builtin_conformance_test("fs-realpath");
+}
+
 fn readline_question_reads_real_stdin_impl() {
     assert_node_available();
 
@@ -6881,6 +6940,7 @@ fn __builtin_conformance_extra_test_runner() {
         "fs-write-stream-function-call" => {
             fs_write_stream_called_as_function_on_subclass_matches_host_node_impl()
         }
+        "fs-realpath" => fs_realpath_matches_host_node_impl(),
         "readline-question" => readline_question_reads_real_stdin_impl(),
         "tty-stdin-discipline" => tty_stdin_uses_kernel_canonical_and_raw_discipline_impl(),
         "vm-is-context" => vm_is_context_only_accepts_create_context_tagged_sandboxes_impl(),

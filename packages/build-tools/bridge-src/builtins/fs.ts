@@ -3092,6 +3092,7 @@ var _fs = {
 	link: createBridgeSyncFacade("_fsLink", "link"),
 	symlink: createBridgeSyncFacade("_fsSymlink", "symlink"),
 	readlink: createBridgeSyncFacade("_fsReadlink", "readlink"),
+	realpath: createBridgeSyncFacade("_fsRealpath"),
 	lstat: createBridgeSyncFacade("_fsLstat", "lstat"),
 	truncate: createBridgeSyncFacade("_fsTruncate", "open"),
 	utimes: createBridgeSyncFacade("_fsUtimes", "utime"),
@@ -3151,6 +3152,23 @@ function encodeBridgeBytes(value) {
 		__agentOSType: "bytes",
 		base64: import_buffer.Buffer.from(value).toString("base64"),
 	};
+}
+// One kernel realpath call instead of an lstat/readlink round trip per
+// path component.
+function kernelRealpath(raw, lookup) {
+	try {
+		return _fs.realpath.applySyncPromise(void 0, [lookup]);
+	} catch (e) {
+		if (bridgeErrorCode(e) === "ENOENT") {
+			throw createFsError(
+				"ENOENT",
+				`ENOENT: no such file or directory, realpath '${raw}'`,
+				"realpath",
+				raw,
+			);
+		}
+		throwNormalizedFsBridgeError(e, "realpath", raw);
+	}
 }
 function throwNormalizedFsBridgeError(err, syscall, path) {
 	if (bridgeErrorCode(err) === "ERR_ACCESS_DENIED") {
@@ -5175,61 +5193,22 @@ var fs = {
 	realpathSync: Object.assign(
 		function realpathSync(path, options) {
 			validateEncodingOption(options);
-			const MAX_SYMLINK_DEPTH = 40;
-			let symlinksFollowed = 0;
 			const raw = normalizePathLike(path);
-			const pending = [];
-			for (const seg of raw.split("/")) {
+			// Node's realpathSync resolves `..` lexically before it follows
+			// links; realpathSync.native leaves `..` to the kernel walk.
+			const segments = [];
+			for (const seg of resolveOperationPath(raw).split("/")) {
 				if (!seg || seg === ".") continue;
-				if (seg === "..") {
-					if (pending.length > 0) pending.pop();
-				} else pending.push(seg);
+				if (seg === "..") segments.pop();
+				else segments.push(seg);
 			}
-			const resolved = [];
-			while (pending.length > 0) {
-				const seg = pending.shift();
-				if (seg === ".") continue;
-				if (seg === "..") {
-					if (resolved.length > 0) resolved.pop();
-					continue;
-				}
-				resolved.push(seg);
-				const currentPath = "/" + resolved.join("/");
-				try {
-					const stat = fs.lstatSync(currentPath);
-					if (stat.isSymbolicLink()) {
-						if (++symlinksFollowed > MAX_SYMLINK_DEPTH) {
-							const err = new Error(
-								`ELOOP: too many levels of symbolic links, realpath '${raw}'`,
-							);
-							err.code = "ELOOP";
-							err.syscall = "realpath";
-							err.path = raw;
-							throw err;
-						}
-						const target = fs.readlinkSync(currentPath);
-						const targetSegs = target.split("/").filter(Boolean);
-						if (target.startsWith("/")) {
-							resolved.length = 0;
-						} else {
-							resolved.pop();
-						}
-						pending.unshift(...targetSegs);
-					}
-				} catch (e) {
-					const err = e;
-					if (err.code === "ELOOP") throw e;
-					// Any other errno must reach the caller: returning here handed back the
-					// partially resolved prefix as if it were the real path.
-					throwNormalizedFsBridgeError(err, "realpath", raw);
-				}
-			}
-			return "/" + resolved.join("/") || "/";
+			return kernelRealpath(raw, `/${segments.join("/")}`);
 		},
 		{
 			native(path, options) {
 				validateEncodingOption(options);
-				return fs.realpathSync(path);
+				const raw = normalizePathLike(path);
+				return kernelRealpath(raw, raw);
 			},
 		},
 	),
@@ -5246,7 +5225,11 @@ var fs = {
 				validateEncodingOption(options);
 				settleFsCallback(callback, () => fs.realpathSync(path, options));
 			} else {
-				return Promise.resolve(fs.realpathSync(path, options));
+				try {
+					return Promise.resolve(fs.realpathSync(path, options));
+				} catch (error) {
+					return Promise.reject(error);
+				}
 			}
 		},
 		{
@@ -5264,7 +5247,11 @@ var fs = {
 						fs.realpathSync.native(path, options),
 					);
 				} else {
-					return Promise.resolve(fs.realpathSync.native(path, options));
+					try {
+						return Promise.resolve(fs.realpathSync.native(path, options));
+					} catch (error) {
+						return Promise.reject(error);
+					}
 				}
 			},
 		},

@@ -1057,6 +1057,11 @@ var NODE_CUSTOM_GLOBAL_INVENTORY = [
 		rationale: "Host filesystem bridge reference.",
 	},
 	{
+		name: "_fsRealpath",
+		classification: "hardened",
+		rationale: "Host filesystem bridge reference.",
+	},
+	{
 		name: "_fsLstat",
 		classification: "hardened",
 		rationale: "Host filesystem bridge reference.",

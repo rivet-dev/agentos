@@ -164,6 +164,7 @@
 				"_fsLink",
 				"_fsSymlink",
 				"_fsReadlink",
+				"_fsRealpath",
 				"_fsLstat",
 				"_fsTruncate",
 				"_fsUtimes",
@@ -926,6 +927,10 @@
 		},
 		"_fsReadlinkAsync": {
 			"method": "fs.promises.readlink",
+			"translateArgs": false
+		},
+		"_fsRealpath": {
+			"method": "fs.realpathSync",
 			"translateArgs": false
 		},
 		"_fsRename": {
