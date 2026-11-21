@@ -17,7 +17,7 @@ use agentos_executor_v8_runtime::adapter_runtime as v8_runtime;
 use agentos_executor_v8_runtime::adapter_support::{
     env_flag_enabled, file_fingerprint, warmup_marker_path,
 };
-use agentos_executor_v8_runtime::asset_cache::NodeImportCache;
+use agentos_executor_v8_runtime::asset_cache::{NodeImportCache, NODE_WASI_MODULE_SOURCE};
 use agentos_executor_v8_runtime::javascript::{
     CreateJavascriptContextRequest, JavascriptExecution, JavascriptExecutionEngine,
     JavascriptExecutionError, JavascriptExecutionEvent, JavascriptExecutionLimits,
@@ -113,8 +113,6 @@ const WASM_RUNNER_NO_CACHE_ENV: &str = "AGENTOS_WASM_RUNNER_NO_CACHE";
 const WASM_MODULE_BYTES_CACHE_CAPACITY: usize = 64;
 const WASM_MODULE_BYTES_CACHE_MAX_BYTES: usize = 256 * 1024 * 1024;
 const WASM_VALIDATED_PROFILE_DIGEST_CAPACITY: usize = 64;
-const NODE_WASI_MODULE_SOURCE: &str =
-    include_str!("../../executor-v8-runtime/assets/runners/wasi-module.js");
 const WASM_SIDECAR_ROUTED_FS_SYNC_METHODS: &[&str] = &[
     "fs.accessSync",
     "fs.blockingIoTimeoutMsSync",
@@ -5198,6 +5196,7 @@ mod tests {
     use tempfile::tempdir;
 
     use agentos_executor_contract::backend::{ExecutionWakeIdentity, PublishedSignalCheckpoint};
+    use agentos_executor_v8_runtime::asset_cache::NODE_WASM_RUNNER_SOURCE;
 
     #[test]
     fn module_byte_cache_bounds_retention_without_invalidating_live_images() {
@@ -5422,7 +5421,7 @@ mod tests {
 
     #[test]
     fn managed_kernel_host_mode_is_trusted_frozen_bootstrap_not_guest_env() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         assert!(runner.contains(
             "const SIDECAR_MANAGED_PROCESS = globalThis.__agentOSManagedKernelHost === true;"
         ));
@@ -5451,7 +5450,7 @@ mod tests {
 
     #[test]
     fn managed_stdio_duplication_uses_kernel_descriptions() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let helper = runner
             .find("function managedKernelFdForDuplicate(fd) {")
             .expect("managed duplicate helper");
@@ -5573,7 +5572,7 @@ mod tests {
 
     #[test]
     fn optional_posix_identity_ids_use_explicit_null_on_the_typed_bridge() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         assert!(runner.contains(
             "function hostUserOptionalId(value) {\n  const id = Number(value) >>> 0;\n  return id === 0xffffffff ? null : id;\n}"
         ));
@@ -5587,7 +5586,7 @@ mod tests {
 
     #[test]
     fn path_owner_accepts_libc_at_fdcwd_sentinel() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("  path_owner(fd, pathPtr, pathLen, followSymlinks, retUidPtr, retGidPtr) {")
             .expect("path-owner import");
@@ -5614,7 +5613,7 @@ mod tests {
 
     #[test]
     fn proc_fd_readlink_rewrites_absolute_and_preopen_relative_guest_paths() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("function kernelProcFdPathForGuestPath(guestPath) {")
             .expect("proc-fd path rewrite");
@@ -5812,7 +5811,7 @@ mod tests {
                 "{method} must route through the V8 host-process bridge"
             );
         }
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         assert!(runner.contains("boundedWasmSyncRpcReadLength("));
         assert!(runner.contains("boundedWasmGuestReadLength("));
         assert!(runner.contains("kernelFdReadFillsRequestedLength(kernelFd, stat)"));
@@ -5856,7 +5855,7 @@ mod tests {
             "the internal line cap must not remain guest-configurable"
         );
 
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         assert!(runner.contains("Math.ceil(maxSyncRpcResponseLineBytes * 0.8)"));
         assert!(runner.contains("ERR_AGENTOS_RESOURCE_LIMIT"));
         assert!(runner.contains("raise limits.reactor.maxBridgeResponseBytes"));
@@ -5865,7 +5864,7 @@ mod tests {
 
     #[test]
     fn wasm_sync_rpc_response_line_runtime_rejects_before_retaining_overflow() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let marker_begin = "// AGENTOS_SYNC_RPC_RESPONSE_LIMIT_HELPERS_BEGIN";
         let marker_end = "// AGENTOS_SYNC_RPC_RESPONSE_LIMIT_HELPERS_END";
         let helper_start = runner.find(marker_begin).expect("helper begin marker");
@@ -5914,7 +5913,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn wasm_host_tty_read_prevalidates_guest_destination_before_kernel_read() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let tty_start = runner
             .find("const hostTtyImport = {")
             .expect("host_tty import must exist");
@@ -5938,7 +5937,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn wasm_host_tty_size_maps_host_errors_through_the_guest_errno_adapter() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let size_start = runner
             .find("  get_size(fd, colsPtr, rowsPtr) {")
             .expect("host_tty get_size must exist");
@@ -5961,7 +5960,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn sidecar_managed_passthrough_stdin_uses_the_kernel_pipe() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let fd_read_start = runner
             .find("wasiImport.fd_read = (fd, iovs")
             .expect("wrapped fd_read must exist");
@@ -5980,7 +5979,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn wasm_preview1_memory_is_prevalidated_before_host_side_effects() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
 
         let assert_precedes = |start: &str, validation: &str, effect: &str| {
             let section_start = runner
@@ -6100,7 +6099,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn wasm_clock_and_system_outputs_are_prevalidated_before_process_rpc() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         for (start, end, validation, rpc) in [
             (
                 "\nwasiImport.clock_time_get = (",
@@ -6145,7 +6144,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn wasm_process_outputs_are_prevalidated_before_side_effects() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let cases = [
             (
                 "function returnWaitedChild(\n",
@@ -6311,7 +6310,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn guest_byte_reads_use_typed_bounds_checks() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("function readGuestBytes(ptr, len) {")
             .expect("guest byte reader");
@@ -6337,7 +6336,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn record_lock_query_prevalidates_its_atomic_copyout() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("        fd_record_lock(\n")
             .expect("record-lock import");
@@ -6357,7 +6356,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn managed_fexecve_snapshots_the_exact_kernel_description() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("function loadExecImageFromFd(fd, argv, closeFds) {")
             .expect("fd exec loader");
@@ -6380,7 +6379,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn standalone_registered_exec_stubs_defer_to_sidecar_classification() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let loader_start = runner
             .find("function loadExecImageFromPath(command, argv, interpreterDepth = 0) {")
             .expect("path exec loader");
@@ -6408,7 +6407,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn managed_closefrom_uses_one_bulk_kernel_mutation() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("        proc_closefrom(")
             .expect("closefrom import");
@@ -6432,7 +6431,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn managed_fiemap_reads_one_indexed_extent() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner.find("  fd_fiemap(").expect("fiemap import");
         let section = &runner[start..];
         let end = section.find("  fd_punch_hole(").expect("fiemap end");
@@ -7670,7 +7669,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn managed_host_network_fds_use_kernel_description_authority() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
 
         assert!(runner.contains("const HOST_NET_SOCK_NONBLOCK = 0x4000;"));
         assert!(runner.contains("const HOST_NET_SOCK_CLOEXEC = 0x2000;"));
@@ -7701,7 +7700,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn managed_runner_keeps_only_bounded_process_and_fd_projections() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
 
         for obsolete in [
             "const spawnedChildren =",
@@ -7746,7 +7745,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn managed_guest_fd_reuse_does_not_close_or_replace_hidden_preopen_backing_descriptors() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         assert!(runner.contains(
             "if (handle.kind === 'kernel-fd') {\n    // Managed preopens are hidden capability roots"
         ));
@@ -7773,7 +7772,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn host_process_errno_mapping_uses_only_typed_error_codes() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("function mapHostProcessError(error) {")
             .expect("host process errno mapper");
@@ -7792,7 +7791,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn synthetic_filesystem_errno_mapping_preserves_file_size_limit_errors() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("function mapSyntheticFsError(error) {")
             .expect("synthetic filesystem errno mapper");
@@ -7807,7 +7806,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn managed_signal_dispatch_drains_the_published_delivery_without_double_claiming() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("function dispatchPendingWasmSignals(")
             .expect("signal dispatch helper");
@@ -7833,7 +7832,7 @@ process.stdout.write(JSON.stringify({{ overflow, exactLine: exact.line, exactRet
 
     #[test]
     fn managed_wait_uses_bounded_kernel_authoritative_direct_replies() {
-        let runner = include_str!("../../executor-v8-runtime/assets/runners/wasm-runner.mjs");
+        let runner = NODE_WASM_RUNNER_SOURCE;
         let start = runner
             .find("function takeManagedWaitTransition(")
             .expect("managed wait helper");
