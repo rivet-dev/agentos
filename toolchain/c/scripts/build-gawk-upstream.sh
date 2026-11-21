@@ -2,7 +2,6 @@
 set -euo pipefail
 
 VERSION=""
-URL=""
 SHA256=""
 CACHE_DIR=""
 BUILD_DIR=""
@@ -13,7 +12,6 @@ PATCH=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
-    --url) URL="$2"; shift 2 ;;
     --sha256) SHA256="$2"; shift 2 ;;
     --cache-dir) CACHE_DIR="$2"; shift 2 ;;
     --build-dir) BUILD_DIR="$2"; shift 2 ;;
@@ -24,20 +22,15 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown GNU awk build argument: $1" >&2; exit 1 ;;
   esac
 done
-if [[ -z "$VERSION" || -z "$URL" || -z "$SHA256" || -z "$CACHE_DIR" || -z "$BUILD_DIR" || -z "$SDK_DIR" || -z "$SYSROOT" || -z "$OUTPUT" || -z "$PATCH" ]]; then
-  echo "Required: --version --url --sha256 --cache-dir --build-dir --sdk-dir --sysroot --output --patch" >&2
+if [[ -z "$VERSION" || -z "$SHA256" || -z "$CACHE_DIR" || -z "$BUILD_DIR" || -z "$SDK_DIR" || -z "$SYSROOT" || -z "$OUTPUT" || -z "$PATCH" ]]; then
+  echo "Required: --version --sha256 --cache-dir --build-dir --sdk-dir --sysroot --output --patch" >&2
   exit 1
 fi
 
 mkdir -p "$CACHE_DIR" "$BUILD_DIR"
 TARBALL="$CACHE_DIR/gawk-$VERSION.tar.xz"
 if [[ ! -f "$TARBALL" ]]; then
-  temporary=$(mktemp "$TARBALL.download.XXXXXX")
-  trap 'rm -f "$temporary"' EXIT
-  curl --retry 3 --retry-all-errors -fSL "$URL" -o "$temporary"
-  printf '%s  %s\n' "$SHA256" "$temporary" | sha256sum --check
-  mv "$temporary" "$TARBALL"
-  trap - EXIT
+  "$(dirname "$0")/fetch-gnu-release.sh" "gawk/gawk-$VERSION.tar.xz" "$SHA256" "$TARBALL"
 fi
 printf '%s  %s\n' "$SHA256" "$TARBALL" | sha256sum --check
 SRC_DIR="$BUILD_DIR/gawk-$VERSION"

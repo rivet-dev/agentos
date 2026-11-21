@@ -200,7 +200,7 @@ MBEDTLS_BUILD_DIR := $(BUILD_DIR)/mbedtls
 MBEDTLS_CONFIG_DIR := mbedtls
 MBEDTLS_LIBS := $(MBEDTLS_BUILD_DIR)/libmbedtls.a $(MBEDTLS_BUILD_DIR)/libmbedx509.a $(MBEDTLS_BUILD_DIR)/libmbedcrypto.a
 WGET_VERSION := 1.24.5
-WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
+WGET_SHA256 := fa2dc35bab5184ecbc46a9ef83def2aaaa3f4c9f3c97d4bd19dcb07d4da637de
 WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
 WGET_UPSTREAM_OVERLAY_INCLUDE_DIR := overlays/wget/include
 # mbedTLS backend overlay (mirrors the curl overlay layout): src/wasi_ssl.c
@@ -228,11 +228,10 @@ OPENSSL_LIBCRYPTO := $(OPENSSL_PREFIX)/lib/libcrypto.a
 OPENSSL_LIBSSL := $(OPENSSL_PREFIX)/lib/libssl.a
 OPENSSL_HEADER := $(OPENSSL_PREFIX)/include/openssl/opensslv.h
 GREP_VERSION := 3.12
-GREP_URL := https://ftp.gnu.org/gnu/grep/grep-$(GREP_VERSION).tar.xz
+GREP_SHA256 := 2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9
 GREP_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/grep-upstream
 # GNU release archive verified against its detached signature before pinning.
 GAWK_VERSION := 5.4.1
-GAWK_URL := https://ftp.gnu.org/gnu/gawk/gawk-$(GAWK_VERSION).tar.xz
 GAWK_SHA256 := 07f6f7342b7febe4313fc2c2542ad93d64fe20ad8717200109f105a826f5fd37
 GAWK_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/gawk-upstream
 GAWK_PATCH := patches/gawk/0001-posix-spawn.patch
@@ -903,11 +902,11 @@ $(BUILD_DIR)/curl $(CURL_LIBCURL_ARTIFACT) &: scripts/build-curl-protocols.sh pa
 	cp "$(CURL_LIBCURL_PREFIX)/bin/curl.wasm" "$(BUILD_DIR)/curl.tmp"
 	mv -f "$(BUILD_DIR)/curl.tmp" "$(BUILD_DIR)/curl"
 
-$(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(MBEDTLS_LIBS) $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/wget: scripts/build-wget-upstream.sh scripts/fetch-gnu-release.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(MBEDTLS_LIBS) $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-wget-upstream.sh \
 		--version "$(WGET_VERSION)" \
-		--url "$(WGET_URL)" \
+		--sha256 "$(WGET_SHA256)" \
 		--cache-dir "$(abspath $(LIBS_CACHE))" \
 		--build-dir "$(abspath $(WGET_UPSTREAM_BUILD_DIR))" \
 		--overlay-include-dir "$(abspath $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR))" \
@@ -921,11 +920,11 @@ $(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES)
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
 		--output "$(abspath $@)"
 
-$(BUILD_DIR)/grep: scripts/build-grep-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/grep: scripts/build-grep-upstream.sh scripts/fetch-gnu-release.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-grep-upstream.sh \
 		--version "$(GREP_VERSION)" \
-		--url "$(GREP_URL)" \
+		--sha256 "$(GREP_SHA256)" \
 		--cache-dir "$(abspath $(LIBS_CACHE))" \
 		--build-dir "$(abspath $(GREP_UPSTREAM_BUILD_DIR))" \
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(PATCHED_SYSROOT))" \
@@ -934,11 +933,10 @@ $(BUILD_DIR)/grep: scripts/build-grep-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-
 		--output "$(abspath $@)"
 
 # Share the pinned LLVM20 SDK used for finalized exception handling below.
-$(BUILD_DIR)/awk: scripts/build-gawk-upstream.sh $(GAWK_PATCH) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(VENDOR_DIR)/wasi-sdk-27/bin/clang
+$(BUILD_DIR)/awk: scripts/build-gawk-upstream.sh scripts/fetch-gnu-release.sh $(GAWK_PATCH) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(VENDOR_DIR)/wasi-sdk-27/bin/clang
 	bash scripts/build-gawk-upstream.sh \
 		--version "$(GAWK_VERSION)" \
 		--patch "$(abspath $(GAWK_PATCH))" \
-		--url "$(GAWK_URL)" \
 		--sha256 "$(GAWK_SHA256)" \
 		--cache-dir "$(abspath $(LIBS_CACHE))" \
 		--build-dir "$(abspath $(GAWK_UPSTREAM_BUILD_DIR))" \
@@ -946,7 +944,7 @@ $(BUILD_DIR)/awk: scripts/build-gawk-upstream.sh $(GAWK_PATCH) $(PATCHED_SYSROOT
 		--sysroot "$(abspath $(PATCHED_SYSROOT))" \
 		--output "$(abspath $@)"
 
-$(BUILD_DIR)/stty $(BUILD_DIR)/tty &: scripts/build-coreutils-terminal.sh $(COREUTILS_TERMINAL_PATCH) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/stty $(BUILD_DIR)/tty &: scripts/build-coreutils-terminal.sh scripts/fetch-gnu-release.sh $(COREUTILS_TERMINAL_PATCH) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	bash scripts/build-coreutils-terminal.sh
 
 # LLVM 20 emits standardized EH directly; LLVM 19 only emits legacy EH.
