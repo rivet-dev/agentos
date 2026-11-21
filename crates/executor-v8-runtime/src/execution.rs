@@ -671,6 +671,9 @@ pub fn run_init_script(
     if code.is_empty() {
         return (0, None);
     }
+    // NODE_OPTIONS preloads run in the runtime shim before entrypoint setup.
+    // They need the same native CommonJS compiler as ordinary file execution.
+    install_compile_commonjs_wrapper_global(scope);
     v8::tc_scope!(tc, scope);
     let source = match v8::String::new(tc, code) {
         Some(s) => s,
