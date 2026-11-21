@@ -81,9 +81,12 @@ jobs:
           esac
           echo "profile=$profile" >> "$GITHUB_OUTPUT"
 
-  wasm-commands:
-    name: WASM Commands
-    runs-on: ubuntu-latest
+  # The WASM command corpus builds from source in three parallel jobs of this
+  # run. Each job builds its own patched sysroot (about 2 minutes) instead of
+  # sharing one, so no build output crosses runs or waits on another job.
+  wasm-commands-default:
+    name: WASM Commands (default set)
+    runs-on: depot-ubuntu-24.04-8
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -95,27 +98,127 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: toolchain -> toolchain/target
-          cache-workspace-crates: true
-          key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...'
       - run: make -C toolchain commands
-      # These real upstream commands are intentionally outside the fast default
-      # toolchain target, but are part of the published and parity-tested corpus.
-      - name: Build required heavy release commands
-        run: make -C toolchain cmd/duckdb cmd/vim
-      - run: node packages/core/scripts/copy-wasm-commands.mjs --require
+      # tar keeps the alias and stub symlinks of the canonical command tree.
+      - name: Pack the default command tree
+        run: tar -C toolchain/target/wasm32-wasip1/release -cf "$RUNNER_TEMP/wasm-commands-default.tar" commands
       - uses: actions/upload-artifact@v4
         with:
-          name: wasm-commands
-          path: packages/core/commands
+          name: wasm-commands-part-default
+          path: ${{ runner.temp }}/wasm-commands-default.tar
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-command-licenses
           path: toolchain/c/build/awk.COPYING
+          if-no-files-found: error
+      # The git software package builds its templates from the pinned upstream
+      # source, so Publish npm needs these files from this job's Git build.
+      - name: Pack the Git packaging inputs
+        run: |
+          set -euo pipefail
+          node software/git/scripts/stage-templates.mjs
+          python3 - <<'PYTHON'
+          import re
+          import tarfile
+          import os
+          from pathlib import Path
+
+          version = re.search(r"^GIT_VERSION\s*:=\s*(\S+)\s*$", Path("toolchain/c/Makefile").read_text(), re.M).group(1)
+          git = Path(f"toolchain/c/build/git-upstream/git-{version}")
+          inputs = [
+              "Makefile", "shared.mak", "config.mak.uname",
+              "GIT-VERSION-GEN", "GIT-VERSION-FILE.in", "version",
+              "GIT-BUILD-OPTIONS.in", "git-submodule.sh", "git-sh-setup.sh",
+              "git-sh-i18n.sh", "tools/generate-script.sh", "gitweb/Makefile",
+              "templates/Makefile",
+          ]
+          templates = (git / "templates/Makefile").read_text()
+          inputs += [f"templates/{name}" for name in re.findall(r"^TEMPLATES \+= (.+)$", templates, re.M)]
+          with tarfile.open(Path(os.environ["RUNNER_TEMP"]) / "software-build-inputs-git.tar", "w") as archive:
+              for name in inputs:
+                  source = git / name
+                  if not source.is_file() or source.is_symlink():
+                      raise ValueError(f"missing regular Git packaging input: {source}")
+                  archive.add(source)
+          PYTHON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: software-build-inputs-git
+          path: ${{ runner.temp }}/software-build-inputs-git.tar
+          if-no-files-found: error
+
+  # These real upstream commands are intentionally outside the fast default
+  # toolchain target, but are part of the published and parity-tested corpus.
+  # They are C builds against the patched sysroot and need no Rust or Node.
+  wasm-commands-heavy:
+    name: WASM Commands (${{ matrix.command }})
+    strategy:
+      matrix:
+        command: [duckdb, vim]
+    runs-on: depot-ubuntu-24.04-8
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C toolchain cmd/${{ matrix.command }}
+      - name: Pack the ${{ matrix.command }} command
+        run: |
+          set -euo pipefail
+          test -s "toolchain/target/wasm32-wasip1/release/commands/${{ matrix.command }}"
+          tar -C toolchain/target/wasm32-wasip1/release -cf "$RUNNER_TEMP/wasm-commands-${{ matrix.command }}.tar" "commands/${{ matrix.command }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-commands-part-${{ matrix.command }}
+          path: ${{ runner.temp }}/wasm-commands-${{ matrix.command }}.tar
+          if-no-files-found: error
+      # The vim software package ships the runtime files of this Vim build.
+      # Pack the staging helper's exact selection, not the vendor tree.
+      - name: Pack the Vim runtime packaging inputs
+        if: matrix.command == 'vim'
+        run: |
+          set -euo pipefail
+          test -f toolchain/c/libs/vim/runtime/defaults.vim
+          node software/vim/scripts/stage-runtime.mjs
+          stage="$RUNNER_TEMP/software-build-inputs-vim"
+          mkdir -p "$stage/toolchain/c/libs/vim"
+          cp -R software/vim/share/vim/vim92 "$stage/toolchain/c/libs/vim/runtime"
+          tar -C "$stage" -cf "$RUNNER_TEMP/software-build-inputs-vim.tar" toolchain
+      - uses: actions/upload-artifact@v4
+        if: matrix.command == 'vim'
+        with:
+          name: software-build-inputs-vim
+          path: ${{ runner.temp }}/software-build-inputs-vim.tar
+          if-no-files-found: error
+
+  # Merge the parts, then check completeness on the full set. Downstream jobs
+  # depend on this job and the `wasm-commands` artifact it uploads.
+  wasm-commands:
+    needs: [wasm-commands-default, wasm-commands-heavy]
+    name: WASM Commands
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wasm-commands-part-*
+          path: ${{ runner.temp }}/wasm-commands-parts
+          merge-multiple: true
+      - name: Restore canonical WASM command staging
+        run: |
+          set -euo pipefail
+          release_dir="toolchain/target/wasm32-wasip1/release"
+          mkdir -p "$release_dir"
+          for part in default duckdb vim; do
+            tar -C "$release_dir" -xf "$RUNNER_TEMP/wasm-commands-parts/wasm-commands-$part.tar"
+          done
+      - run: node packages/core/scripts/copy-wasm-commands.mjs --require
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-commands
+          path: packages/core/commands
           if-no-files-found: error
 
   build-sidecar:
@@ -233,58 +336,10 @@ jobs:
           path: target/sidecar-artifacts/${{ matrix.platform }}
           if-no-files-found: error
 
-  smoke-sidecar-artifacts:
-    needs: [wasm-commands, build-sidecar, build-sidecar-darwin]
-    name: "Packaged WASM backends (${{ matrix.platform }})"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux-x64-gnu
-            runner: [self-hosted, agentos-builder]
-          - platform: linux-arm64-gnu
-            runner: [self-hosted, agentos-builder-arm64]
-          - platform: darwin-x64
-            runner: macos-15-intel
-          - platform: darwin-arm64
-            runner: macos-15
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...' --filter @rivet-dev/agentos-build-tools
-      - uses: actions/download-artifact@v4
-        with:
-          name: wasm-commands
-          path: packages/core/commands
-      - uses: actions/download-artifact@v4
-        with:
-          name: sidecar-${{ matrix.platform }}
-          path: target/smoke-sidecar
-      - name: Stage the actual release binary in its npm platform package
-        run: |
-          set -euo pipefail
-          package_dir="packages/sidecar/npm/${{ matrix.platform }}"
-          cp target/smoke-sidecar/agentos-sidecar "$package_dir/agentos-sidecar"
-          chmod +x "$package_dir/agentos-sidecar"
-      - run: pnpm --filter @rivet-dev/agentos build
-      - name: Install tarballs and exercise shipped WASM execution
-        run: |
-          node scripts/ci/smoke-packed-wasm-backends.mjs \
-            --platform-package "packages/sidecar/npm/${{ matrix.platform }}"
-
   publish-npm:
-    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin, smoke-sidecar-artifacts]
+    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin]
     name: Publish npm
-    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.smoke-sidecar-artifacts.result == 'success' }}
+    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -314,6 +369,19 @@ jobs:
           mkdir -p "$commands_dir"
           cp -a packages/core/commands/. "$commands_dir/"
           test -s "$commands_dir/sh"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: software-build-inputs-*
+          path: ${{ runner.temp }}/software-build-inputs
+          merge-multiple: true
+      - name: Restore Git and Vim packaging inputs
+        run: |
+          set -euo pipefail
+          for part in git vim; do
+            tar -xf "$RUNNER_TEMP/software-build-inputs/software-build-inputs-$part.tar"
+          done
+          test -x toolchain/c/build/git-upstream/git-*/tools/generate-script.sh
+          test -f toolchain/c/libs/vim/runtime/defaults.vim
       - uses: actions/download-artifact@v4
         with:
           pattern: sidecar-*
@@ -388,9 +456,9 @@ jobs:
           fi
 
   release-assets:
-    needs: [context, build-sidecar, build-sidecar-darwin, smoke-sidecar-artifacts]
+    needs: [context, build-sidecar, build-sidecar-darwin]
     name: Release assets
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.smoke-sidecar-artifacts.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

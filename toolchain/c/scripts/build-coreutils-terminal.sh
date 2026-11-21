@@ -11,8 +11,7 @@ expected_sha256=394024eda0a5955217ceda9cd1201e65dc8fa3aa29c2951135a49521d57c3cc3
 
 mkdir -p "$(dirname "$archive")" "$root/vendor" "$output_dir"
 if [[ ! -f "$archive" ]]; then
-  curl --retry 3 --retry-all-errors -fSL \
-    "https://ftp.gnu.org/gnu/coreutils/coreutils-$version.tar.xz" -o "$archive"
+  "$root/scripts/fetch-gnu-release.sh" "coreutils/coreutils-$version.tar.xz" "$expected_sha256" "$archive"
 fi
 printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum -c -
 
