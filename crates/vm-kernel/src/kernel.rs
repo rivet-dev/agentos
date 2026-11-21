@@ -3230,10 +3230,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.check_dac_traversal(pid, path)?;
         let stat = self.filesystem.stat(path)?;
         if identity.euid != 0 && identity.euid != stat.uid {
-            return Err(KernelError::new(
-                "EPERM",
-                format!("chmod requires ownership of {path}"),
-            ));
+            let denied = KernelError::new("EPERM", format!("chmod requires ownership of {path}"));
+            return Err(self.prefer_read_only_mount_error(path, denied));
         }
         mode = mode_after_chmod_group_check(mode, &identity, stat.gid);
         self.chmod(path, mode)
@@ -3300,7 +3298,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         } else {
             self.lstat_for_process(requester_driver, pid, path)?
         };
-        let (next_uid, next_gid) = validate_chown_request(&identity, &stat, uid, gid, path)?;
+        let (next_uid, next_gid) = validate_chown_request(&identity, &stat, uid, gid, path)
+            .map_err(|denied| self.prefer_read_only_mount_error(path, denied))?;
 
         if follow_symlinks {
             self.reject_read_only_resolved_write_path(path)?;
@@ -3708,10 +3707,11 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         if !owns_file && sets_both_to_now {
             self.check_dac_mode_with_acl(&identity, &stat, DAC_WRITE, path)?;
         } else if !owns_file && !omits_both {
-            return Err(KernelError::new(
+            let denied = KernelError::new(
                 "EPERM",
                 format!("changing timestamps requires ownership of {path}"),
-            ));
+            );
+            return Err(self.prefer_read_only_mount_error(path, denied));
         }
         if follow_symlinks {
             self.utimes_spec(path, atime, mtime)
@@ -11937,6 +11937,45 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         access: u32,
         path: &str,
     ) -> KernelResult<()> {
+        let checked = self.evaluate_dac_mode_with_acl(identity, stat, access, path);
+        if access & DAC_WRITE == 0 {
+            return checked;
+        }
+        // Like Linux `sb_permission`, device nodes, FIFOs, and sockets stay
+        // writable on a read-only mount.
+        if matches!(
+            stat.mode & 0o170000,
+            0o010000 | 0o020000 | 0o060000 | 0o140000
+        ) {
+            return checked;
+        }
+        checked.map_err(|denied| self.prefer_read_only_mount_error(path, denied))
+    }
+
+    /// Linux refuses a write to a read-only mount with `EROFS` before it looks
+    /// at ownership or mode bits. The mount layer reports `EROFS` itself once
+    /// those checks pass, so only a denial needs the mount consulted.
+    fn prefer_read_only_mount_error(&self, path: &str, denied: KernelError) -> KernelError {
+        if !matches!(denied.code(), "EACCES" | "EPERM") {
+            return denied;
+        }
+        let read_only = (self.filesystem.inner().inner() as &dyn Any)
+            .downcast_ref::<MountTable>()
+            .is_some_and(|mounts| mounts.path_is_on_read_only_mount(path));
+        if read_only {
+            read_only_filesystem_error(path)
+        } else {
+            denied
+        }
+    }
+
+    fn evaluate_dac_mode_with_acl(
+        &mut self,
+        identity: &ProcessIdentity,
+        stat: &VirtualStat,
+        access: u32,
+        path: &str,
+    ) -> KernelResult<()> {
         // POSIX ACL USER_OBJ permissions are mirrored in the inode's owner mode
         // bits. Named ACL entries and the ACL mask never override the file
         // owner's class, so reading the ACL xattr for the owner is redundant.
@@ -12059,10 +12098,11 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         if identity.euid == target.uid {
             Ok(())
         } else {
-            Err(KernelError::new(
+            let denied = KernelError::new(
                 "EPERM",
                 format!("sticky directory prevents removing {path}"),
-            ))
+            );
+            Err(self.prefer_read_only_mount_error(&parent_path(path), denied))
         }
     }
 

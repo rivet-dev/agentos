@@ -3153,6 +3153,24 @@ function throwNormalizedFsBridgeError(err, syscall, path) {
 	}
 	throw toNodeFsError(err, syscall, path);
 }
+// A whole-file write is one bridge call, but Node opens the file first, so a
+// failure to reach or open it reports `open`, as in Node.
+const WRITE_FILE_OPEN_ERROR_CODES = new Set([
+	"EACCES",
+	"EISDIR",
+	"ELOOP",
+	"ENAMETOOLONG",
+	"ENOENT",
+	"ENOTDIR",
+	"EPERM",
+	"EROFS",
+]);
+function throwWriteFileBridgeError(err, path) {
+	const syscall = WRITE_FILE_OPEN_ERROR_CODES.has(bridgeErrorCode(err))
+		? "open"
+		: "write";
+	throwNormalizedFsBridgeError(err, syscall, path);
+}
 function joinDirEntryPath(dirPath, entryName) {
 	if (dirPath === "/") {
 		return `/${entryName}`;
@@ -3318,7 +3336,7 @@ async function fsWriteFileAsync(file, data, options) {
 		}
 		return await _fsAsync.writeFile.apply(void 0, [pathStr, String(data)]);
 	} catch (err) {
-		throwNormalizedFsBridgeError(err, "write", rawPath);
+		throwWriteFileBridgeError(err, rawPath);
 	}
 }
 async function fsReaddirAsync(path, options) {
@@ -3728,7 +3746,7 @@ var fs = {
 				return _fs.writeFile.applySyncPromise(void 0, [pathStr, String(data)]);
 			}
 		} catch (err) {
-			throwNormalizedFsBridgeError(err, "write", rawPath);
+			throwWriteFileBridgeError(err, rawPath);
 		}
 	},
 	appendFileSync(path, data, options) {
