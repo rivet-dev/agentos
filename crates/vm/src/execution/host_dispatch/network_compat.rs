@@ -252,50 +252,6 @@ fn indexed_posix_poll_response(
     json!({ "readyCount": ready_count, "fds": fds })
 }
 
-fn native_tcp_listener_waiters(
-    managed_descriptions: &ManagedHostNetDescriptionRegistry,
-    kernel: &SidecarKernel,
-    process: &ActiveProcess,
-    interests: &[KernelPollInterest],
-) -> Result<Vec<tokio::io::unix::AsyncFd<std::net::TcpListener>>, VmError> {
-    let descriptions = managed_descriptions
-        .lock()
-        .map_err(|_| VmError::host("EIO", "managed description registry lock poisoned"))?;
-    let mut waiters = Vec::new();
-    for interest in interests
-        .iter()
-        .filter(|interest| interest.events & POSIX_READ_EVENTS != 0)
-    {
-        let Ok((description_id, _)) =
-            kernel.fd_description_identity(EXECUTION_DRIVER_NAME, process.kernel_pid, interest.fd)
-        else {
-            continue;
-        };
-        let Some(ManagedHostNetRoute::TcpListener(listener_id)) = descriptions
-            .get(&description_id)
-            .and_then(|description| description.route_for(process.kernel_pid))
-        else {
-            continue;
-        };
-        let Some(listener) = process
-            .tcp_listeners
-            .get(listener_id)
-            .and_then(|listener| listener.listener.as_ref())
-        else {
-            continue;
-        };
-        waiters.push(
-            tokio::io::unix::AsyncFd::new(listener.try_clone().map_err(|error| {
-                VmError::host("EIO", format!("clone TCP listener for poll: {error}"))
-            })?)
-            .map_err(|error| {
-                VmError::host("EIO", format!("register TCP listener poll waiter: {error}"))
-            })?,
-        );
-    }
-    Ok(waiters)
-}
-
 fn managed_posix_poll_read_notifies(
     managed_descriptions: &ManagedHostNetDescriptionRegistry,
     kernel: &SidecarKernel,
@@ -334,10 +290,24 @@ fn managed_posix_poll_read_notifies(
                 .udp_sockets
                 .get(socket_id)
                 .map(|socket| Arc::clone(&socket.read_event_notify)),
+            ManagedHostNetRoute::TcpListener(id) => {
+                let listener = process
+                    .tcp_listeners
+                    .get(id)
+                    .ok_or_else(|| VmError::host("EBADF", "managed TCP listener is stale"))?;
+                // Guest listeners are kernel sockets. The kernel poll handle wakes
+                // this wait when a connection is ready for accept.
+                if listener.kernel_socket_id.is_none() {
+                    return Err(VmError::host(
+                        "ENOTSUP",
+                        "poll requires a kernel TCP listener",
+                    ));
+                }
+                None
+            }
             ManagedHostNetRoute::Unbound
             | ManagedHostNetRoute::TcpBound { .. }
             | ManagedHostNetRoute::UnixBound { .. }
-            | ManagedHostNetRoute::TcpListener(_)
             | ManagedHostNetRoute::UnixListener(_) => None,
         };
         if let Some(notify) = notify {
@@ -377,24 +347,11 @@ async fn wait_for_managed_posix_poll_readiness(notifies: Vec<Arc<tokio::sync::No
 async fn wait_for_posix_poll_change(
     wait_handle: agentos_vm_kernel::poll::PollWaitHandle,
     observed: u64,
-    native_listener_waiters: Vec<tokio::io::unix::AsyncFd<std::net::TcpListener>>,
     managed_read_notifies: Vec<Arc<tokio::sync::Notify>>,
     deadline: Option<Instant>,
 ) {
     // The global process-event broker is intentionally absent. It wakes the
     // owner pump, and a poll waiting on it can consume its own published wake.
-    let native_listener_ready = std::future::poll_fn(|cx| {
-        if native_listener_waiters.is_empty() {
-            return std::task::Poll::Pending;
-        }
-        for waiter in &native_listener_waiters {
-            if waiter.poll_read_ready(cx).is_ready() {
-                return std::task::Poll::Ready(());
-            }
-        }
-        std::task::Poll::Pending
-    });
-    tokio::pin!(native_listener_ready);
     let managed_read_ready = wait_for_managed_posix_poll_readiness(managed_read_notifies);
     tokio::pin!(managed_read_ready);
     match deadline {
@@ -402,7 +359,6 @@ async fn wait_for_posix_poll_change(
             let delay = deadline.saturating_duration_since(Instant::now());
             tokio::select! {
                 _ = wait_handle.wait_for_change_async(observed) => {}
-                _ = &mut native_listener_ready => {}
                 _ = &mut managed_read_ready => {}
                 _ = tokio::time::sleep(delay) => {}
             }
@@ -410,7 +366,6 @@ async fn wait_for_posix_poll_change(
         None => {
             tokio::select! {
                 _ = wait_handle.wait_for_change_async(observed) => {}
-                _ = &mut native_listener_ready => {}
                 _ = &mut managed_read_ready => {}
             }
         }
@@ -710,17 +665,6 @@ pub(in crate::execution) fn service_deferred_posix_poll(
     }
 
     let deadline = poll.deadline;
-    let native_listener_waiters = match native_tcp_listener_waiters(
-        &managed_descriptions,
-        kernel,
-        process,
-        poll.interests.as_slice(),
-    ) {
-        Ok(waiters) => waiters,
-        Err(error) => {
-            return fail_deferred_posix_poll(process, poll, host_service_error(&error));
-        }
-    };
     let managed_read_notifies = match managed_posix_poll_read_notifies(
         &managed_descriptions,
         kernel,
@@ -734,14 +678,7 @@ pub(in crate::execution) fn service_deferred_posix_poll(
     };
     let task_wake_lane = wake_lane.clone();
     let wake_task = runtime.spawn(agentos_driver_tokio::TaskClass::Vm, async move {
-        wait_for_posix_poll_change(
-            wait_handle,
-            observed,
-            native_listener_waiters,
-            managed_read_notifies,
-            deadline,
-        )
-        .await;
+        wait_for_posix_poll_change(wait_handle, observed, managed_read_notifies, deadline).await;
         task_wake_lane.publish().await;
     });
     match wake_task {
@@ -4084,11 +4021,7 @@ where
                         if !(-1..=255).contains(&value) {
                             return Err(VmError::host("EINVAL", "IPV6_TCLASS must be -1 or0..255"));
                         }
-                        if value == -1 {
-                            0
-                        } else {
-                            value as u8
-                        }
+                        if value == -1 { 0 } else { value as u8 }
                     } else {
                         value as u8
                     } & !3;
@@ -4124,7 +4057,7 @@ where
                             return Err(VmError::host(
                                 "ENOPROTOOPT",
                                 "traffic class option is unsupported for this transport",
-                            ))
+                            ));
                         }
                     };
                     let description = descriptions
@@ -4252,14 +4185,16 @@ where
                             "receive metadata requires a UDP route",
                         ));
                     };
-                    json!(context
-                        .process
-                        .udp_sockets
-                        .get(id)
-                        .ok_or_else(|| VmError::host("EBADF", "managed UDP route is stale"))?
-                        .receive_metadata_option(udp_receive_metadata_bit(name).ok_or_else(
-                            || VmError::host("EINVAL", "unknown receive metadata option")
-                        )?)? as u8)
+                    json!(
+                        context
+                            .process
+                            .udp_sockets
+                            .get(id)
+                            .ok_or_else(|| VmError::host("EBADF", "managed UDP route is stale"))?
+                            .receive_metadata_option(udp_receive_metadata_bit(name).ok_or_else(
+                                || VmError::host("EINVAL", "unknown receive metadata option")
+                            )?)? as u8
+                    )
                 }
                 SocketOptionName::Domain => json!(match description.domain {
                     HostSocketDomain::Unix => 1,
@@ -4280,27 +4215,39 @@ where
                         .route_for(context.process.kernel_pid)
                         .ok_or_else(|| VmError::host("ESTALE", "managed socket route is missing"))?
                     {
-                        ManagedHostNetRoute::UdpSocket(id) => json!(context
-                            .process
-                            .udp_sockets
-                            .get(id)
-                            .ok_or_else(|| VmError::host("EBADF", "managed UDP route is stale"))?
-                            .traffic_class(ipv6)?),
-                        ManagedHostNetRoute::TcpSocket(id) => json!(context
-                            .process
-                            .tcp_sockets
-                            .get(id)
-                            .ok_or_else(|| VmError::host("EBADF", "managed TCP route is stale"))?
-                            .traffic_class(context.kernel, ipv6)?),
-                        ManagedHostNetRoute::TcpListener(id) => json!(context
-                            .process
-                            .tcp_listeners
-                            .get(id)
-                            .ok_or_else(|| VmError::host(
-                                "EBADF",
-                                "managed TCP listener route is stale"
-                            ))?
-                            .traffic_class(context.kernel, ipv6)?),
+                        ManagedHostNetRoute::UdpSocket(id) => json!(
+                            context
+                                .process
+                                .udp_sockets
+                                .get(id)
+                                .ok_or_else(|| VmError::host(
+                                    "EBADF",
+                                    "managed UDP route is stale"
+                                ))?
+                                .traffic_class(ipv6)?
+                        ),
+                        ManagedHostNetRoute::TcpSocket(id) => json!(
+                            context
+                                .process
+                                .tcp_sockets
+                                .get(id)
+                                .ok_or_else(|| VmError::host(
+                                    "EBADF",
+                                    "managed TCP route is stale"
+                                ))?
+                                .traffic_class(context.kernel, ipv6)?
+                        ),
+                        ManagedHostNetRoute::TcpListener(id) => json!(
+                            context
+                                .process
+                                .tcp_listeners
+                                .get(id)
+                                .ok_or_else(|| VmError::host(
+                                    "EBADF",
+                                    "managed TCP listener route is stale"
+                                ))?
+                                .traffic_class(context.kernel, ipv6)?
+                        ),
                         ManagedHostNetRoute::Unbound | ManagedHostNetRoute::TcpBound { .. } => {
                             json!(if ipv6 {
                                 description.ipv6_traffic_class
@@ -4312,7 +4259,7 @@ where
                             return Err(VmError::host(
                                 "ENOPROTOOPT",
                                 "traffic class option is unsupported for this transport",
-                            ))
+                            ));
                         }
                     }
                 }
@@ -5853,7 +5800,7 @@ mod managed_tests {
 
     #[test]
     fn every_frozen_network_family_rpc_has_a_typed_operation_route() {
-        use crate::execution::host_dispatch::inventory::{capability_family, HostCapabilityFamily};
+        use crate::execution::host_dispatch::inventory::{HostCapabilityFamily, capability_family};
         for method in WASM_RUNNER_RPC_INVENTORY
             .iter()
             .copied()
@@ -6154,14 +6101,8 @@ mod managed_tests {
             };
             let waiter_socket_ready = Arc::clone(&socket_ready);
             let waiter = tokio::spawn(async move {
-                wait_for_posix_poll_change(
-                    wait_handle,
-                    observed,
-                    Vec::new(),
-                    vec![waiter_socket_ready],
-                    None,
-                )
-                .await;
+                wait_for_posix_poll_change(wait_handle, observed, vec![waiter_socket_ready], None)
+                    .await;
                 lane.publish().await;
             });
             tokio::task::yield_now().await;

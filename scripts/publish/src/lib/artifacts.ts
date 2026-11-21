@@ -16,7 +16,7 @@ export function releaseArtifactNamespace(env: ArtifactEnv = process.env): string
 export function releaseArtifactPrefix(
 	artifact: ReleaseArtifactRef,
 	env: ArtifactEnv = process.env,
-): string {	
+): string {
 	for (const field of ["ref", "name"] as const) {
 		if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(artifact[field])) {
 			throw new Error(`Invalid release artifact ${field}`);

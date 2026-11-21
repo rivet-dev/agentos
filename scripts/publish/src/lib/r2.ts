@@ -23,12 +23,12 @@ const BUCKET = "rivet-releases";
 const ENDPOINT_URL =
 	"https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com";
 
-const MAX_ARTIFACT_ENTRIES = 4096;
-const MAX_ARTIFACT_DEPTH = 32;
-
 type R2Env = Record<string, string>;
 
 let cached: R2Env | null = null;
+
+const MAX_ARTIFACT_ENTRIES = 4096;
+const MAX_ARTIFACT_DEPTH = 32;
 
 function getR2Env(): R2Env {
 	if (cached) return cached;

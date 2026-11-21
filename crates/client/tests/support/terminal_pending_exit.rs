@@ -10,7 +10,7 @@ async fn terminal_close_preserves_pending_wait_without_admitting_writes() {
         let (spawned, exit, process_id) = vm
             .inner
             .shells
-            .read(&shell.shell_id, |_, entry| {
+            .read_sync(&shell.shell_id, |_, entry| {
                 (
                     entry.spawned_tx.clone(),
                     entry.exit_tx.clone(),
@@ -20,7 +20,7 @@ async fn terminal_close_preserves_pending_wait_without_admitting_writes() {
             .unwrap();
         vm.inner
             .shells
-            .update(&shell.shell_id, |_, entry| entry.pid = 42);
+            .update_sync(&shell.shell_id, |_, entry| entry.pid = 42);
         spawned.send_replace(Some(Ok(())));
         vm.close_shell(&shell.shell_id).unwrap();
         assert_eq!(

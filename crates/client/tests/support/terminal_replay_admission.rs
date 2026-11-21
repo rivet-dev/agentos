@@ -11,7 +11,7 @@ async fn terminal_snapshot_waits_for_launch_and_preserves_typed_failure() {
     assert!(vm
         .inner
         .shells
-        .insert(
+        .insert_sync(
             "shell-gate".into(),
             ShellEntry {
                 pid: 0,
@@ -38,7 +38,7 @@ async fn terminal_snapshot_waits_for_launch_and_preserves_typed_failure() {
         let result = tokio::time::timeout(Duration::from_millis(100), &mut snapshot).await;
         (was_pending, result)
     };
-    vm.inner.shells.remove("shell-gate");
+    vm.inner.shells.remove_sync("shell-gate");
     tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
         .await
         .unwrap()

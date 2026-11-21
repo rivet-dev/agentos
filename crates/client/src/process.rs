@@ -1230,7 +1230,7 @@ impl AgentOs {
         let mut rx = self
             .inner()
             .processes
-            .read(&pid, |_, entry| entry.output_tx.subscribe())
+            .read_sync(&pid, |_, entry| entry.output_tx.subscribe())
             .ok_or(ClientError::ProcessNotFound(pid))?;
         let task = tokio::spawn(async move {
             loop {
@@ -1262,7 +1262,7 @@ impl AgentOs {
         let mut rx = self
             .inner()
             .processes
-            .read(&pid, |_, entry| entry.exit_tx.subscribe())
+            .read_sync(&pid, |_, entry| entry.exit_tx.subscribe())
             .ok_or(ClientError::ProcessNotFound(pid))?;
 
         // Already-exited branch: fire immediately + synchronously, return a no-op unsubscribe.
@@ -1308,7 +1308,7 @@ impl AgentOs {
         let (rx, process_id) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| {
+            .read_sync(&pid, |_, entry| {
                 (entry.exit_tx.subscribe(), entry.process_id.clone())
             })
             .ok_or(ClientError::ProcessNotFound(pid))?;
@@ -1334,7 +1334,7 @@ impl AgentOs {
         ) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| {
+            .read_sync(&pid, |_, entry| {
                 (
                     entry.process_id.clone(),
                     entry.retain_output,
@@ -1495,7 +1495,7 @@ impl AgentOs {
         let observed_exit = self
             .inner()
             .processes
-            .read(&pid, |_, entry| {
+            .read_sync(&pid, |_, entry| {
                 if entry.process_id != process_id {
                     return None;
                 }
@@ -1530,7 +1530,7 @@ impl AgentOs {
     /// List SDK-spawned processes only. `running = exit_code.is_none()`.
     pub fn list_processes(&self) -> Vec<SpawnedProcessInfo> {
         let mut out = Vec::new();
-        self.inner().processes.scan(|pid, entry| {
+        self.inner().processes.iter_sync(|pid, entry| {
             let observed = entry.exit_tx.borrow();
             let exit_code = observed.exit_code();
             let exit_signal = observed.exit(*pid).and_then(|exit| exit.exit_signal);
@@ -1543,6 +1543,8 @@ impl AgentOs {
                 exit_signal,
                 started_at: entry.started_at,
             });
+
+            true
         });
         out
     }
@@ -1595,7 +1597,7 @@ impl AgentOs {
         }
         let mut tracked_by_process_id: BTreeMap<String, Tracked> = BTreeMap::new();
         let mut display_pid_by_kernel_pid: BTreeMap<u32, u32> = BTreeMap::new();
-        self.inner().processes.scan(|display_pid, entry| {
+        self.inner().processes.iter_sync(|display_pid, entry| {
             let observed = entry.exit_tx.borrow();
             let exit_code = observed.exit_code();
             let exit_signal = observed
@@ -1614,6 +1616,8 @@ impl AgentOs {
                     args: entry.args.clone(),
                 },
             );
+
+            true
         });
 
         let now_ms = epoch_ms_now();
@@ -1630,7 +1634,7 @@ impl AgentOs {
                     let observed = self
                         .inner()
                         .processes
-                        .read(&tracked.display_pid, |_, process| {
+                        .read_sync(&tracked.display_pid, |_, process| {
                             if process.process_id != entry.process_id {
                                 return None;
                             }
@@ -1728,9 +1732,9 @@ impl AgentOs {
 
         // Tracked processes not yet present in the snapshot (the spawn `Execute` has not surfaced in
         // the kernel table yet). TS fills these with `ppid:0, pgid/sid = pid`.
-        self.inner().processes.scan(|display_pid, entry| {
+        self.inner().processes.iter_sync(|display_pid, entry| {
             if seen_process_ids.contains(&entry.process_id) {
-                return;
+                return true;
             }
             let observed = entry.exit_tx.borrow();
             let exit_code = observed.exit_code();
@@ -1766,6 +1770,8 @@ impl AgentOs {
                     exit_time,
                 },
             });
+
+            true
         });
 
         out.sort_by_key(|record| record.info.pid);
@@ -1779,14 +1785,14 @@ impl AgentOs {
         if let Some(existing) = self
             .inner()
             .observed_process_start_times
-            .read(process_key, |_, value| *value)
+            .read_sync(process_key, |_, value| *value)
         {
             return existing;
         }
         let _ = self
             .inner()
             .observed_process_start_times
-            .insert(process_key.to_owned(), now_ms);
+            .insert_sync(process_key.to_owned(), now_ms);
         prune_string_f64_map(
             &self.inner().observed_process_start_times,
             OBSERVED_PROCESS_TIME_LIMIT,
@@ -1795,7 +1801,7 @@ impl AgentOs {
         // timestamp.
         self.inner()
             .observed_process_start_times
-            .read(process_key, |_, value| *value)
+            .read_sync(process_key, |_, value| *value)
             .unwrap_or(now_ms)
     }
 
@@ -1805,21 +1811,21 @@ impl AgentOs {
         if let Some(existing) = self
             .inner()
             .observed_process_exit_times
-            .read(process_id, |_, value| *value)
+            .read_sync(process_id, |_, value| *value)
         {
             return existing;
         }
         let _ = self
             .inner()
             .observed_process_exit_times
-            .insert(process_id.to_owned(), now_ms);
+            .insert_sync(process_id.to_owned(), now_ms);
         prune_string_f64_map(
             &self.inner().observed_process_exit_times,
             OBSERVED_PROCESS_TIME_LIMIT,
         );
         self.inner()
             .observed_process_exit_times
-            .read(process_id, |_, value| *value)
+            .read_sync(process_id, |_, value| *value)
             .unwrap_or(now_ms)
     }
 
@@ -1833,7 +1839,7 @@ impl AgentOs {
     pub fn get_process(&self, pid: u32) -> std::result::Result<SpawnedProcessInfo, ClientError> {
         self.inner()
             .processes
-            .read(&pid, |pid, entry| {
+            .read_sync(&pid, |pid, entry| {
                 let observed = entry.exit_tx.borrow();
                 let exit_code = observed.exit_code();
                 let exit_signal = observed.exit(*pid).and_then(|exit| exit.exit_signal);
@@ -1869,7 +1875,7 @@ impl AgentOs {
         let (process_id, already_exited) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| {
+            .read_sync(&pid, |_, entry| {
                 (
                     entry.process_id.clone(),
                     entry.exit_tx.borrow().reclaimable(),
@@ -1939,7 +1945,7 @@ impl AgentOs {
     ) -> std::result::Result<Option<ProcessStdin>, ClientError> {
         self.inner()
             .processes
-            .read(&pid, |_, entry| {
+            .read_sync(&pid, |_, entry| {
                 entry
                     .exit_tx
                     .borrow()
@@ -1953,7 +1959,7 @@ impl AgentOs {
     fn live_process_id(&self, pid: u32) -> std::result::Result<Option<String>, ClientError> {
         self.inner()
             .processes
-            .read(&pid, |_, entry| {
+            .read_sync(&pid, |_, entry| {
                 entry
                     .exit_tx
                     .borrow()
@@ -1968,7 +1974,7 @@ impl AgentOs {
     fn lookup_process_id(&self, pid: u32) -> std::result::Result<String, ClientError> {
         self.inner()
             .processes
-            .read(&pid, |_, entry| entry.process_id.clone())
+            .read_sync(&pid, |_, entry| entry.process_id.clone())
             .ok_or(ClientError::ProcessNotFound(pid))
     }
 
@@ -1976,7 +1982,7 @@ impl AgentOs {
         let (process_id, mut started, mut outcome) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| {
+            .read_sync(&pid, |_, entry| {
                 (
                     entry.process_id.clone(),
                     entry.kernel_pid.subscribe(),
@@ -2066,7 +2072,7 @@ impl AgentOs {
         let (process_id, already_exited) = self
             .inner()
             .processes
-            .read(&pid, |_, entry| {
+            .read_sync(&pid, |_, entry| {
                 (
                     entry.process_id.clone(),
                     entry.exit_tx.borrow().reclaimable(),
@@ -2134,8 +2140,10 @@ impl AgentOs {
 
     fn process_registry_len_locked(&self) -> usize {
         let mut count = 0usize;
-        self.inner().processes.scan(|_, _| {
+        self.inner().processes.iter_sync(|_, _| {
             count += 1;
+
+            true
         });
         count
     }
@@ -2178,8 +2186,10 @@ impl AgentOs {
 
     fn prune_exited_processes_locked(&self, reserve_slots: usize) {
         let mut entries = Vec::new();
-        self.inner().processes.scan(|pid, entry| {
+        self.inner().processes.iter_sync(|pid, entry| {
             entries.push((*pid, entry.exit_tx.borrow().reclaimable(), entry.started_at));
+
+            true
         });
         let target_len = PROCESS_REGISTRY_LIMIT.saturating_sub(reserve_slots);
         if entries.len() <= target_len {
@@ -2192,20 +2202,23 @@ impl AgentOs {
     }
 
     fn remove_process_tracking_locked(&self, pid: u32) {
-        if let Some((_, entry)) = self.inner().processes.remove(&pid) {
+        if let Some((_, entry)) = self.inner().processes.remove_sync(&pid) {
             let _time_guard = self.inner().observed_process_time_lock.lock();
             let _ = self
                 .inner()
                 .observed_process_exit_times
-                .remove(&entry.process_id);
+                .remove_sync(&entry.process_id);
             let fallback_start_key = format!("{}:{pid}", entry.process_id);
             let _ = self
                 .inner()
                 .observed_process_start_times
-                .remove(&fallback_start_key);
+                .remove_sync(&fallback_start_key);
             if let Some(kernel_pid) = *entry.kernel_pid.borrow() {
                 let start_key = format!("{}:{kernel_pid}", entry.process_id);
-                let _ = self.inner().observed_process_start_times.remove(&start_key);
+                let _ = self
+                    .inner()
+                    .observed_process_start_times
+                    .remove_sync(&start_key);
             }
         }
     }
@@ -2356,11 +2369,15 @@ impl ProcessRegistryReservation {
     ) -> std::result::Result<(), ClientError> {
         let client = self.client.clone();
         let _guard = client.inner().process_registry_lock.lock();
-        client.inner().processes.insert(pid, entry).map_err(|_| {
-            ClientError::Sidecar(format!(
-                "process registry already contains public pid {pid}; retry the spawn"
-            ))
-        })?;
+        client
+            .inner()
+            .processes
+            .insert_sync(pid, entry)
+            .map_err(|_| {
+                ClientError::Sidecar(format!(
+                    "process registry already contains public pid {pid}; retry the spawn"
+                ))
+            })?;
         client
             .inner()
             .pending_process_registrations
@@ -2583,8 +2600,10 @@ fn exited_pids_to_prune(mut entries: Vec<(u32, bool, i64)>, target_len: usize) -
 
 fn prune_string_f64_map(map: &SccHashMap<String, f64>, limit: usize) {
     let mut keys = Vec::new();
-    map.scan(|key, _| {
+    map.iter_sync(|key, _| {
         keys.push(key.clone());
+
+        true
     });
     if keys.len() <= limit {
         return;
@@ -2592,7 +2611,7 @@ fn prune_string_f64_map(map: &SccHashMap<String, f64>, limit: usize) {
     let remove_count = keys.len() - limit;
     keys.sort();
     for key in keys.into_iter().take(remove_count) {
-        let _ = map.remove(&key);
+        let _ = map.remove_sync(&key);
     }
 }
 
@@ -2652,7 +2671,7 @@ pub(crate) fn drain_process_output_tasks(
 ) -> Vec<PendingLanguageExit> {
     let mut tasks = Vec::new();
     let mut pending_language = Vec::new();
-    processes.retain(|_, entry| {
+    processes.retain_sync(|_, entry| {
         let pending = matches!(*entry.exit_tx.borrow(), ProcessOutcome::Pending);
         match entry.execution_id.clone() {
             Some(execution_id) if pending => pending_language.push(PendingLanguageExit {
@@ -3125,7 +3144,7 @@ mod tests {
             started_at: 0,
             stdin: super::ProcessStdin::channel().0,
         };
-        let _ = processes.insert(1, entry);
+        let _ = processes.insert_sync(1, entry);
 
         assert!(!abort_handle.is_finished(), "task should start alive");
 
@@ -3217,7 +3236,7 @@ mod tests {
 
         // And it is the handle `drain_process_output_tasks` aborts on teardown.
         let processes: SccHashMap<u32, ProcessEntry> = SccHashMap::new();
-        let _ = processes.insert(1, entry);
+        let _ = processes.insert_sync(1, entry);
         drain_process_output_tasks(&processes);
         assert!(processes.is_empty(), "registry must be cleared on drain");
     }
@@ -3318,15 +3337,15 @@ mod tests {
     #[test]
     fn observed_time_pruning_enforces_limit() {
         let map = SccHashMap::new();
-        let _ = map.insert("b".to_string(), 2.0);
-        let _ = map.insert("a".to_string(), 1.0);
-        let _ = map.insert("c".to_string(), 3.0);
+        let _ = map.insert_sync("b".to_string(), 2.0);
+        let _ = map.insert_sync("a".to_string(), 1.0);
+        let _ = map.insert_sync("c".to_string(), 3.0);
 
         prune_string_f64_map(&map, 2);
 
-        assert!(map.read("a", |_, _| ()).is_none());
-        assert!(map.read("b", |_, _| ()).is_some());
-        assert!(map.read("c", |_, _| ()).is_some());
+        assert!(map.read_sync("a", |_, _| ()).is_none());
+        assert!(map.read_sync("b", |_, _| ()).is_some());
+        assert!(map.read_sync("c", |_, _| ()).is_some());
     }
     #[tokio::test]
     async fn complete_wait_status_keeps_observed_signal_distinct_from_exit_code() {

@@ -394,14 +394,14 @@ impl AgentOs {
             let mut events = transport.subscribe_wire_events();
             let create_vm_config = serialize_create_vm_config_for_sidecar(&config)?;
             if let Some(callback) = config.sidecar_js_bridge_callback.clone() {
-                let _ = session_js_bridge_callbacks().insert(session_key.clone(), callback);
+                let _ = session_js_bridge_callbacks().insert_sync(session_key.clone(), callback);
                 transport.register_wire_callback(
                     "js_bridge_call",
                     js_bridge_call_callback(transport_id),
                 );
             }
             if let Some(callback) = config.sidecar_sqlite_callback.clone() {
-                let _ = session_sqlite_callbacks().insert(session_key.clone(), callback);
+                let _ = session_sqlite_callbacks().insert_sync(session_key.clone(), callback);
                 transport.register_wire_callback("ext", sqlite_callback_callback(transport_id));
             }
 
@@ -695,7 +695,7 @@ impl AgentOs {
                         }
                     }
                 }
-                let _ = vm_host_functions().insert(
+                let _ = vm_host_functions().insert_sync(
                     vm_route_key(transport_id, &vm_id),
                     Arc::new(VmHostFunctionRegistry {
                         host_functions: resolved_host_functions.clone(),
@@ -772,11 +772,11 @@ impl AgentOs {
                     tracing::error!(%vm_id, %error, "failed to dispose partially initialized VM; retaining sidecar ownership until explicit worker shutdown");
                 }
                 let route = vm_route_key(transport.instance_id(), &vm_id);
-                vm_host_functions().remove(&route);
+                vm_host_functions().remove_sync(&route);
             }
             if let Some(key) = created_session_key {
-                session_js_bridge_callbacks().remove(&key);
-                session_sqlite_callbacks().remove(&key);
+                session_js_bridge_callbacks().remove_sync(&key);
+                session_sqlite_callbacks().remove_sync(&key);
             }
             if let Some(lease) = lease {
                 if cleanup_confirmed {
@@ -1047,7 +1047,7 @@ impl AgentOs {
         // 2-5. Best-effort drain tracked shell and terminal tasks before the VM is disposed, bounded
         //      by SHELL_DISPOSE_TIMEOUT_MS so late output cannot race a closed transport.
         let mut exit_tasks = Vec::new();
-        self.inner.pending_shell_exits.retain(|_, pending| {
+        self.inner.pending_shell_exits.retain_sync(|_, pending| {
             exit_tasks.push(std::mem::replace(&mut pending.task, tokio::spawn(async {})));
             false
         });
@@ -1055,7 +1055,7 @@ impl AgentOs {
         {
             let _terminal_lifecycle_guard = self.inner.terminal_lifecycle_lock.lock().await;
             let mut terminal_entries = Vec::new();
-            self.inner.terminals.retain(|process_id, entry| {
+            self.inner.terminals.retain_sync(|process_id, entry| {
                 terminal_entries.push((
                     process_id.clone(),
                     std::mem::replace(&mut entry.exit_task, tokio::spawn(async {})),
@@ -1148,9 +1148,9 @@ impl AgentOs {
                 &self.inner.connection_id,
                 &self.inner.session_id,
             );
-            let _ = vm_host_functions().remove(&vm_route);
-            let _ = session_js_bridge_callbacks().remove(&session_key);
-            let _ = session_sqlite_callbacks().remove(&session_key);
+            let _ = vm_host_functions().remove_sync(&vm_route);
+            let _ = session_js_bridge_callbacks().remove_sync(&session_key);
+            let _ = session_sqlite_callbacks().remove_sync(&session_key);
         }
         let sidecar = self.inner.sidecar.clone();
         let lease = if confirmed {
@@ -1687,9 +1687,9 @@ fn session_sqlite_callbacks() -> &'static SccHashMap<String, SidecarSqliteCallba
 /// Call only after child reap; a disconnected transport may still need callbacks.
 pub(crate) fn release_transport_callback_routes(transport_id: u64) {
     let prefix = format!("{transport_id}\0");
-    vm_host_functions().retain(|key, _| !key.starts_with(&prefix));
-    session_js_bridge_callbacks().retain(|key, _| !key.starts_with(&prefix));
-    session_sqlite_callbacks().retain(|key, _| !key.starts_with(&prefix));
+    vm_host_functions().retain_sync(|key, _| !key.starts_with(&prefix));
+    session_js_bridge_callbacks().retain_sync(|key, _| !key.starts_with(&prefix));
+    session_sqlite_callbacks().retain_sync(|key, _| !key.starts_with(&prefix));
 }
 
 // Sidecar processes number connections, sessions, and VMs independently, so the
@@ -1784,7 +1784,8 @@ fn sqlite_callback_callback(transport_id: u64) -> WireSidecarCallback {
                 Ok(request) => {
                     let callback =
                         wire_ownership_session_key(transport_id, &ownership).and_then(|key| {
-                            session_sqlite_callbacks().read(&key, |_, callback| callback.clone())
+                            session_sqlite_callbacks()
+                                .read_sync(&key, |_, callback| callback.clone())
                         });
                     match callback {
                         Some(callback) => match callback(request).await {
@@ -1832,8 +1833,9 @@ async fn run_js_bridge_callback(
             };
         }
     };
-    let callback = wire_ownership_session_key(transport_id, ownership)
-        .and_then(|key| session_js_bridge_callbacks().read(&key, |_, callback| callback.clone()));
+    let callback = wire_ownership_session_key(transport_id, ownership).and_then(|key| {
+        session_js_bridge_callbacks().read_sync(&key, |_, callback| callback.clone())
+    });
     let Some(callback) = callback else {
         return wire::JsBridgeResultResponse {
             call_id,
@@ -1929,7 +1931,7 @@ async fn run_host_callback(
             };
         }
     };
-    let registry = vm_host_functions().read(vm_route, |_, registry| registry.clone());
+    let registry = vm_host_functions().read_sync(vm_route, |_, registry| registry.clone());
     let Some(registry) = registry else {
         return wire::HostCallbackResultResponse {
             invocation_id: request.invocation_id,
@@ -3136,7 +3138,7 @@ mod tests {
         let session_keys = ids.map(|id| sidecar_session_key(id, "connection", "session"));
         for i in 0..2 {
             assert!(vm_host_functions()
-                .insert(
+                .insert_sync(
                     vm_keys[i].clone(),
                     Arc::new(VmHostFunctionRegistry {
                         host_functions: Vec::new(),
@@ -3146,7 +3148,7 @@ mod tests {
                 .is_ok());
             let js: SidecarJsBridgeCallback = Arc::new(|_| Box::pin(async { Ok(None) }));
             assert!(session_js_bridge_callbacks()
-                .insert(session_keys[i].clone(), js)
+                .insert_sync(session_keys[i].clone(), js)
                 .is_ok());
             let sqlite: SidecarSqliteCallback = Arc::new(|_| {
                 Box::pin(async {
@@ -3156,14 +3158,14 @@ mod tests {
                 })
             });
             assert!(session_sqlite_callbacks()
-                .insert(session_keys[i].clone(), sqlite)
+                .insert_sync(session_keys[i].clone(), sqlite)
                 .is_ok());
         }
         let has_routes = |i: usize| {
             [
-                vm_host_functions().contains(&vm_keys[i]),
-                session_js_bridge_callbacks().contains(&session_keys[i]),
-                session_sqlite_callbacks().contains(&session_keys[i]),
+                vm_host_functions().contains_sync(&vm_keys[i]),
+                session_js_bridge_callbacks().contains_sync(&session_keys[i]),
+                session_sqlite_callbacks().contains_sync(&session_keys[i]),
             ]
         };
         *vm.inner.disposal_test_request.lock() = Some(Arc::new(|| {
@@ -3191,9 +3193,9 @@ mod tests {
         let second = vm.shutdown().await.unwrap_err().to_string();
         peer.dispose().await.unwrap();
         for i in 0..2 {
-            vm_host_functions().remove(&vm_keys[i]);
-            session_js_bridge_callbacks().remove(&session_keys[i]);
-            session_sqlite_callbacks().remove(&session_keys[i]);
+            vm_host_functions().remove_sync(&vm_keys[i]);
+            session_js_bridge_callbacks().remove_sync(&session_keys[i]);
+            session_sqlite_callbacks().remove_sync(&session_keys[i]);
         }
         assert_eq!(retained_before_exit, [true; 3]);
         assert!(cancelled.is_err());
@@ -3222,7 +3224,7 @@ mod tests {
         owner.attach_test_transport(transport.clone()).await;
         let key = vm_route_key(transport.instance_id(), "dropped-vm");
         assert!(vm_host_functions()
-            .insert(
+            .insert_sync(
                 key.clone(),
                 Arc::new(VmHostFunctionRegistry {
                     host_functions: Vec::new(),
@@ -3240,9 +3242,9 @@ mod tests {
         let first = tokio::time::timeout(Duration::from_secs(2), owner.dispose())
             .await
             .unwrap();
-        let retained = vm_host_functions().contains(&key);
+        let retained = vm_host_functions().contains_sync(&key);
         let second = owner.dispose().await;
-        vm_host_functions().remove(&key);
+        vm_host_functions().remove_sync(&key);
         assert!(transport.has_confirmed_child_exit());
         let first = first.unwrap_err().to_string();
         assert!(first.contains("17"));
@@ -3258,7 +3260,7 @@ mod tests {
         let (vm, transport, peer) = injected_disposal_vm().await;
         let peer_route = vm_route_key(transport.instance_id(), "peer-vm");
         assert!(vm_host_functions()
-            .insert(
+            .insert_sync(
                 peer_route.clone(),
                 Arc::new(VmHostFunctionRegistry {
                     host_functions: Vec::new(),
@@ -3276,8 +3278,8 @@ mod tests {
         .unwrap();
         let result = vm.shutdown().await;
         let confirmed = transport.has_confirmed_child_exit();
-        let peer_route_retained = vm_host_functions().contains(&peer_route);
-        vm_host_functions().remove(&peer_route);
+        let peer_route_retained = vm_host_functions().contains_sync(&peer_route);
+        vm_host_functions().remove_sync(&peer_route);
         let count = vm.inner.sidecar.describe().active_vm_count;
         tokio::time::timeout(Duration::from_secs(2), transport.terminate_child())
             .await
@@ -3481,8 +3483,8 @@ mod tests {
     impl Drop for CallbackRouteTestCleanup {
         fn drop(&mut self) {
             for key in &self.0 {
-                super::session_js_bridge_callbacks().remove(key);
-                super::session_sqlite_callbacks().remove(key);
+                super::session_js_bridge_callbacks().remove_sync(key);
+                super::session_sqlite_callbacks().remove_sync(key);
             }
         }
     }
@@ -3511,7 +3513,7 @@ mod tests {
                 Box::pin(async move { Ok(Some(json!({ "owner": id }))) })
             });
             assert!(session_js_bridge_callbacks()
-                .insert(key.clone(), callback)
+                .insert_sync(key.clone(), callback)
                 .is_ok());
         }
         let request = || {
@@ -3536,7 +3538,9 @@ mod tests {
                 assert_eq!(response.result, Some(json!({ "owner": id }).to_string()));
             }
         }
-        assert!(session_js_bridge_callbacks().remove(&keys[0]).is_some());
+        assert!(session_js_bridge_callbacks()
+            .remove_sync(&keys[0])
+            .is_some());
         for owner in &owners {
             let response = js_bridge_call_callback(transports[0])(request(), owner.clone())
                 .await
@@ -3608,7 +3612,7 @@ mod tests {
                 Box::pin(async move { Ok(response) })
             });
             assert!(session_sqlite_callbacks()
-                .insert(key.clone(), callback)
+                .insert_sync(key.clone(), callback)
                 .is_ok());
         }
         let request = || {
@@ -3632,7 +3636,7 @@ mod tests {
                 assert_eq!(decode(response), answer(id));
             }
         }
-        assert!(session_sqlite_callbacks().remove(&keys[0]).is_some());
+        assert!(session_sqlite_callbacks().remove_sync(&keys[0]).is_some());
         for owner in &owners {
             let response = sqlite_callback_callback(transports[0])(request(), owner.clone())
                 .await
@@ -3710,7 +3714,7 @@ mod tests {
             (String::from("math:allowed"), allowed.clone()),
             (String::from("math:danger"), danger.clone()),
         ]);
-        let _ = vm_host_functions().insert(
+        let _ = vm_host_functions().insert_sync(
             vm_id.clone(),
             Arc::new(VmHostFunctionRegistry {
                 host_functions: vec![ResolvedHostFunctions {
@@ -3737,7 +3741,7 @@ mod tests {
             },
         )
         .await;
-        vm_host_functions().remove(&vm_id);
+        vm_host_functions().remove_sync(&vm_id);
 
         assert_eq!(response.error, None);
         assert_eq!(response.result.as_deref(), Some("\"allowed\""));

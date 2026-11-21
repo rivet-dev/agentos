@@ -651,9 +651,10 @@ impl AgentOsSidecar {
             #[cfg(any(feature = "actor-internals", test))]
             let mut _admission = _admission;
             let self_ptr = self as *const AgentOsSidecar;
-            let _ = shared_sidecars().remove_if(&(self.runtime_id, pool.to_owned()), |cached| {
-                std::ptr::eq(Arc::as_ptr(cached), self_ptr)
-            });
+            let _ = shared_sidecars()
+                .remove_if_sync(&(self.runtime_id, pool.to_owned()), |cached| {
+                    std::ptr::eq(Arc::as_ptr(cached), self_ptr)
+                });
             #[cfg(any(feature = "actor-internals", test))]
             if let Some(runtime) = self.runtime_id {
                 _admission.forget(runtime, self);
@@ -1082,21 +1083,25 @@ fn shared_sidecar_pool_lock() -> &'static parking_lot::Mutex<SharedPoolLifecycle
 
 fn shared_sidecar_pool_len(cache: &SccHashMap<SharedSidecarKey, Arc<AgentOsSidecar>>) -> usize {
     let mut len = 0;
-    cache.scan(|_, _| {
+    cache.iter_sync(|_, _| {
         len += 1;
+
+        true
     });
     len
 }
 
 fn prune_disposed_shared_sidecars(cache: &SccHashMap<SharedSidecarKey, Arc<AgentOsSidecar>>) {
     let mut disposed_pools = Vec::new();
-    cache.scan(|pool, sidecar| {
+    cache.iter_sync(|pool, sidecar| {
         if sidecar.describe().state == SidecarState::Disposed {
             disposed_pools.push(pool.clone());
         }
+
+        true
     });
     for pool in disposed_pools {
-        let _ = cache.remove_if(&pool, |sidecar| {
+        let _ = cache.remove_if_sync(&pool, |sidecar| {
             sidecar.describe().state == SidecarState::Disposed
         });
     }
@@ -1182,7 +1187,7 @@ impl AgentOs {
         let cache = shared_sidecars();
         // Reap an unusable generation before replacing its cached owner. Do not
         // hold the synchronous pool lock across process teardown.
-        if let Some(existing) = cache.read(&key, |_, sidecar| sidecar.clone()) {
+        if let Some(existing) = cache.read_sync(&key, |_, sidecar| sidecar.clone()) {
             if existing.process_lost() {
                 if let Err(error) = existing.dispose().await {
                     if existing.current_state() != SidecarState::Disposed {
@@ -1199,7 +1204,7 @@ impl AgentOs {
         _admission.admit(runtime_id)?;
 
         // Fast path: reuse a cached, non-disposed sidecar for this pool.
-        if let Some(existing) = cache.read(&key, |_, sidecar| sidecar.clone()) {
+        if let Some(existing) = cache.read_sync(&key, |_, sidecar| sidecar.clone()) {
             if existing.describe().state != SidecarState::Disposed {
                 if existing.runtime_args != runtime_args {
                     return Err(ClientError::Sidecar(
@@ -1234,7 +1239,7 @@ impl AgentOs {
         // Insert atomically, replacing a stale (disposed) entry but yielding to a live one that a
         // concurrent caller may have just installed.
         let cache_len = shared_sidecar_pool_len(cache);
-        match cache.entry(key) {
+        match cache.entry_sync(key) {
             scc::hash_map::Entry::Occupied(mut occupied) => {
                 if occupied.get().describe().state == SidecarState::Disposed {
                     #[cfg(any(feature = "actor-internals", test))]
@@ -1534,11 +1539,11 @@ mod tests {
     #[test]
     fn prune_disposed_shared_sidecars_keeps_live_entries() {
         let cache = SccHashMap::new();
-        let _ = cache.insert(
+        let _ = cache.insert_sync(
             (None, "live".to_string()),
             shared("live", SidecarState::Ready),
         );
-        let _ = cache.insert(
+        let _ = cache.insert_sync(
             (None, "disposed".to_string()),
             shared("disposed", SidecarState::Disposed),
         );
@@ -1546,9 +1551,11 @@ mod tests {
         prune_disposed_shared_sidecars(&cache);
 
         assert_eq!(shared_sidecar_pool_len(&cache), 1);
-        assert!(cache.read(&(None, "live".to_string()), |_, _| ()).is_some());
         assert!(cache
-            .read(&(None, "disposed".to_string()), |_, _| ())
+            .read_sync(&(None, "live".to_string()), |_, _| ())
+            .is_some());
+        assert!(cache
+            .read_sync(&(None, "disposed".to_string()), |_, _| ())
             .is_none());
     }
 
@@ -1557,7 +1564,7 @@ mod tests {
         let cache = SccHashMap::new();
         for index in 0..SHARED_SIDECAR_POOL_LIMIT {
             let pool = format!("pool-{index}");
-            let _ = cache.insert((None, pool.clone()), shared(&pool, SidecarState::Ready));
+            let _ = cache.insert_sync((None, pool.clone()), shared(&pool, SidecarState::Ready));
         }
 
         let error =
@@ -1581,7 +1588,7 @@ mod tests {
             } else {
                 SidecarState::Ready
             };
-            let _ = cache.insert((None, pool.clone()), shared(&pool, state));
+            let _ = cache.insert_sync((None, pool.clone()), shared(&pool, state));
         }
 
         prune_disposed_shared_sidecars(&cache);
@@ -1617,24 +1624,24 @@ mod tests {
         let cache = shared_sidecars();
         let _guard = shared_sidecar_pool_lock().lock();
 
-        let _ = cache.insert((None, pool.clone()), replacement.clone());
+        let _ = cache.insert_sync((None, pool.clone()), replacement.clone());
         old.state
             .store(SidecarState::Disposing.as_u8(), Ordering::SeqCst);
         old.active_vm_count.store(0, Ordering::SeqCst);
         old.state
             .store(SidecarState::Disposed.as_u8(), Ordering::SeqCst);
         let old_ptr = Arc::as_ptr(&old);
-        let _ = cache.remove_if(&(None, pool.clone()), |cached| {
+        let _ = cache.remove_if_sync(&(None, pool.clone()), |cached| {
             std::ptr::eq(Arc::as_ptr(cached), old_ptr)
         });
 
         let cached = cache
-            .read(&(None, pool.clone()), |_, cached| cached.clone())
+            .read_sync(&(None, pool.clone()), |_, cached| cached.clone())
             .expect("replacement should remain cached");
         assert!(Arc::ptr_eq(&cached, &replacement));
 
         let replacement_ptr = Arc::as_ptr(&replacement);
-        let _ = cache.remove_if(&(None, pool.clone()), |cached| {
+        let _ = cache.remove_if_sync(&(None, pool.clone()), |cached| {
             std::ptr::eq(Arc::as_ptr(cached), replacement_ptr)
         });
     }
@@ -1649,7 +1656,7 @@ mod tests {
         // Cache replacement must not discard ownership of a not-yet-reaped child.
         // No native child is started in this deterministic ownership test.
         shared_sidecars()
-            .remove(&(Some(runtime), pool.clone()))
+            .remove_sync(&(Some(runtime), pool.clone()))
             .unwrap();
         let current = AgentOs::get_shared_sidecar(Some(pool), None).await.unwrap();
         assert!(!Arc::ptr_eq(&old, &current));
@@ -1784,7 +1791,9 @@ mod tests {
             .await
             .unwrap();
         let weak = Arc::downgrade(&old);
-        shared_sidecars().remove(&(Some(runtime), pool)).unwrap();
+        shared_sidecars()
+            .remove_sync(&(Some(runtime), pool))
+            .unwrap();
         drop(old);
         let retained = weak
             .upgrade()
