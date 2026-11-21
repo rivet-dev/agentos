@@ -336,10 +336,30 @@ jobs:
           path: target/sidecar-artifacts/${{ matrix.platform }}
           if-no-files-found: error
 
+  # Packages and verifies every crate from its tarball and checks the publish
+  # order, without uploading. It needs no build artifacts, so it runs beside
+  # the builds; a release publishes nothing, npm included, unless it passes.
+  crates-rehearsal:
+    name: Rehearse crates.io publish
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - name: Rehearse crate publish
+        run: pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates --rehearse
+
   publish-npm:
-    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin]
+    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin, crates-rehearsal]
     name: Publish npm
-    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && (needs.context.outputs.trigger != 'release' || needs.crates-rehearsal.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -541,9 +561,9 @@ jobs:
           fi
 
   publish-crates:
-    needs: [context, build-sidecar, release-assets]
+    needs: [context, build-sidecar, release-assets, crates-rehearsal]
     name: Publish crates.io
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && (needs.release-assets.result == 'success' || needs.release-assets.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.crates-rehearsal.result == 'success' && needs.build-sidecar.result == 'success' && (needs.release-assets.result == 'success' || needs.release-assets.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -564,36 +584,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
       - run: pnpm install --frozen-lockfile
-      - name: Bump Cargo versions
+      - name: Stage crates for publish
         run: |
-          pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
-            --version ${{ needs.context.outputs.version }} \
-            --version-only
-      - name: Stage vendored V8 bridge bundles and base filesystem
-        run: |
-          set -euo pipefail
-          # crates/executor-v8-runtime/assets/generated is gitignored; the
-          # published crates fall back to the v8-runtime build helper's
-          # vendored bundle and panic if it is absent. Stage it here.
-          out="crates/executor-v8-runtime/assets/generated"
-          mkdir -p "$out"
-          node packages/build-tools/scripts/build-v8-bridge.mjs --out-dir "$out"
-          git add -f crates/executor-v8-runtime/assets/generated
-          # The single committed base filesystem lives in the vfs crate; the
-          # kernel and sidecar crates vendor a copy for isolated publish
-          # builds (their build.rs falls back to assets/base-filesystem.json).
-          mkdir -p crates/vm-kernel/assets crates/vm/assets
-          cp crates/vfs-core/assets/base-filesystem.json crates/vm-kernel/assets/base-filesystem.json
-          cp crates/vfs-core/assets/base-filesystem.json crates/vm/assets/base-filesystem.json
-      - name: Dry-run crate publish
-        if: ${{ needs.context.outputs.trigger != 'release' }}
-        run: |
-          pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates \
-            --version ${{ needs.context.outputs.version }} \
-            --dry-run \
-            --allow-dirty
+          pnpm --filter=publish exec tsx src/ci/bin.ts stage-crates \
+            --version ${{ needs.context.outputs.version }}
       - name: Publish crates
-        if: ${{ needs.context.outputs.trigger == 'release' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
