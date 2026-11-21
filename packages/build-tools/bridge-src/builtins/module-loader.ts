@@ -37,6 +37,19 @@ function _parseFileUrl(url) {
 	}
 	return url;
 }
+function resolveModuleFile(request, parentDir) {
+	const resolved = _resolveModule.applySyncPromise(void 0, [
+		request,
+		parentDir,
+		"require",
+	]);
+	if (resolved === null) {
+		const err = new Error("Cannot find module '" + request + "'");
+		err.code = "MODULE_NOT_FOUND";
+		throw err;
+	}
+	return resolved;
+}
 function computeRequireResolvePaths(dirname, request) {
 	if (Module.isBuiltin(request)) {
 		return null;
@@ -235,18 +248,11 @@ var Module = class _Module {
 	};
 	static _cache = typeof _moduleCache !== "undefined" ? _moduleCache : {};
 	static _resolveFilename(request, parent, _isMain, _options) {
+		// Node returns a builtin request unchanged ("buffer", "node:buffer"),
+		// even when node_modules holds a package of the same name.
+		if (Module.isBuiltin(request)) return request;
 		const parentDir = parent && parent.path ? parent.path : "/";
-		const resolved = _resolveModule.applySyncPromise(void 0, [
-			request,
-			parentDir,
-			"require",
-		]);
-		if (resolved === null) {
-			const err = new Error("Cannot find module '" + request + "'");
-			err.code = "MODULE_NOT_FOUND";
-			throw err;
-		}
-		return resolved;
+		return resolveModuleFile(request, parentDir);
 	}
 	static wrap(content) {
 		return (
@@ -328,6 +334,7 @@ function markMainModule(module) {
 }
 function requireFrom(request, parentDir, isMain = false) {
 	const parentPath = typeof parentDir === "string" ? parentDir : "/";
+	let resolved;
 	if (Module.isBuiltin(request)) {
 		try {
 			return loadBuiltinModule(request);
@@ -336,12 +343,11 @@ function requireFrom(request, parentDir, isMain = false) {
 				throw error;
 			}
 		}
+		// The sidecar serves builtins that have no bridge module.
+		resolved = resolveModuleFile(request, parentPath);
+	} else {
+		resolved = Module._resolveFilename(request, { path: parentPath }, isMain);
 	}
-	const resolved = Module._resolveFilename(
-		request,
-		{ path: parentPath },
-		isMain,
-	);
 	if (Object.prototype.hasOwnProperty.call(_moduleCache, resolved)) {
 		if (isMain) markMainModule(_moduleCache[resolved]);
 		return _moduleCache[resolved].exports;

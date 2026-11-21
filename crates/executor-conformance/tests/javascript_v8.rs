@@ -3255,7 +3255,7 @@ if (JSON.stringify(searchPaths) !== JSON.stringify(expectedPaths)) {
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-if (require.resolve("fs") !== "node:fs") {
+if (require.resolve("fs") !== "fs") {
   throw new Error(`builtin resolution failed: ${String(require.resolve("fs"))}`);
 }
 
@@ -3307,6 +3307,14 @@ require("./nested/check.cjs");
 fn javascript_execution_commonjs_resolution_matches_host_node() {
     let temp = tempdir().expect("create temp dir");
     for (path, contents) in [
+        ("node_modules/buffer/package.json", r#"{"main":"index.js"}"#),
+        ("node_modules/buffer/index.js", "exports.Buffer = 1;\n"),
+        (
+            "node_modules/process/package.json",
+            r#"{"main":"browser.js"}"#,
+        ),
+        ("node_modules/process/browser.js", "module.exports = {};\n"),
+        ("app/polyfills/process.js", "module.exports = 'polyfill';\n"),
         // The decoy sits next to main.cjs: an import() in loader.cjs that
         // resolves against the wrong module loads it.
         ("app/target.mjs", "export const value = 'decoy';\n"),
@@ -3322,6 +3330,12 @@ fn javascript_execution_commonjs_resolution_matches_host_node() {
             "app/main.cjs",
             r#"
 const result = {};
+const record = (key, run) => {
+  try { result[key] = run(); } catch (error) { result[key] = "ERR " + error.code; }
+};
+for (const request of ["buffer", "buffer/", "process", "node:buffer", "./polyfills/process"]) {
+  record("resolve " + request, () => require.resolve(request));
+}
 require("./lib/loader.cjs").load().then((value) => {
   result["import() from a required module"] = value;
   console.log(JSON.stringify(result));
@@ -3368,6 +3382,11 @@ require("./lib/loader.cjs").load().then((value) => {
     assert_eq!(
         observed,
         json!({
+            "resolve buffer": "buffer",
+            "resolve buffer/": "/root/node_modules/buffer/index.js",
+            "resolve process": "process",
+            "resolve node:buffer": "node:buffer",
+            "resolve ./polyfills/process": "/root/app/polyfills/process.js",
             "import() from a required module": "importer-relative",
         })
     );
