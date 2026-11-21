@@ -908,7 +908,10 @@ var warnedFsWatchDirectoryEntryLimit = false;
 function createWatcherChildSignatures(path) {
 	const children = /* @__PURE__ */ new Map();
 	const names = fs.readdirSync(path);
-	if (names.length > MAX_FS_WATCH_DIRECTORY_ENTRIES && !warnedFsWatchDirectoryEntryLimit) {
+	if (
+		names.length > MAX_FS_WATCH_DIRECTORY_ENTRIES &&
+		!warnedFsWatchDirectoryEntryLimit
+	) {
 		warnedFsWatchDirectoryEntryLimit = true;
 		globalThis.process?.emitWarning?.(
 			`fs.watch(${path}) compares only the first ${MAX_FS_WATCH_DIRECTORY_ENTRIES} of ${names.length} entries; changes to later entries are not reported`,

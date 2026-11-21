@@ -56,15 +56,20 @@ test("a guest directory watch reports writes from the host file API and from ano
 		output = lines.pop() ?? "";
 		for (const line of lines) {
 			if (line.startsWith("{")) events.push(JSON.parse(line));
-			else if (line === "ready") events.push({ eventType: "ready", filename: "" });
+			else if (line === "ready")
+				events.push({ eventType: "ready", filename: "" });
 		}
 		for (const wake of waiters.splice(0)) wake();
 	});
-	const waitFor = async (match: (e: { eventType: string; filename: string }) => boolean) => {
+	const waitFor = async (
+		match: (e: { eventType: string; filename: string }) => boolean,
+	) => {
 		const deadline = Date.now() + 5_000;
 		while (!events.some(match)) {
 			if (Date.now() > deadline) {
-				throw new Error(`no matching watch event; saw ${JSON.stringify(events)}`);
+				throw new Error(
+					`no matching watch event; saw ${JSON.stringify(events)}`,
+				);
 			}
 			await new Promise<void>((resolve) => {
 				waiters.push(resolve);
@@ -80,7 +85,9 @@ test("a guest directory watch reports writes from the host file API and from ano
 	]);
 	await waitFor((e) => e.eventType === "change" && e.filename === "page.tsx");
 
-	await vm.filesystem.writeFiles([{ path: "/project/src/layout.tsx", content: "x" }]);
+	await vm.filesystem.writeFiles([
+		{ path: "/project/src/layout.tsx", content: "x" },
+	]);
 	await waitFor((e) => e.eventType === "rename" && e.filename === "layout.tsx");
 
 	const other = await vm.process.execFile(
@@ -90,7 +97,10 @@ test("a guest directory watch reports writes from the host file API and from ano
 	);
 	expect(other.exitCode).toBe(0);
 	await waitFor(
-		(e) => e.eventType === "rename" && e.filename === "layout.tsx" && events.filter((x) => x.filename === "layout.tsx").length >= 2,
+		(e) =>
+			e.eventType === "rename" &&
+			e.filename === "layout.tsx" &&
+			events.filter((x) => x.filename === "layout.tsx").length >= 2,
 	);
 
 	await vm.process.kill(pid);
