@@ -229,10 +229,10 @@ jobs:
       matrix:
         include:
           - platform: linux-x64-gnu
-            runner: ubuntu-latest
+            runner: depot-ubuntu-24.04-8
             target: x86_64-unknown-linux-gnu
           - platform: linux-arm64-gnu
-            runner: ubuntu-24.04-arm
+            runner: depot-ubuntu-24.04-arm-8
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     steps:
@@ -287,11 +287,11 @@ jobs:
       matrix:
         include:
           - platform: darwin-x64
-            runner: ubuntu-latest
+            runner: depot-ubuntu-24.04-8
             target: x86_64-apple-darwin
             clang: x86_64-apple-darwin20.4
           - platform: darwin-arm64
-            runner: ubuntu-latest
+            runner: depot-ubuntu-24.04-8
             target: aarch64-apple-darwin
             clang: aarch64-apple-darwin20.4
     runs-on: ${{ matrix.runner }}
