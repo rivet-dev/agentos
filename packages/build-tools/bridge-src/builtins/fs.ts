@@ -2792,6 +2792,13 @@ function fdMetadataCall(fn, syscall) {
 		throw error;
 	}
 }
+// `throwIfNoEntry: false` makes statSync and lstatSync return undefined for a
+// missing entry. Node treats ENOENT and ENOTDIR as missing.
+function isMissingEntryWithoutThrow(err, options) {
+	if (options?.throwIfNoEntry !== false) return false;
+	const code = bridgeErrorCode(err);
+	return code === "ENOENT" || code === "ENOTDIR";
+}
 function bridgeCall(fn, syscall, path) {
 	try {
 		return fn();
@@ -3153,6 +3160,24 @@ function throwNormalizedFsBridgeError(err, syscall, path) {
 	}
 	throw toNodeFsError(err, syscall, path);
 }
+// A whole-file write is one bridge call, but Node opens the file first, so a
+// failure to reach or open it reports `open`, as in Node.
+const WRITE_FILE_OPEN_ERROR_CODES = new Set([
+	"EACCES",
+	"EISDIR",
+	"ELOOP",
+	"ENAMETOOLONG",
+	"ENOENT",
+	"ENOTDIR",
+	"EPERM",
+	"EROFS",
+]);
+function throwWriteFileBridgeError(err, path) {
+	const syscall = WRITE_FILE_OPEN_ERROR_CODES.has(bridgeErrorCode(err))
+		? "open"
+		: "write";
+	throwNormalizedFsBridgeError(err, syscall, path);
+}
 function joinDirEntryPath(dirPath, entryName) {
 	if (dirPath === "/") {
 		return `/${entryName}`;
@@ -3318,7 +3343,7 @@ async function fsWriteFileAsync(file, data, options) {
 		}
 		return await _fsAsync.writeFile.apply(void 0, [pathStr, String(data)]);
 	} catch (err) {
-		throwNormalizedFsBridgeError(err, "write", rawPath);
+		throwWriteFileBridgeError(err, rawPath);
 	}
 }
 async function fsReaddirAsync(path, options) {
@@ -3728,7 +3753,7 @@ var fs = {
 				return _fs.writeFile.applySyncPromise(void 0, [pathStr, String(data)]);
 			}
 		} catch (err) {
-			throwNormalizedFsBridgeError(err, "write", rawPath);
+			throwWriteFileBridgeError(err, rawPath);
 		}
 	},
 	appendFileSync(path, data, options) {
@@ -3856,13 +3881,14 @@ var fs = {
 			return false;
 		}
 	},
-	statSync(path, _options) {
+	statSync(path, options) {
 		const rawPath = normalizePathLike(path);
 		const pathStr = resolveOperationPath(path);
 		let statJson: ReturnType<typeof _fs.stat.applySyncPromise>;
 		try {
 			statJson = _fs.stat.applySyncPromise(void 0, [pathStr]);
 		} catch (err) {
+			if (isMissingEntryWithoutThrow(err, options)) return undefined;
 			if (bridgeErrorCode(err) === "ENOENT") {
 				throw createFsError(
 					"ENOENT",
@@ -3876,13 +3902,15 @@ var fs = {
 		const stat = decodeBridgeJson(statJson);
 		return new Stats(stat);
 	},
-	lstatSync(path, _options) {
+	lstatSync(path, options) {
 		const pathStr = normalizePathLike(path);
-		const statJson = bridgeCall(
-			() => _fs.lstat.applySyncPromise(void 0, [pathStr]),
-			"lstat",
-			pathStr,
-		);
+		let statJson: ReturnType<typeof _fs.lstat.applySyncPromise>;
+		try {
+			statJson = _fs.lstat.applySyncPromise(void 0, [pathStr]);
+		} catch (err) {
+			if (isMissingEntryWithoutThrow(err, options)) return undefined;
+			throw toNodeFsError(err, "lstat", pathStr);
+		}
 		const stat = decodeBridgeJson(statJson);
 		return new Stats(stat);
 	},

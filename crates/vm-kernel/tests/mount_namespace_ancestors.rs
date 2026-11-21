@@ -75,6 +75,8 @@ fn virtual_mount_ancestors_preserve_real_ancestor_dac() {
             .write_file_for_process("node", pid, "/public/deep/new", vec![1], None)
             .unwrap_err()
             .code(),
-        "EACCES"
+        // The root mount is read-only, which Linux reports ahead of the
+        // directory's mode bits.
+        "EROFS"
     );
 }

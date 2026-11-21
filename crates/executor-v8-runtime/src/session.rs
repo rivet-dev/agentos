@@ -4235,6 +4235,15 @@ fn run_event_loop_with_readiness(
             scope.terminate_execution();
             return EventLoopStatus::Terminated;
         }
+        // The near-heap-limit guard stops guest JavaScript from inside V8, so
+        // neither the abort lane nor a dispatch status reports it. A stop that
+        // unwinds a promise continuation in a microtask checkpoint leaves the
+        // guest's handles registered and its queued jobs unrunnable; the loop
+        // would wait for them forever. The execution owner reads the same flag
+        // to report the typed heap-limit result.
+        if crate::isolate::heap_limit_exceeded(scope) {
+            return EventLoopStatus::Terminated;
+        }
         if let Some((code, error)) = crate::terminal_callback::result(scope) {
             return EventLoopStatus::Failed(code, error);
         }
@@ -4332,6 +4341,10 @@ fn run_event_loop_with_readiness(
         // Instead of blocking indefinitely, use a short timeout so we can
         // periodically flush microtasks (like Node.js's libuv + DrainTasks pattern).
         let cmd = loop {
+            // An idle microtask or platform turn can hit the heap limit too.
+            if crate::isolate::heap_limit_exceeded(scope) {
+                return EventLoopStatus::Terminated;
+            }
             if pending_guest_immediate_count(scope) > 0 {
                 match try_recv_session_command(
                     scope,

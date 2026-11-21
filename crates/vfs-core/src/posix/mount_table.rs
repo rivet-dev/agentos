@@ -2217,6 +2217,14 @@ impl MountTable {
         }))
     }
 
+    /// True when the mount that holds `path` refuses every write. Follows
+    /// symlinks across mounts, like the write operations themselves.
+    pub fn path_is_on_read_only_mount(&self, path: &str) -> bool {
+        self.resolve_content_index(path).is_ok_and(|(index, _)| {
+            self.mounts[index].read_only || self.mounts[index].filesystem.is_read_only()
+        })
+    }
+
     pub fn path_uses_root_filesystem(&self, path: &str) -> bool {
         self.resolve_index(path)
             .is_ok_and(|(index, _)| self.mounts[index].path == "/")
