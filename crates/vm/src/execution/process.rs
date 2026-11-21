@@ -2271,7 +2271,10 @@ mod pending_event_reservation_tests {
         // on the size of `ActiveExecutionEvent` and a requeue that reserves a
         // leased event twice still overflows.
         let event_budget = VmPendingByteBudget::new(
-            events.iter().map(ActiveExecutionEvent::retained_bytes).sum(),
+            events
+                .iter()
+                .map(ActiveExecutionEvent::retained_bytes)
+                .sum(),
             queue_tracker::TrackedLimit::PendingExecutionEventBytes,
         );
         let host_function = HostFunctionExecution::default()
