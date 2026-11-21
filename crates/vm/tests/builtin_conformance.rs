@@ -1464,6 +1464,60 @@ fn readable_on_data_respects_explicit_pause_matches_host_node() {
     run_isolated_builtin_conformance_test("readable-on-data-explicit-pause");
 }
 
+// graceful-fs (used by webpack's pack cache) builds its legacy WriteStream by
+// calling `fs.WriteStream.apply(this, args)` on its own subclass instance.
+fn fs_write_stream_called_as_function_on_subclass_matches_host_node_impl() {
+    assert_conformance(
+        "fs-write-stream-function-call",
+        r#"
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ws-legacy-"));
+const target = path.join(dir, "pack.bin");
+
+function LegacyWriteStream(filePath, options) {
+  if (this instanceof LegacyWriteStream) {
+    return fs.WriteStream.apply(this, arguments), this;
+  }
+  return LegacyWriteStream.apply(Object.create(LegacyWriteStream.prototype), arguments);
+}
+LegacyWriteStream.prototype = Object.create(fs.WriteStream.prototype);
+
+const stream = new LegacyWriteStream(target);
+const opened = await new Promise((resolve, reject) => {
+  stream.on("open", (fd) => resolve(typeof fd));
+  stream.on("error", reject);
+});
+stream.write("pack-");
+await new Promise((resolve, reject) => {
+  stream.on("error", reject);
+  stream.end("data", resolve);
+});
+const called = fs.WriteStream(path.join(dir, "called.bin"));
+called.end("x");
+await new Promise((resolve) => called.on("close", resolve));
+
+console.log(JSON.stringify({
+  opened,
+  isInstance: stream instanceof fs.WriteStream,
+  isLegacy: stream instanceof LegacyWriteStream,
+  content: fs.readFileSync(target, "utf8"),
+  bytesWritten: stream.bytesWritten,
+  calledIsInstance: called instanceof fs.WriteStream,
+  calledContent: fs.readFileSync(path.join(dir, "called.bin"), "utf8"),
+}));
+fs.rmSync(dir, { recursive: true, force: true });
+"#,
+    );
+}
+
+#[test]
+fn fs_write_stream_called_as_function_on_subclass_matches_host_node() {
+    run_isolated_builtin_conformance_test("fs-write-stream-function-call");
+}
+
 fn readline_question_reads_real_stdin_impl() {
     assert_node_available();
 
@@ -6823,6 +6877,9 @@ fn __builtin_conformance_extra_test_runner() {
         }
         "readable-on-data-explicit-pause" => {
             readable_on_data_respects_explicit_pause_matches_host_node_impl()
+        }
+        "fs-write-stream-function-call" => {
+            fs_write_stream_called_as_function_on_subclass_matches_host_node_impl()
         }
         "readline-question" => readline_question_reads_real_stdin_impl(),
         "tty-stdin-discipline" => tty_stdin_uses_kernel_canonical_and_raw_discipline_impl(),

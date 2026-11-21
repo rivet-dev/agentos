@@ -2118,79 +2118,85 @@ var ReadStream = class extends CanonicalFileReadable {
 };
 
 var MAX_WRITE_STREAM_BYTES = 16 * 1024 * 1024;
+// Node's WriteStream is a function constructor: graceful-fs (and so webpack's
+// pack cache) initializes its own subclass instance with
+// `fs.WriteStream.apply(this, args)`, so the state must be set on `this`.
+function initWriteStream(filePath, _options) {
+	this._options = undefined;
+	this.bytesWritten = 0;
+	this.path = undefined;
+	this.pending = false;
+	this.writable = true;
+	this.writableAborted = false;
+	this.writableEnded = false;
+	this.writableFinished = false;
+	this.writableHighWaterMark = 16384;
+	this.writableLength = 0;
+	this.writableObjectMode = false;
+	this.writableCorked = 0;
+	this.destroyed = false;
+	this.closed = false;
+	this.errored = null;
+	this.writableNeedDrain = false;
+	this.fd = null;
+	this.autoClose = true;
+	this._chunks = [];
+	this._listeners = /* @__PURE__ */ new Map();
+	this._fileHandle = null;
+	this._streamFs = undefined;
+	this._position = null;
+	this._options = _options;
+	const fdOption = normalizeStreamFd(_options?.fd);
+	const startOption = _options?.start;
+	const highWaterMarkCandidate =
+		_options?.highWaterMark ?? _options?.bufferSize;
+	const openFlags = _options?.flags ?? "w";
+	this.path = filePath;
+	this.autoClose = _options?.autoClose !== false;
+	this.writableHighWaterMark =
+		typeof highWaterMarkCandidate === "number" &&
+		Number.isFinite(highWaterMarkCandidate) &&
+		highWaterMarkCandidate > 0
+			? Math.floor(highWaterMarkCandidate)
+			: 16384;
+	this._position = typeof startOption === "number" ? startOption : null;
+	this._streamFs = validateStreamFsOverride(_options?.fs, [
+		"open",
+		"close",
+		"write",
+	]);
+	if (_options?.fs !== void 0) {
+		validateStreamFsOverride(_options?.fs, ["writev"]);
+	}
+	if (fdOption instanceof FileHandle) {
+		this._fileHandle = fdOption;
+		this.fd = fdOption.fd;
+		return;
+	}
+	if (typeof fdOption === "number") {
+		this.fd = fdOption;
+		return;
+	}
+	const pathStr =
+		typeof this.path === "string"
+			? this.path
+			: this.path instanceof import_buffer.Buffer
+				? this.path.toString()
+				: null;
+	if (!pathStr) {
+		throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
+	}
+	this.fd = fs.openSync(pathStr, openFlags, _options?.mode);
+	queueMicrotask(() => {
+		if (this.fd !== null && this.fd >= 0) {
+			this.emit("open", this.fd);
+		}
+	});
+}
 var WriteStream = class {
 	constructor(filePath, _options) {
-		this._options = _options;
-		const fdOption = normalizeStreamFd(_options?.fd);
-		const startOption = _options?.start;
-		const highWaterMarkCandidate =
-			_options?.highWaterMark ?? _options?.bufferSize;
-		const openFlags = _options?.flags ?? "w";
-		this.path = filePath;
-		this.autoClose = _options?.autoClose !== false;
-		this.writableHighWaterMark =
-			typeof highWaterMarkCandidate === "number" &&
-			Number.isFinite(highWaterMarkCandidate) &&
-			highWaterMarkCandidate > 0
-				? Math.floor(highWaterMarkCandidate)
-				: 16384;
-		this._position = typeof startOption === "number" ? startOption : null;
-		this._streamFs = validateStreamFsOverride(_options?.fs, [
-			"open",
-			"close",
-			"write",
-		]);
-		if (_options?.fs !== void 0) {
-			validateStreamFsOverride(_options?.fs, ["writev"]);
-		}
-		if (fdOption instanceof FileHandle) {
-			this._fileHandle = fdOption;
-			this.fd = fdOption.fd;
-			return;
-		}
-		if (typeof fdOption === "number") {
-			this.fd = fdOption;
-			return;
-		}
-		const pathStr =
-			typeof this.path === "string"
-				? this.path
-				: this.path instanceof import_buffer.Buffer
-					? this.path.toString()
-					: null;
-		if (!pathStr) {
-			throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
-		}
-		this.fd = fs.openSync(pathStr, openFlags, _options?.mode);
-		queueMicrotask(() => {
-			if (this.fd !== null && this.fd >= 0) {
-				this.emit("open", this.fd);
-			}
-		});
+		initWriteStream.call(this, filePath, _options);
 	}
-	_options;
-	bytesWritten = 0;
-	path;
-	pending = false;
-	writable = true;
-	writableAborted = false;
-	writableEnded = false;
-	writableFinished = false;
-	writableHighWaterMark = 16384;
-	writableLength = 0;
-	writableObjectMode = false;
-	writableCorked = 0;
-	destroyed = false;
-	closed = false;
-	errored = null;
-	writableNeedDrain = false;
-	fd = null;
-	autoClose = true;
-	_chunks = [];
-	_listeners = /* @__PURE__ */ new Map();
-	_fileHandle = null;
-	_streamFs;
-	_position = null;
 	async _closeUnderlying() {
 		if (this._fileHandle) {
 			if (!this._fileHandle.closed) {
@@ -2490,7 +2496,11 @@ Object.defineProperty(ReadStream.prototype, "constructor", {
 var WriteStreamFactory = function WriteStream2(path, options) {
 	validateEncodingOption(options);
 	validateWriteStreamStartOption(options ?? {});
-	return new WriteStreamClass(path, options);
+	if (!(this instanceof WriteStreamClass)) {
+		return new WriteStreamClass(path, options);
+	}
+	initWriteStream.call(this, path, options);
+	return this;
 };
 WriteStreamFactory.prototype = WriteStream.prototype;
 function parseFlags(flags) {
