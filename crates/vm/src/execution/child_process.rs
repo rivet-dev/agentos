@@ -14579,6 +14579,47 @@ console.log("executor-source-two");
                     );
                     vm.active_processes.insert(root_id.clone(), root);
                 }
+                // At bootstrap the guest asks the host for its IPC channel with a
+                // synchronous host call. Answer it as the sidecar does for a
+                // process without IPC, so the executor runs to exit without the
+                // VM pump.
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        let polled = sidecar
+                            .vms
+                            .get_mut(&vm_id)
+                            .and_then(|mut vm| {
+                                vm.active_processes
+                                    .get_mut(&root_id)
+                                    .map(|root| root.try_poll_execution_event())
+                            })
+                            .expect("JavaScript source root")
+                            .expect("poll bootstrap IPC probe");
+                        match polled.map(PolledExecutionEvent::into_event) {
+                            Some(ActiveExecutionEvent::Common(ExecutionEvent::HostCall {
+                                operation:
+                                    HostOperation::Process(ProcessOperation::Ipc(
+                                        crate::executor::host::ProcessIpcOperation::Info {
+                                            child_id: None,
+                                        },
+                                    )),
+                                reply,
+                            })) => {
+                                reply
+                                    .succeed_json(serde_json::Value::Null)
+                                    .expect("answer bootstrap IPC probe");
+                                break;
+                            }
+                            Some(other) => {
+                                panic!("unexpected event before the IPC probe: {other:?}")
+                            }
+                            None => tokio::time::sleep(Duration::from_millis(2)).await,
+                        }
+                    }
+                })
+                .await
+                .expect("bootstrap IPC probe before deadline");
+                consume_notify_permit(&process_event_notify).await;
 
                 let ownership =
                     OwnershipScope::vm("child-claim-connection", "child-claim-session", &vm_id);

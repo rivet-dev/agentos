@@ -287,7 +287,9 @@ fn temporary_rejection_stays_open_and_rearms_only_after_capacity_release() {
 #[test]
 fn partial_claimed_handoff_rearms_public_capacity_retry() {
     let mut config = VmManagerConfig::default();
-    config.runtime.protocol.max_process_events = 2;
+    // Three events leave two output slots after the non-output reserve
+    // (`process_output_event_pool`), so two stdout events fill the queue.
+    config.runtime.protocol.max_process_events = 3;
     let runtime =
         agentos_driver_tokio::TokioDriver::process(&agentos_driver_tokio::DriverConfig::default())
             .expect("driver");
@@ -324,10 +326,13 @@ fn partial_claimed_handoff_rearms_public_capacity_retry() {
                 process_id: "process".into(),
                 event: ActiveExecutionEvent::Stdout(vec![byte]),
             };
-            sidecar
-                .process_event_ingress
-                .try_publish(envelope(0))
-                .expect("reserve one broker slot");
+            // Leave exactly one free broker slot.
+            for byte in [0, 4] {
+                sidecar
+                    .process_event_ingress
+                    .try_publish(envelope(byte))
+                    .expect("reserve a broker slot");
+            }
             sidecar
                 .queue_pending_process_event(envelope(1))
                 .expect("first public slot");
