@@ -9,6 +9,7 @@ import type {
 	RootLowerInput,
 } from "../agent-os.js";
 import type { FilesystemEntry } from "../filesystem-snapshot.js";
+import { HostTextOutputCapture } from "../host-output-capture.js";
 import type { RootSnapshotExport } from "../layers.js";
 import type { ProcessForestRecord } from "../process-forest.js";
 import {
@@ -770,8 +771,7 @@ export class SidecarKernelProxy {
 			);
 		}
 
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
+		const capture = new HostTextOutputCapture(options?.maxCapturedOutputBytes);
 		const deadlineMs =
 			typeof options?.timeout === "number" &&
 			Number.isFinite(options.timeout) &&
@@ -810,12 +810,7 @@ export class SidecarKernelProxy {
 			return {
 				exitCode,
 				...(proc.exitSignal != null ? { exitSignal: proc.exitSignal } : {}),
-				stdout: Buffer.concat(
-					stdoutChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
-				stderr: Buffer.concat(
-					stderrChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
+				...capture.finish(),
 			};
 		};
 		const parsedCommandDriver = parsedCommand
@@ -839,11 +834,11 @@ export class SidecarKernelProxy {
 					stdin: undefined,
 					cwd: effectiveCwd,
 					onStdout: (chunk) => {
-						stdoutChunks.push(chunk);
+						capture.append("stdout", chunk);
 						options?.onStdout?.(chunk);
 					},
 					onStderr: (chunk) => {
-						stderrChunks.push(chunk);
+						capture.append("stderr", chunk);
 						options?.onStderr?.(chunk);
 					},
 				}),
@@ -854,11 +849,11 @@ export class SidecarKernelProxy {
 			stdin: undefined,
 			cwd: effectiveCwd,
 			onStdout: (chunk) => {
-				stdoutChunks.push(chunk);
+				capture.append("stdout", chunk);
 				options?.onStdout?.(chunk);
 			},
 			onStderr: (chunk) => {
-				stderrChunks.push(chunk);
+				capture.append("stderr", chunk);
 				options?.onStderr?.(chunk);
 			},
 		});
@@ -870,8 +865,7 @@ export class SidecarKernelProxy {
 		args: readonly string[] = [],
 		options?: KernelExecOptions,
 	): Promise<KernelExecResult> {
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
+		const capture = new HostTextOutputCapture(options?.maxCapturedOutputBytes);
 		const deadlineMs =
 			typeof options?.timeout === "number" &&
 			Number.isFinite(options.timeout) &&
@@ -898,12 +892,7 @@ export class SidecarKernelProxy {
 			return {
 				exitCode,
 				...(proc.exitSignal != null ? { exitSignal: proc.exitSignal } : {}),
-				stdout: Buffer.concat(
-					stdoutChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
-				stderr: Buffer.concat(
-					stderrChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
+				...capture.finish(),
 			};
 		};
 
@@ -918,11 +907,11 @@ export class SidecarKernelProxy {
 				stdin: undefined,
 				cwd: effectiveCwd,
 				onStdout: (chunk) => {
-					stdoutChunks.push(chunk);
+					capture.append("stdout", chunk);
 					options?.onStdout?.(chunk);
 				},
 				onStderr: (chunk) => {
-					stderrChunks.push(chunk);
+					capture.append("stderr", chunk);
 					options?.onStderr?.(chunk);
 				},
 			}),

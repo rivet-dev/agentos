@@ -4277,6 +4277,71 @@ pub(super) fn validate_process_launch_request(
     Ok(())
 }
 
+/// Only the trusted kernel selects authority. Verify image compatibility under
+/// the same VM borrow as commit, including policy changes since image open.
+fn validate_in_place_exec_tier(
+    backend: ExecutionStandaloneWasmBackend,
+    effective: ProcessPermissionTier,
+    tiers: Option<crate::executor::host::ExecImportTiers>,
+) -> Result<(), VmError> {
+    if backend == ExecutionStandaloneWasmBackend::V8 {
+        return Ok(());
+    }
+    let tiers = tiers
+        .ok_or_else(|| VmError::host("EINVAL", "Wasmtime exec requires validated import tiers"))?;
+    let admitted = match effective {
+        ProcessPermissionTier::Isolated => tiers.isolated,
+        ProcessPermissionTier::ReadOnly => tiers.read_only,
+        ProcessPermissionTier::ReadWrite => tiers.read_write,
+        ProcessPermissionTier::Full => tiers.full,
+    };
+    if !admitted {
+        return Err(VmError::host(
+            "ENOEXEC",
+            "replacement imports are unavailable at the kernel permission tier",
+        ));
+    }
+    Ok(())
+}
+
+fn in_place_exec_cleanup_error(backend: ExecutionStandaloneWasmBackend, error: VmError) -> VmError {
+    if backend == ExecutionStandaloneWasmBackend::V8 {
+        return error;
+    }
+    tracing::error!(%error, "Wasm exec committed but replacement cleanup failed; retiring the old image");
+    VmError::host("ERR_AGENTOS_WASM_EXEC_COMMITTED_FAILURE", error.to_string())
+}
+
+#[cfg(all(test, feature = "wasm-wasmtime"))]
+#[test]
+fn wasmtime_exec_uses_the_kernel_selected_tier_for_admission() {
+    use crate::executor::host::ExecImportTiers;
+    use ProcessPermissionTier::*;
+    let tiers = ExecImportTiers {
+        isolated: false,
+        read_only: true,
+        read_write: false,
+        full: true,
+    };
+    for backend in [
+        ExecutionStandaloneWasmBackend::Wasmtime,
+        ExecutionStandaloneWasmBackend::WasmtimeThreads,
+    ] {
+        for (tier, compatible) in [
+            (Isolated, false),
+            (ReadOnly, true),
+            (ReadWrite, false),
+            (Full, true),
+        ] {
+            assert_eq!(
+                validate_in_place_exec_tier(backend, tier, Some(tiers)).is_ok(),
+                compatible
+            );
+            assert!(validate_in_place_exec_tier(backend, tier, None).is_err());
+        }
+    }
+}
+
 pub(super) fn validate_wasm_fd_image_commit_request(
     request: &ProcessLaunchRequest,
 ) -> Result<(), VmError> {
@@ -7455,7 +7520,7 @@ where
         root_process_id: &str,
         process_path: &[&str],
         mut request: ProcessLaunchRequest,
-    ) -> Result<(), VmError> {
+    ) -> Result<Option<ExecutionWasmPermissionTier>, VmError> {
         if request.options.executable_fd.is_some() {
             return Err(VmError::host(
                 "EINVAL",
@@ -7550,6 +7615,12 @@ where
         };
         apply_child_process_argv0(&mut resolved, request.options.argv0.as_deref());
         if resolved.host_function_command {
+            if request.options.local_replacement {
+                return Err(VmError::host(
+                    "ENOEXEC",
+                    "in-place Wasm replacement requires a WebAssembly image",
+                ));
+            }
             let process_event_capacity = self.config.runtime.protocol.max_process_events;
             let bridge = self.bridge.clone();
             let sidecar_requests = self.sidecar_requests.clone();
@@ -7684,7 +7755,7 @@ where
                 vm_pending_event_bytes_budget,
                 event_notify,
             });
-            return Ok(());
+            return Ok(None);
         }
         if request.options.local_replacement
             && current_adapter_policy.supports_prepared_in_place_exec
@@ -7768,6 +7839,19 @@ where
             .and_then(|process| process.kernel_stdin_writer_fd)
             .into_iter()
             .collect::<Vec<_>>();
+            let effective = vm
+                .kernel
+                .effective_exec_permission_tier(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    requested_exec_permission_tier,
+                )
+                .map_err(kernel_error)?;
+            validate_in_place_exec_tier(
+                standalone_wasm_backend,
+                effective,
+                request.options.validated_import_tiers,
+            )?;
             vm.kernel
                 .exec_process_retaining_internal_fds_from_thread(
                     EXECUTION_DRIVER_NAME,
@@ -7783,19 +7867,28 @@ where
                     Some(requested_exec_permission_tier),
                 )
                 .map_err(kernel_error)?;
-            prune_managed_process_routes_without_aliases(&bridge, vm_id, &mut vm, kernel_pid)?;
+            prune_managed_process_routes_without_aliases(&bridge, vm_id, &mut vm, kernel_pid)
+                .map_err(|error| in_place_exec_cleanup_error(standalone_wasm_backend, error))?;
 
             let vm = &mut *vm;
             let root = vm
                 .active_processes
                 .get_mut(root_process_id)
-                .ok_or_else(|| missing_process_error(vm_id, root_process_id))?;
+                .ok_or_else(|| {
+                    in_place_exec_cleanup_error(
+                        standalone_wasm_backend,
+                        missing_process_error(vm_id, root_process_id),
+                    )
+                })?;
             let process =
                 Self::active_process_by_path_mut(root, process_path).ok_or_else(|| {
-                    VmError::InvalidState(format!(
-                        "process disappeared during execve: {}",
-                        Self::child_process_path_label(root_process_id, process_path)
-                    ))
+                    in_place_exec_cleanup_error(
+                        standalone_wasm_backend,
+                        VmError::InvalidState(format!(
+                            "process disappeared during execve: {}",
+                            Self::child_process_path_label(root_process_id, process_path)
+                        )),
+                    )
                 })?;
             process.guest_cwd = resolved.guest_cwd;
             process.host_cwd = resolved.host_cwd;
@@ -7815,7 +7908,7 @@ where
             }
             discard_replaced_image_pending_events(process);
 
-            return Ok(());
+            return Ok(Some(execution_wasm_permission_tier(effective)));
         }
 
         let bridge = self.bridge.clone();
@@ -8184,7 +8277,7 @@ where
                 "execve replacement failed after commit; terminating the replacement process"
             );
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Commit metadata for an fexecve image that the trusted WASM runner has
@@ -8197,10 +8290,10 @@ where
         root_process_id: &str,
         process_path: &[&str],
         request: ProcessLaunchRequest,
-    ) -> Result<(), VmError> {
+    ) -> Result<Option<ExecutionWasmPermissionTier>, VmError> {
         validate_wasm_fd_image_commit_request(&request)?;
 
-        let (kernel_pid, retained_internal_fds) = {
+        let (kernel_pid, backend, retained_internal_fds) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let root = vm
                 .active_processes
@@ -8222,6 +8315,7 @@ where
             }
             (
                 process.kernel_pid,
+                process.standalone_wasm_backend,
                 process
                     .kernel_stdin_writer_fd
                     .into_iter()
@@ -8245,6 +8339,12 @@ where
             .vms
             .get_mut(vm_id)
             .ok_or_else(|| missing_vm_error(vm_id))?;
+        // Descriptor exec inherits the calling image's kernel tier.
+        let effective = vm
+            .kernel
+            .process_permission_tier(EXECUTION_DRIVER_NAME, kernel_pid)
+            .map_err(kernel_error)?;
+        validate_in_place_exec_tier(backend, effective, request.options.validated_import_tiers)?;
         vm.kernel
             .exec_process_retaining_internal_fds_from_thread(
                 EXECUTION_DRIVER_NAME,
@@ -8260,17 +8360,23 @@ where
                 None,
             )
             .map_err(kernel_error)?;
-        prune_managed_process_routes_without_aliases(&bridge, vm_id, &mut vm, kernel_pid)?;
+        prune_managed_process_routes_without_aliases(&bridge, vm_id, &mut vm, kernel_pid)
+            .map_err(|error| in_place_exec_cleanup_error(backend, error))?;
 
         let root = vm
             .active_processes
             .get_mut(root_process_id)
-            .ok_or_else(|| missing_process_error(vm_id, root_process_id))?;
+            .ok_or_else(|| {
+                in_place_exec_cleanup_error(backend, missing_process_error(vm_id, root_process_id))
+            })?;
         let process = Self::active_process_by_path_mut(root, process_path).ok_or_else(|| {
-            VmError::InvalidState(format!(
-                "process disappeared during fexecve commit: {}",
-                Self::child_process_path_label(root_process_id, process_path)
-            ))
+            in_place_exec_cleanup_error(
+                backend,
+                VmError::InvalidState(format!(
+                    "process disappeared during fexecve commit: {}",
+                    Self::child_process_path_label(root_process_id, process_path)
+                )),
+            )
         })?;
         process.env = replacement_guest_env;
         process.exit_signal = None;
@@ -8287,7 +8393,7 @@ where
             process.module_resolution_cache_generation = None;
         }
         discard_replaced_image_pending_events(process);
-        Ok(())
+        Ok(Some(execution_wasm_permission_tier(effective)))
     }
 
     // The FIFO VM startup permit serializes engine access. Engine APIs borrow
@@ -10398,7 +10504,6 @@ where
                 if !reply.claim().map_err(VmError::from)? {
                     return Ok(Box::pin(async { Ok(()) }));
                 }
-                let local_replacement = request.options.local_replacement;
                 let result = if fd_image_commit {
                     self.commit_wasm_fd_process_image(
                         vm_id,
@@ -10410,13 +10515,13 @@ where
                     self.exec_process_image(vm_id, root_process_id, caller_process_path, request)
                 };
                 match result {
-                    Ok(()) if local_replacement => {
+                    Ok(Some(tier)) => {
                         reply
-                            .succeed_json(json!({ "committed": true }))
+                            .succeed_json(json!({ "committed": true, "permissionTier": tier }))
                             .map_err(VmError::from)?;
                         return Ok(Box::pin(async { Ok(()) }));
                     }
-                    Ok(()) => {
+                    Ok(None) => {
                         reply.dismiss_claimed().map_err(VmError::from)?;
                         return Ok(Box::pin(async { Ok(()) }));
                     }

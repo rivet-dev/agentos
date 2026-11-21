@@ -161,6 +161,8 @@ export interface ExecOptions {
 	cwd?: string;
 	stdin?: string | Uint8Array;
 	timeout?: number;
+	/** Maximum combined host-captured stdout and stderr bytes. Defaults to 16 MiB. */
+	maxCapturedOutputBytes?: number;
 	onStdout?: (data: Uint8Array) => void;
 	onStderr?: (data: Uint8Array) => void;
 	captureStdio?: boolean;

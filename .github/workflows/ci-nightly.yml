@@ -10,8 +10,14 @@ on:
   schedule:
     - cron: "41 10 * * *"
 
+permissions:
+  contents: read
+
 jobs:
   xfstests:
+    permissions:
+      contents: read
+      actions: read
     name: "xfstests (${{ matrix.wasm_backend }}, ${{ matrix.storage_backend }})"
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 420
@@ -21,12 +27,18 @@ jobs:
         wasm_backend: [v8]
         storage_backend: [chunked_local, memory, chunked_s3]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: dtolnay/rust-toolchain@01e2821fc38dbca62c2557c927b33938a2e005fd # 1.98.1
         with:
           targets: wasm32-wasip1
       - run: pnpm install --frozen-lockfile
@@ -36,7 +48,7 @@ jobs:
           XFSTESTS_WASM_BACKENDS: ${{ matrix.wasm_backend }}
           XFSTESTS_BACKENDS: ${{ matrix.storage_backend }}
           XFSTESTS_CONCURRENCY: '2'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: xfstests-${{ matrix.wasm_backend }}-${{ matrix.storage_backend }}
@@ -44,6 +56,9 @@ jobs:
           if-no-files-found: warn
 
   xfstests-endurance:
+    permissions:
+      contents: read
+      actions: read
     name: "xfstests endurance (${{ matrix.wasm_backend }})"
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.xfstests_only }}
     runs-on: depot-ubuntu-24.04-8
@@ -60,12 +75,18 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/tests/xfstests/.cache/cargo-target
       CARGO_BUILD_JOBS: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: dtolnay/rust-toolchain@01e2821fc38dbca62c2557c927b33938a2e005fd # 1.98.1
         with:
           targets: wasm32-wasip1
       - run: pnpm install --frozen-lockfile
@@ -123,6 +144,9 @@ jobs:
             --ignored --exact --nocapture --test-threads=1
 
   nightly:
+    permissions:
+      contents: read
+      actions: read
     name: Nightly runtime validation
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.xfstests_only }}
     runs-on: ubuntu-latest
@@ -133,21 +157,27 @@ jobs:
       AGENTOS_REQUIRE_UDP_ANCILLARY: '1'
       XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - run: corepack enable yarn
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: dtolnay/rust-toolchain@01e2821fc38dbca62c2557c927b33938a2e005fd # 1.98.1
         with:
           components: clippy, rustfmt
           targets: wasm32-wasip1
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
         with:
           targets: wasm32-wasip1
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: nightly-2026-03-01
           components: rust-src
@@ -201,7 +231,7 @@ jobs:
           AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-sidecar
           NATIVE_BASELINE_BIN: ${{ github.workspace }}/target/release/agentos-benchmark-baseline
           NATIVE_BASELINE_WASM: ${{ github.workspace }}/target/wasm32-wasip1/release/agentos-benchmark-baseline.wasm
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: nightly-benchmark-results

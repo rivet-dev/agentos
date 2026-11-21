@@ -7,23 +7,35 @@ on:
   schedule:
     - cron: "17 9 * * *"
 
+permissions:
+  contents: read
+
 jobs:
   bench-gate:
+    permissions:
+      contents: read
+      actions: read
     name: Runtime benchmark gate
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: ${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: wasm32-wasip1
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
         with:
           targets: wasm32-wasip1
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-benchmarks...' --filter '@rivet-dev/agentos...' --filter '@rivet-dev/agentos-build-tools'

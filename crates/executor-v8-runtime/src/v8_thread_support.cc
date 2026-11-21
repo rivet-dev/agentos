@@ -2,6 +2,14 @@
 #define _GNU_SOURCE 1
 #endif
 
+#include <cerrno>
+#if defined(__linux__) && defined(__x86_64__)
+#include <sys/mman.h>
+#if defined(PKEY_DISABLE_WRITE)
+#pragma weak pkey_set
+#endif
+#endif
+
 #include "v8-platform.h"
 #include "v8-sandbox.h"
 
@@ -9,8 +17,21 @@ extern "C" void agentos_v8_initialize_sandbox_hardware_before_thread_creation() 
   v8::SandboxHardwareSupport::InitializeBeforeThreadCreation();
 }
 
-extern "C" void agentos_v8_set_default_thread_isolation_permissions() {
-  v8::ThreadIsolatedAllocator::SetDefaultPermissionsForSignalHandler();
+extern "C" int agentos_v8_set_default_thread_isolation_permissions(v8::Platform* platform) {
+  // The platform owns this allocator for its lifetime. A kernel without PKU
+  // gets a null allocator. Never change keys owned by a different embedder.
+  auto* allocator = platform->GetThreadIsolatedAllocator();
+  if (!allocator) return 0;
+#if defined(__linux__) && defined(__x86_64__) && defined(PKEY_DISABLE_WRITE)
+  if (allocator->Type() == v8::ThreadIsolatedAllocator::Type::kPkey && pkey_set) {
+    // Match the access rights used by V8's DefaultThreadIsolatedAllocator
+    // when it allocates its key. This also prepares pre-existing host threads.
+    const int key = allocator->Pkey();
+    if (key <= 0) return EINVAL;
+    return pkey_set(key, PKEY_DISABLE_WRITE) == 0 ? 0 : errno;
+  }
+#endif
+  return ENOTSUP;
 }
 
 
@@ -35,7 +56,6 @@ extern "C" void agentos_v8_suppress_microtasks_end(void* storage) {
 }
 
 
-#include <cerrno>
 #include <cstdint>
 #include <limits>
 #if defined(__linux__)

@@ -1,1 +1,18 @@
-{}
+{
+  "aarch64-apple-darwin": {
+    "sha256": "07fcc9f69cfe977d8b3567c14e300f74ab5f842e0ee672c9121a32cf0b7f0cac",
+    "artifactId": 14679159204
+  },
+  "aarch64-unknown-linux-gnu": {
+    "sha256": "72a71c276d8c44440cb25e412ec99f72bb5b331a81a62998f86d6e9bf5b471f8",
+    "artifactId": 14679705551
+  },
+  "x86_64-apple-darwin": {
+    "sha256": "4bd58f1a1268448bd688eab504123570b6c73344faa73139ff1e17b728521b63",
+    "artifactId": 14680823472
+  },
+  "x86_64-unknown-linux-gnu": {
+    "artifactId": 14699571567,
+    "sha256": "6fea0688c054ab5046219ad231ec76ced6a35b188fce6e4282614fb1f1927389"
+  }
+}

@@ -27,6 +27,7 @@ pub const DEFAULT_MAX_HOST_REPLY_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct PendingExecReplacement {
+    pub permission_tier: Result<agentos_executor_wasm_abi::WasmPermissionTier, HostServiceError>,
     pub module: Arc<wasmtime::Module>,
     pub argv: Vec<String>,
     pub env: BTreeMap<String, String>,

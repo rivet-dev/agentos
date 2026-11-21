@@ -47,6 +47,9 @@ impl Write for Output {
         } else {
             self.reservation = Some(extra);
         }
+        self.bytes.try_reserve_exact(bytes.len()).map_err(|_| {
+            io::Error::other("ERR_MEMORY_ALLOCATION_FAILED: unable to allocate Brotli output")
+        })?;
         self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
     }
@@ -56,7 +59,7 @@ impl Write for Output {
 }
 
 pub(crate) fn transform<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: &v8::FunctionCallbackArguments<'s>,
     decode: bool,
     limit: usize,
@@ -64,14 +67,11 @@ pub(crate) fn transform<'s>(
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let view = v8::Local::<v8::ArrayBufferView>::try_from(args.get(0))
         .map_err(|_| "ERR_INVALID_ARG_TYPE: Brotli input must be a byte view")?;
-    if view.byte_length() > limit {
-        return Err("ERR_AGENTOS_BRIDGE_RESPONSE_LIMIT: Brotli input exceeds limits.reactor.maxBridgeResponseBytes".into());
-    }
     let _input_reservation = resources
         .reserve(ResourceClass::BridgeRequestBytes, view.byte_length())
         .map_err(|error| error.to_string())?;
-    let mut bytes = vec![0; view.byte_length()];
-    view.copy_contents(&mut bytes);
+    let bytes = crate::node_v8_serialization::copy_view(scope, view)
+        .map_err(|_| "ERR_MEMORY_ALLOCATION_FAILED: unable to copy Brotli input")?;
     let requested = args.get(4).integer_value(scope).unwrap_or(limit as i64);
     let mut output = Output {
         bytes: Vec::new(),
@@ -111,6 +111,7 @@ pub(crate) fn transform<'s>(
         );
     }
     let length = output.bytes.len();
+    crate::isolate::admit_external_allocation(scope, length)?;
     let backing = v8::ArrayBuffer::new_backing_store_from_vec(output.bytes).make_shared();
     let buffer = v8::ArrayBuffer::with_backing_store(scope, &backing);
     v8::Uint8Array::new(scope, buffer, 0, length)

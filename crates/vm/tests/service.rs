@@ -467,6 +467,7 @@ mod service {
             HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
         };
         use rustls::crypto::aws_lc_rs;
+        use rustls::pki_types::pem::PemObject;
         use rustls::pki_types::{CertificateDer, ServerName};
         use rustls::{
             ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, ServerConfig,
@@ -475,7 +476,7 @@ mod service {
         use serde_json::{json, Value};
         use std::collections::{BTreeMap, HashMap};
         use std::fs;
-        use std::io::{BufReader, Read, Write};
+        use std::io::{Read, Write};
         use std::net::{SocketAddr, TcpListener, UdpSocket};
         use std::os::unix::fs::PermissionsExt;
         use std::path::{Path, PathBuf};
@@ -5656,13 +5657,15 @@ console.log(JSON.stringify({ status: "ok", summary }));
         }
 
         fn tls_test_certificates() -> Vec<rustls::pki_types::CertificateDer<'static>> {
-            rustls_pemfile::certs(&mut BufReader::new(TLS_TEST_CERT_PEM.as_bytes()))
+            rustls::pki_types::CertificateDer::pem_slice_iter(TLS_TEST_CERT_PEM.as_bytes())
                 .collect::<Result<Vec<_>, _>>()
                 .expect("parse TLS test certificate")
         }
 
         fn tls_test_private_key() -> rustls::pki_types::PrivateKeyDer<'static> {
-            rustls_pemfile::private_key(&mut BufReader::new(TLS_TEST_KEY_PEM.as_bytes()))
+            rustls::pki_types::PrivateKeyDer::pem_slice_iter(TLS_TEST_KEY_PEM.as_bytes())
+                .next()
+                .transpose()
                 .expect("parse TLS test private key")
                 .expect("TLS test private key")
         }

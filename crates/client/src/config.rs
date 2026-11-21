@@ -1333,7 +1333,7 @@ impl TimerScheduleDriver {
         let parsed = match crate::cron::parse_schedule(&entry.schedule) {
             Ok(parsed) => parsed,
             Err(_) => {
-                let _ = timers.remove(&entry.id);
+                let _ = timers.remove_sync(&entry.id);
                 return;
             }
         };
@@ -1342,7 +1342,7 @@ impl TimerScheduleDriver {
             Some(next) => next,
             None => {
                 // No upcoming run (one-shot in the past, or exhausted cron).
-                let _ = timers.remove(&entry.id);
+                let _ = timers.remove_sync(&entry.id);
                 return;
             }
         };
@@ -1362,10 +1362,10 @@ impl TimerScheduleDriver {
             // The driver is fire-and-forget; errors are the caller's responsibility.
             (entry.callback)().await;
 
-            if is_cron && timers.contains(&entry.id) {
+            if is_cron && timers.contains_sync(&entry.id) {
                 Self::schedule_next(Arc::clone(&timers), entry, cancel);
             } else {
-                let _ = timers.remove(&entry.id);
+                let _ = timers.remove_sync(&entry.id);
             }
         });
     }
@@ -1376,10 +1376,10 @@ impl ScheduleDriver for TimerScheduleDriver {
         let id = entry.id.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         // Replace any existing timer for this id, cancelling it first.
-        if let Some((_, old)) = self.timers.remove(&id) {
+        if let Some((_, old)) = self.timers.remove_sync(&id) {
             old.cancel();
         }
-        let _ = self.timers.insert(id.clone(), cancel.clone());
+        let _ = self.timers.insert_sync(id.clone(), cancel.clone());
 
         Self::schedule_next(Arc::clone(&self.timers), entry, cancel);
 
@@ -1387,13 +1387,16 @@ impl ScheduleDriver for TimerScheduleDriver {
     }
 
     fn cancel(&self, handle: &ScheduleHandle) {
-        if let Some((_, cancel)) = self.timers.remove(&handle.id) {
+        if let Some((_, cancel)) = self.timers.remove_sync(&handle.id) {
             cancel.cancel();
         }
     }
 
     fn dispose(&self) {
-        self.timers.scan(|_, cancel| cancel.cancel());
-        self.timers.clear();
+        self.timers.iter_sync(|_, cancel| {
+            cancel.cancel();
+            true
+        });
+        self.timers.clear_sync();
     }
 }

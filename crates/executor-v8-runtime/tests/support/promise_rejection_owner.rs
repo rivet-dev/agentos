@@ -96,7 +96,7 @@ fn rejection_owner_controls() {
         let context = isolate::create_context(&mut isolate);
         let previous_policy=isolate.get_microtasks_policy();
         let (code,error) = {
-            let scope=&mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let ctx=v8::Local::new(scope,&context);
             let scope=&mut v8::ContextScope::new(scope,ctx);
             crate::async_context::install_async_context_globals(scope);
@@ -119,7 +119,7 @@ fn rejection_owner_controls() {
             for(let i=0;i<{rejections};i++)Promise.reject(i);void 0;
         "#);
         let (code,error)={
-            let scope=&mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let ctx=v8::Local::new(scope,&context);
             let scope=&mut v8::ContextScope::new(scope,ctx);
             execute_script(scope,"",&script,&mut None)
@@ -136,7 +136,7 @@ fn rejection_owner_controls() {
         let mut isolate=isolate::create_isolate(None);
         let context=isolate::create_context(&mut isolate);
         let (code,error)={
-            let scope=&mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let ctx=v8::Local::new(scope,&context);
             let scope=&mut v8::ContextScope::new(scope,ctx);
             execute_script(scope,"",r#"
@@ -152,7 +152,7 @@ fn rejection_owner_controls() {
 }
 
 fn nested_rejection_owner_checkpoint(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     _args: v8::FunctionCallbackArguments,
     mut result: v8::ReturnValue,
 ) {
@@ -180,7 +180,7 @@ fn rejection_owner_policy_restoration_controls() {
             isolate.set_microtasks_policy(policy);
             let context=isolate::create_context(&mut isolate);
             let (code,error)={
-                let scope=&mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let ctx=v8::Local::new(scope,&context);
                 let scope=&mut v8::ContextScope::new(scope,ctx);
                 let callback=v8::Function::new(scope,nested_rejection_owner_checkpoint).expect("nested checkpoint callback");

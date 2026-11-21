@@ -5,6 +5,9 @@
 #
 #   TARGET = aarch64-apple-darwin | x86_64-apple-darwin
 #   CLANG  = aarch64-apple-darwin20.4 | x86_64-apple-darwin20.4
+FROM scratch AS agentos-v8-inputs
+COPY scripts/ci/v8/archives.json /archives.json
+
 FROM ghcr.io/rivet-dev/rivet/builder-base-osxcross:0e33ceb98
 
 ARG TARGET=aarch64-apple-darwin
@@ -19,6 +22,10 @@ ENV SDK=/root/osxcross/target/SDK/MacOSX11.3.sdk \
     SCCACHE_IDLE_TIMEOUT=0
 
 WORKDIR /build
+COPY scripts/ci/v8 /build/scripts/ci/v8
+RUN --mount=type=bind,from=agentos-v8-inputs,target=/opt/engine-inputs \
+    python3 scripts/ci/v8/engine.py install "${TARGET}" /opt/agentos-v8 --build-context /opt/engine-inputs --cargo-config /opt/agentos-v8.toml --shell-env /opt/agentos-v8.sh
+
 COPY . .
 
 RUN rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal && \
@@ -54,7 +61,8 @@ RUN --mount=type=cache,id=cargo-registry-agentos-darwin,target=/usr/local/cargo/
     export RANLIB_${tl}=${CLANG}-ranlib && \
     export CARGO_TARGET_${tu}_LINKER=${CLANG}-clang && \
     if [ "$BUILD_PROFILE" = "release" ]; then FLAG="--release"; PROF=release; else FLAG=""; PROF=debug; fi && \
-    cargo build $FLAG -p agentos-sidecar --target "$TARGET" && \
+    . /opt/agentos-v8.sh && \
+    cargo --config /opt/agentos-v8.toml build $FLAG -p agentos-sidecar --target "$TARGET" && \
     mkdir -p /artifacts && \
     cp "target/$TARGET/$PROF/agentos-sidecar" /artifacts/agentos-sidecar && \
     (sccache --show-stats 2>/dev/null || true)

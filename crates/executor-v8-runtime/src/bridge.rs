@@ -6,7 +6,6 @@ use std::ffi::c_void;
 use std::mem::MaybeUninit;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::OnceLock;
 
 use agentos_vm_host_interface::bridge_contract;
 use serde::de;
@@ -65,14 +64,13 @@ fn configured_cbor_codec_enabled() -> bool {
 /// External references for V8 snapshot serialization.
 /// Maps function pointer indices in the snapshot to current addresses.
 /// Must be identical at snapshot creation and restore time.
-pub fn external_refs() -> &'static v8::ExternalReferences {
-    static REFS: OnceLock<v8::ExternalReferences> = OnceLock::new();
-    REFS.get_or_init(|| v8::ExternalReferences::new(&base_external_references()))
+pub fn external_refs() -> &'static [v8::ExternalReference] {
+    crate::shared_source::base_references()
 }
 
 /// Native callbacks a snapshot heap can reference. Snapshots with shared
 /// sources append their source constants after these.
-pub(crate) fn base_external_references() -> Vec<v8::ExternalReference<'static>> {
+pub(crate) fn base_external_references() -> Vec<v8::ExternalReference> {
     vec![
         v8::ExternalReference {
             function: sync_bridge_callback.map_fn_to(),
@@ -99,7 +97,7 @@ struct DefaultSerializerDelegate;
 impl v8::ValueSerializerImpl for DefaultSerializerDelegate {
     fn throw_data_clone_error<'s>(
         &self,
-        scope: &mut v8::HandleScope<'s>,
+        scope: &mut v8::PinScope<'s, '_>,
         message: v8::Local<'s, v8::String>,
     ) {
         let exc = v8::Exception::error(scope, message);
@@ -117,7 +115,7 @@ impl v8::ValueDeserializerImpl for DefaultDeserializerDelegate {}
 /// Uint8Array, Date, Map, Set, RegExp, Error, and circular references.
 /// When CBOR codec is active, uses ciborium instead.
 pub fn serialize_v8_value(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<u8>, String> {
     if is_cbor_codec() {
@@ -129,7 +127,7 @@ pub fn serialize_v8_value(
 /// Serialize a V8 value to bytes using V8's native wire format regardless of
 /// the process-wide codec toggle.
 pub fn serialize_v8_wire_value(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<u8>, String> {
     let context = scope.get_current_context();
@@ -144,7 +142,7 @@ pub fn serialize_v8_wire_value(
 /// Deserialize bytes back to a V8 value using V8's built-in ValueDeserializer.
 /// The bytes must have been produced by serialize_v8_value() or node:v8.serialize().
 pub fn deserialize_v8_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     data: &[u8],
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     if is_cbor_codec() {
@@ -156,7 +154,7 @@ pub fn deserialize_v8_value<'s>(
 /// Deserialize bytes from V8's native wire format regardless of the
 /// process-wide codec toggle.
 pub fn deserialize_v8_wire_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     data: &[u8],
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let context = scope.get_current_context();
@@ -174,7 +172,7 @@ pub fn deserialize_v8_wire_value<'s>(
 
 /// Convert a V8 value to a ciborium::Value for CBOR serialization.
 fn v8_to_cbor(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     value: v8::Local<v8::Value>,
 ) -> Result<ciborium::Value, String> {
     let mut object_stack = Vec::new();
@@ -182,7 +180,7 @@ fn v8_to_cbor(
 }
 
 fn v8_to_cbor_inner(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     value: v8::Local<v8::Value>,
     depth: usize,
     object_stack: &mut Vec<v8::Global<v8::Object>>,
@@ -272,7 +270,7 @@ fn v8_to_cbor_inner(
 }
 
 fn enter_cbor_object(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     object_stack: &mut Vec<v8::Global<v8::Object>>,
     object: v8::Local<v8::Object>,
 ) -> Result<(), String> {
@@ -518,14 +516,14 @@ fn limited_cbor_item_count<E: de::Error>(kind: &str, item_count: usize) -> Resul
 
 /// Convert a ciborium::Value to a V8 value.
 fn cbor_to_v8<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     value: &ciborium::Value,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     cbor_to_v8_inner(scope, value, 0)
 }
 
 fn cbor_to_v8_inner<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     value: &ciborium::Value,
     depth: usize,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -577,7 +575,7 @@ fn cbor_to_v8_inner<'s>(
 }
 
 fn raw_bytes_to_uint8array<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     bytes: &[u8],
 ) -> Option<v8::Local<'s, v8::Value>> {
     // Host data uses a Rust-owned backing store. `v8::ArrayBuffer::new` draws
@@ -591,7 +589,7 @@ fn raw_bytes_to_uint8array<'s>(
 }
 
 fn bridge_response_payload_to_v8<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     status: u8,
     payload: &[u8],
 ) -> Option<v8::Local<'s, v8::Value>> {
@@ -600,7 +598,7 @@ fn bridge_response_payload_to_v8<'s>(
     }
 
     let v8_val = {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         deserialize_v8_value(tc, payload).ok()
     };
     if v8_val.is_some() {
@@ -654,7 +652,7 @@ fn decode_bridge_error(payload: &[u8]) -> Option<DecodedBridgeError> {
 }
 
 fn bridge_error_exception<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     payload: &[u8],
 ) -> v8::Local<'s, v8::Value> {
     let decoded = decode_bridge_error(payload);
@@ -697,14 +695,14 @@ fn bridge_error_exception<'s>(
 }
 
 fn runtime_error_exception<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     message: &str,
 ) -> v8::Local<'s, v8::Value> {
     runtime_error_exception_with_code(scope, message, "ERR_AGENTOS_BRIDGE_RUNTIME")
 }
 
 fn runtime_error_exception_with_code<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     message: &str,
     code: &str,
 ) -> v8::Local<'s, v8::Value> {
@@ -725,7 +723,7 @@ fn runtime_error_exception_with_code<'s>(
 
 /// Serialize a V8 value to CBOR bytes.
 pub fn serialize_cbor_value(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<u8>, String> {
     let cbor_val = v8_to_cbor(scope, value)?;
@@ -736,7 +734,7 @@ pub fn serialize_cbor_value(
 
 /// Deserialize CBOR bytes to a V8 value.
 pub fn deserialize_cbor_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     data: &[u8],
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let LimitedCborValue(cbor_val) =
@@ -769,7 +767,7 @@ impl Drop for ActiveBridgeExecutionGuard {
 }
 
 pub(crate) fn activate_bridge_execution(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     context: Rc<BridgeCallContext>,
     pending: Rc<PendingPromises>,
 ) -> ActiveBridgeExecutionGuard {
@@ -793,11 +791,11 @@ pub(crate) fn activate_bridge_execution(
 /// functions and apply aliases therefore remain valid for the context lifetime,
 /// while each invocation obtains the current operation's response/abort channels.
 pub(crate) fn install_session_bridge_fns(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     sync_methods: &[&str],
     async_methods: &[&str],
 ) -> Result<(), String> {
-    let scope = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(scope, scope);
     reset_vm_context_registry(scope);
     crate::next_ticks::capture(scope)?;
     let context = scope.get_current_context();
@@ -868,7 +866,7 @@ impl BridgeCallbackData {
 }
 
 fn bridge_callback_data(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     value: v8::Local<v8::Value>,
     is_async: bool,
 ) -> Result<BridgeCallbackData, (&'static str, &'static str)> {
@@ -1216,7 +1214,7 @@ fn current_thread_resource_usage() -> Result<ThreadResourceUsageSnapshot, String
 pub const EMULATED_OPENSSL_VERSION: &str = "3.6.3";
 
 fn set_object_string_property<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     object: v8::Local<'s, v8::Object>,
     key: &str,
     value: &str,
@@ -1227,7 +1225,7 @@ fn set_object_string_property<'s>(
 }
 
 fn set_object_number_property<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     object: v8::Local<'s, v8::Object>,
     key: &str,
     value: f64,
@@ -1238,7 +1236,7 @@ fn set_object_number_property<'s>(
 }
 
 fn number_property_or_zero<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     object: v8::Local<'s, v8::Object>,
     key: &str,
 ) -> u64 {
@@ -1250,9 +1248,8 @@ fn number_property_or_zero<'s>(
         .unwrap_or_default()
 }
 
-fn process_memory_usage_value<'s>(scope: &mut v8::HandleScope<'s>) -> v8::Local<'s, v8::Value> {
-    let mut stats = v8::HeapStatistics::default();
-    scope.get_heap_statistics(&mut stats);
+fn process_memory_usage_value<'s>(scope: &mut v8::PinScope<'s, '_>) -> v8::Local<'s, v8::Value> {
+    let stats = scope.get_heap_statistics();
 
     let object = v8::Object::new(scope);
     set_object_number_property(scope, object, "rss", stats.total_physical_size() as f64);
@@ -1270,10 +1267,9 @@ fn process_memory_usage_value<'s>(scope: &mut v8::HandleScope<'s>) -> v8::Local<
 
 // This reads only the currently executing isolate; it is not process RSS.
 fn v8_heap_statistics_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let mut statistics = v8::HeapStatistics::default();
-    scope.get_heap_statistics(&mut statistics);
+    let statistics = scope.get_heap_statistics();
     let object = v8::Object::new(scope);
     for (name, value) in [
         ("total_heap_size", statistics.total_heap_size()),
@@ -1287,7 +1283,10 @@ fn v8_heap_statistics_value<'s>(
         ("heap_size_limit", statistics.heap_size_limit()),
         ("malloced_memory", statistics.malloced_memory()),
         ("peak_malloced_memory", statistics.peak_malloced_memory()),
-        ("does_zap_garbage", statistics.does_zap_garbage()),
+        (
+            "does_zap_garbage",
+            usize::from(statistics.does_zap_garbage()),
+        ),
         (
             "number_of_native_contexts",
             statistics.number_of_native_contexts(),
@@ -1321,7 +1320,7 @@ fn v8_heap_statistics_value<'s>(
 }
 
 fn process_cpu_usage_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: &v8::FunctionCallbackArguments,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let usage = current_thread_resource_usage()?;
@@ -1353,7 +1352,7 @@ fn process_cpu_usage_value<'s>(
 }
 
 fn process_resource_usage_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let usage = current_thread_resource_usage()?;
     let object = v8::Object::new(scope);
@@ -1411,7 +1410,7 @@ fn process_resource_usage_value<'s>(
     Ok(object.into())
 }
 
-fn process_versions_value<'s>(scope: &mut v8::HandleScope<'s>) -> v8::Local<'s, v8::Value> {
+fn process_versions_value<'s>(scope: &mut v8::PinScope<'s, '_>) -> v8::Local<'s, v8::Value> {
     let object = v8::Object::new(scope);
     set_object_string_property(scope, object, "v8", v8::V8::get_version());
     set_object_string_property(scope, object, "openssl", EMULATED_OPENSSL_VERSION);
@@ -1474,7 +1473,7 @@ fn vm_context_capacity_error(current_contexts: usize) -> Option<String> {
 }
 
 fn reserve_vm_context_slot<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     context: v8::Local<'s, v8::Context>,
 ) -> Result<u32, String> {
     let registry = vm_context_registry(scope);
@@ -1554,7 +1553,7 @@ pub(crate) fn clear_vm_context_registry_for_test(isolate: &mut v8::Isolate) {
 
 #[cfg(test)]
 pub(crate) fn create_registered_child_for_test<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
 ) -> v8::Local<'s, v8::Context> {
     let context = crate::owned_microtasks::create_child(scope, Default::default())
         .expect("owned child admission");
@@ -1564,7 +1563,7 @@ pub(crate) fn create_registered_child_for_test<'s>(
 
 #[cfg(test)]
 fn fill_vm_context_registry_for_test<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     context: v8::Local<'s, v8::Context>,
     count: usize,
 ) {
@@ -1615,7 +1614,7 @@ macro_rules! vm_property_step {
     ($tc:ident, $operation:expr) => {{
         let result = $operation;
         if $tc.has_caught() || $tc.has_terminated() {
-            return v8::Intercepted::No;
+            return v8::Intercepted::kNo;
         }
         result
     }};
@@ -1623,7 +1622,7 @@ macro_rules! vm_property_step {
 
 macro_rules! vm_property_callback {
     ($scope:expr, $args:expr, |$tc:ident, $sandbox:ident, $global:ident| $body:block) => {{
-        let $tc = &mut v8::TryCatch::new($scope);
+        v8::tc_scope!($tc, $scope);
         let result = (|| {
             // Only these native callbacks can reach this ordinary dense array.
             // [sandbox, ready] is traced by V8; no Rust address or Global is kept.
@@ -1631,7 +1630,7 @@ macro_rules! vm_property_callback {
                 .expect("native contextification binding");
             let ready = vm_property_step!($tc, binding.get_index($tc, 1));
             if !ready.is_some_and(|value| value.is_true()) {
-                return v8::Intercepted::No;
+                return v8::Intercepted::kNo;
             }
             let sandbox_value = vm_property_step!($tc, binding.get_index($tc, 0))
                 .expect("native contextification sandbox field");
@@ -1642,15 +1641,16 @@ macro_rules! vm_property_callback {
             let $global = context.global($tc);
             // Receiver accesses may originate in the parent. Route operations
             // in the child's context, as Node contextify does.
-            let context_scope = &mut v8::ContextScope::new($tc, context);
-            let $tc = &mut v8::TryCatch::new(context_scope);
+            let handles: &mut v8::PinScope = $tc;
+            let context_scope = &mut v8::ContextScope::new(handles, context);
+            v8::tc_scope!($tc, context_scope);
             let result = (|| $body)();
             if $tc.has_caught() || $tc.has_terminated() {
                 assert!(
                     $tc.rethrow().is_some(),
                     "property exception can be rethrown"
                 );
-                v8::Intercepted::Yes
+                v8::Intercepted::kYes
             } else {
                 result
             }
@@ -1660,7 +1660,7 @@ macro_rules! vm_property_callback {
                 $tc.rethrow().is_some(),
                 "property exception can be rethrown"
             );
-            v8::Intercepted::Yes
+            v8::Intercepted::kYes
         } else {
             result
         }
@@ -1668,7 +1668,7 @@ macro_rules! vm_property_callback {
 }
 
 fn vm_named_get<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     name: v8::Local<'s, v8::Name>,
     args: v8::PropertyCallbackArguments<'s>,
     mut rv: v8::ReturnValue,
@@ -1685,15 +1685,15 @@ fn vm_named_get<'s>(
             } else {
                 value
             });
-            v8::Intercepted::Yes
+            v8::Intercepted::kYes
         } else {
-            v8::Intercepted::No
+            v8::Intercepted::kNo
         }
     })
 }
 
 fn vm_named_query<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     name: v8::Local<'s, v8::Name>,
     args: v8::PropertyCallbackArguments<'s>,
     mut rv: v8::ReturnValue<v8::Integer>,
@@ -1706,21 +1706,21 @@ fn vm_named_query<'s>(
                     vm_property_step!(tc, object.get_real_named_property_attributes(tc, name))
                 {
                     rv.set_uint32(attributes.as_u32());
-                    return v8::Intercepted::Yes;
+                    return v8::Intercepted::kYes;
                 }
-                return v8::Intercepted::No;
+                return v8::Intercepted::kNo;
             }
         }
-        v8::Intercepted::No
+        v8::Intercepted::kNo
     })
 }
 
 fn vm_named_set<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     name: v8::Local<'s, v8::Name>,
     value: v8::Local<'s, v8::Value>,
     args: v8::PropertyCallbackArguments<'s>,
-    mut rv: v8::ReturnValue<()>,
+    mut rv: v8::ReturnValue<v8::Boolean>,
 ) -> v8::Intercepted {
     vm_property_callback!(scope, args, |tc, sandbox, global| {
         let global_attributes =
@@ -1734,19 +1734,16 @@ fn vm_named_set<'s>(
                 .as_ref()
                 .is_some_and(v8::PropertyAttribute::is_read_only)
         {
-            return v8::Intercepted::No;
+            return v8::Intercepted::kNo;
         }
         let declared = global_attributes.is_some() || sandbox_attributes.is_some();
-        let contextual = !global.strict_equals(args.this().into());
-        if !declared && args.should_throw_on_error() && contextual && !value.is_function() {
-            return v8::Intercepted::No;
-        }
+        // V8 checks strict contextual stores for an existing binding before invoking the setter.
         if !declared && name.is_symbol() {
-            return v8::Intercepted::No;
+            return v8::Intercepted::kNo;
         }
         if vm_property_step!(tc, sandbox.set(tc, name.into(), value)) != Some(true) {
             // V8's normal store supplies the readonly/strict-mode outcome.
-            return v8::Intercepted::No;
+            return v8::Intercepted::kNo;
         }
         if sandbox_attributes.is_some() {
             if let Some(descriptor) =
@@ -1759,7 +1756,7 @@ fn vm_named_set<'s>(
                             == Some(true)
                         {
                             rv.set_bool(true);
-                            return v8::Intercepted::Yes;
+                            return v8::Intercepted::kYes;
                         }
                     }
                 }
@@ -1767,12 +1764,12 @@ fn vm_named_set<'s>(
         }
         // Match Node's contextual-store/definer fallthrough, including the
         // ordinary global's declaration attributes.
-        v8::Intercepted::No
+        v8::Intercepted::kNo
     })
 }
 
 fn vm_named_descriptor<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     name: v8::Local<'s, v8::Name>,
     args: v8::PropertyCallbackArguments<'s>,
     mut rv: v8::ReturnValue,
@@ -1783,19 +1780,19 @@ fn vm_named_descriptor<'s>(
                 vm_property_step!(tc, sandbox.get_own_property_descriptor(tc, name))
             {
                 rv.set(descriptor);
-                return v8::Intercepted::Yes;
+                return v8::Intercepted::kYes;
             }
         }
-        v8::Intercepted::No
+        v8::Intercepted::kNo
     })
 }
 
 fn vm_named_define<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     name: v8::Local<'s, v8::Name>,
     descriptor: &v8::PropertyDescriptor,
     args: v8::PropertyCallbackArguments<'s>,
-    _rv: v8::ReturnValue<()>,
+    _rv: v8::ReturnValue<v8::Boolean>,
 ) -> v8::Intercepted {
     vm_property_callback!(scope, args, |tc, sandbox, global| {
         let attributes = vm_property_step!(tc, global.get_real_named_property_attributes(tc, name));
@@ -1803,7 +1800,7 @@ fn vm_named_define<'s>(
             .as_ref()
             .is_some_and(|attr| attr.is_read_only() && attr.is_dont_delete())
         {
-            return v8::Intercepted::No;
+            return v8::Intercepted::kNo;
         }
         let undefined = v8::undefined(tc).into();
         let mut forwarded = if descriptor.has_get() || descriptor.has_set() {
@@ -1840,29 +1837,29 @@ fn vm_named_define<'s>(
         match vm_property_step!(tc, sandbox.define_property(tc, name, &forwarded)) {
             // Node intentionally allows the real global definition after this
             // operation; its current definer fallthrough is observable behavior.
-            Some(true) | Some(false) | None => v8::Intercepted::No,
+            Some(true) | Some(false) | None => v8::Intercepted::kNo,
         }
     })
 }
 
 fn vm_named_delete<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     name: v8::Local<'s, v8::Name>,
     args: v8::PropertyCallbackArguments<'s>,
     mut rv: v8::ReturnValue<v8::Boolean>,
 ) -> v8::Intercepted {
     vm_property_callback!(scope, args, |tc, sandbox, _global| {
         if vm_property_step!(tc, sandbox.delete(tc, name.into())) == Some(true) {
-            v8::Intercepted::No
+            v8::Intercepted::kNo
         } else {
             rv.set_bool(false);
-            v8::Intercepted::Yes
+            v8::Intercepted::kYes
         }
     })
 }
 
 fn vm_named_enumerate<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: v8::PropertyCallbackArguments<'s>,
     mut rv: v8::ReturnValue<v8::Array>,
 ) {
@@ -1881,12 +1878,12 @@ fn vm_named_enumerate<'s>(
         ) {
             rv.set(names);
         }
-        v8::Intercepted::Yes
+        v8::Intercepted::kYes
     });
 }
 
 fn vm_indexed_enumerate<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: v8::PropertyCallbackArguments<'s>,
     mut rv: v8::ReturnValue<v8::Array>,
 ) {
@@ -1907,42 +1904,42 @@ fn vm_indexed_enumerate<'s>(
             let mut next = 0;
             for index in 0..names.length() {
                 let Some(name) = vm_property_step!(tc, names.get_index(tc, index)) else {
-                    return v8::Intercepted::No;
+                    return v8::Intercepted::kNo;
                 };
                 if name.is_uint32() {
                     let key = v8::Integer::new_from_unsigned(tc, next);
                     let Some(key) = vm_property_step!(tc, key.to_string(tc)) else {
-                        return v8::Intercepted::No;
+                        return v8::Intercepted::kNo;
                     };
                     if vm_property_step!(tc, indices.create_data_property(tc, key.into(), name))
                         != Some(true)
                     {
-                        return v8::Intercepted::No;
+                        return v8::Intercepted::kNo;
                     }
                     next += 1;
                 }
             }
             rv.set(indices);
         }
-        v8::Intercepted::Yes
+        v8::Intercepted::kYes
     });
 }
 
 macro_rules! vm_indexed_callback {
     ($scope:expr, $index:expr, |$tc:ident, $name:ident| $body:expr) => {{
-        let $tc = &mut v8::TryCatch::new($scope);
+        v8::tc_scope!($tc, $scope);
         let result = if let Some($name) = v8::Integer::new_from_unsigned($tc, $index).to_string($tc)
         {
             $body
         } else {
-            v8::Intercepted::No
+            v8::Intercepted::kNo
         };
         if $tc.has_caught() || $tc.has_terminated() {
             assert!(
                 $tc.rethrow().is_some(),
                 "indexed property exception can be rethrown"
             );
-            v8::Intercepted::Yes
+            v8::Intercepted::kYes
         } else {
             result
         }
@@ -1950,7 +1947,7 @@ macro_rules! vm_indexed_callback {
 }
 
 fn vm_indexed_get<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     index: u32,
     args: v8::PropertyCallbackArguments<'s>,
     rv: v8::ReturnValue,
@@ -1963,7 +1960,7 @@ fn vm_indexed_get<'s>(
     ))
 }
 fn vm_indexed_query<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     index: u32,
     args: v8::PropertyCallbackArguments<'s>,
     rv: v8::ReturnValue<v8::Integer>,
@@ -1976,11 +1973,11 @@ fn vm_indexed_query<'s>(
     ))
 }
 fn vm_indexed_set<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     index: u32,
     value: v8::Local<'s, v8::Value>,
     args: v8::PropertyCallbackArguments<'s>,
-    rv: v8::ReturnValue<()>,
+    rv: v8::ReturnValue<v8::Boolean>,
 ) -> v8::Intercepted {
     vm_indexed_callback!(scope, index, |tc, name| vm_named_set(
         tc,
@@ -1991,7 +1988,7 @@ fn vm_indexed_set<'s>(
     ))
 }
 fn vm_indexed_descriptor<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     index: u32,
     args: v8::PropertyCallbackArguments<'s>,
     rv: v8::ReturnValue,
@@ -2004,11 +2001,11 @@ fn vm_indexed_descriptor<'s>(
     ))
 }
 fn vm_indexed_define<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     index: u32,
     descriptor: &v8::PropertyDescriptor,
     args: v8::PropertyCallbackArguments<'s>,
-    rv: v8::ReturnValue<()>,
+    rv: v8::ReturnValue<v8::Boolean>,
 ) -> v8::Intercepted {
     vm_indexed_callback!(scope, index, |tc, name| vm_named_define(
         tc,
@@ -2019,7 +2016,7 @@ fn vm_indexed_define<'s>(
     ))
 }
 fn vm_indexed_delete<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     index: u32,
     args: v8::PropertyCallbackArguments<'s>,
     rv: v8::ReturnValue<v8::Boolean>,
@@ -2033,7 +2030,7 @@ fn vm_indexed_delete<'s>(
 }
 
 fn vm_context_template<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     sandbox: v8::Local<'s, v8::Object>,
 ) -> (v8::Local<'s, v8::ObjectTemplate>, v8::Local<'s, v8::Array>) {
     let ready = v8::Boolean::new(scope, false);
@@ -2065,7 +2062,7 @@ fn vm_context_template<'s>(
 }
 
 fn vm_options_from_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     value: v8::Local<'s, v8::Value>,
 ) -> VmRunOptions {
     if value.is_null_or_undefined() {
@@ -2081,20 +2078,20 @@ fn vm_options_from_value<'s>(
         return VmRunOptions::default();
     };
     let mut result = VmRunOptions::default();
-    let read_string = |scope: &mut v8::HandleScope<'s>, key: &str| {
+    let read_string = |scope: &mut v8::PinScope<'s, '_>, key: &str| {
         let key_value = v8::String::new(scope, key).expect("V8 string key");
         options
             .get(scope, key_value.into())
             .filter(|value| value.is_string())
             .map(|value| value.to_rust_string_lossy(scope))
     };
-    let read_i32 = |scope: &mut v8::HandleScope<'s>, key: &str| {
+    let read_i32 = |scope: &mut v8::PinScope<'s, '_>, key: &str| {
         let key_value = v8::String::new(scope, key).expect("V8 string key");
         options
             .get(scope, key_value.into())
             .and_then(|value| value.int32_value(scope))
     };
-    let read_u32 = |scope: &mut v8::HandleScope<'s>, key: &str| {
+    let read_u32 = |scope: &mut v8::PinScope<'s, '_>, key: &str| {
         let key_value = v8::String::new(scope, key).expect("V8 string key");
         options
             .get(scope, key_value.into())
@@ -2116,7 +2113,7 @@ fn vm_options_from_value<'s>(
 }
 
 fn vm_throw_error<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     message: &str,
     code: Option<&str>,
     type_error: bool,
@@ -2139,7 +2136,7 @@ fn vm_throw_error<'s>(
 }
 
 fn vm_run_script_in_context<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     isolate_handle: v8::IsolateHandle,
     context: v8::Local<'s, v8::Context>,
     code: &str,
@@ -2171,7 +2168,7 @@ fn vm_run_script_in_context<'s>(
     let mut exception = None;
     {
         let context_scope = &mut v8::ContextScope::new(scope, context);
-        let tc = &mut v8::TryCatch::new(context_scope);
+        v8::tc_scope!(tc, context_scope);
         let source = v8::String::new(tc, code)
             .ok_or_else(|| String::from("vm source string too large for V8"))?;
         let filename = v8::String::new(tc, &options.filename)
@@ -2286,8 +2283,8 @@ fn vm_run_script_in_context<'s>(
 // Context::new also restores the isolate's default snapshot when a custom
 // global template is supplied. Clear only the original host-backed globals
 // before activating sandbox routing; user-supplied properties still take precedence.
-fn vm_scrub_child_globals(scope: &mut v8::HandleScope) -> Result<(), String> {
-    let tc = &mut v8::TryCatch::new(scope);
+fn vm_scrub_child_globals(scope: &mut v8::PinScope<'_, '_>) -> Result<(), String> {
+    v8::tc_scope!(tc, scope);
     let global = tc.get_current_context().global(tc);
     for name in [
         "Buffer",
@@ -2337,7 +2334,7 @@ fn vm_scrub_child_globals(scope: &mut v8::HandleScope) -> Result<(), String> {
 }
 
 fn vm_create_context_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: &mut v8::FunctionCallbackArguments<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let sandbox_value = args.get(0);
@@ -2407,7 +2404,7 @@ fn vm_create_context_value<'s>(
 }
 
 fn vm_run_in_context_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: &mut v8::FunctionCallbackArguments<'s>,
     bridge_ctx: &BridgeCallContext,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -2422,7 +2419,7 @@ fn vm_run_in_context_value<'s>(
         .get(3)
         .to_object(scope)
         .ok_or_else(|| String::from("vm.runInContext missing sandbox object"))?;
-    let isolate_handle = unsafe { args.get_isolate() }.thread_safe_handle();
+    let isolate_handle = scope.thread_safe_handle();
     let context_global = scope.get_slot::<VmContextRegistry>().and_then(|registry| {
         registry
             .0
@@ -2452,7 +2449,7 @@ fn vm_run_in_context_value<'s>(
 }
 
 fn vm_run_in_this_context_value<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: &mut v8::FunctionCallbackArguments<'s>,
     bridge_ctx: &BridgeCallContext,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -2460,7 +2457,7 @@ fn vm_run_in_this_context_value<'s>(
     let options_value = args.get(1);
     let options = vm_options_from_value(scope, options_value);
     let context = scope.get_current_context();
-    let isolate_handle = unsafe { args.get_isolate() }.thread_safe_handle();
+    let isolate_handle = scope.thread_safe_handle();
     vm_run_script_in_context(
         scope,
         isolate_handle,
@@ -2473,7 +2470,7 @@ fn vm_run_in_this_context_value<'s>(
 }
 
 fn handle_local_bridge_call<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     method: &str,
     args: &mut v8::FunctionCallbackArguments<'s>,
     bridge_ctx: &BridgeCallContext,
@@ -2556,9 +2553,23 @@ fn handle_local_bridge_call<'s>(
                 .unwrap_or((limit, "limits.reactor.maxBridgeResponseBytes"));
             let value = args.get(0);
             if method == "v8.serialize" {
-                crate::node_v8_serialization::serialize(scope, value, limit, path).map(Some)
+                crate::node_v8_serialization::serialize(
+                    scope,
+                    value,
+                    limit,
+                    path,
+                    runtime.resources().clone(),
+                )
+                .map(Some)
             } else {
-                crate::node_v8_serialization::deserialize(scope, value, limit, path).map(Some)
+                crate::node_v8_serialization::deserialize(
+                    scope,
+                    value,
+                    limit,
+                    path,
+                    runtime.resources().clone(),
+                )
+                .map(Some)
             }
         }
         "process.cpuUsage" => process_cpu_usage_value(scope, args).map(Some),
@@ -2572,7 +2583,7 @@ fn handle_local_bridge_call<'s>(
 }
 
 fn read_response_length_argument(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     method: &str,
     args: &v8::FunctionCallbackArguments,
 ) -> Option<usize> {
@@ -2611,7 +2622,7 @@ pub(crate) fn declared_bridge_response_bytes(
 }
 
 fn bridge_response_declaration(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     method: &str,
     args: &v8::FunctionCallbackArguments,
 ) -> usize {
@@ -2629,7 +2640,7 @@ fn bridge_response_declaration(
 /// The BridgeCallContext pointer must remain valid for the lifetime of the V8 context.
 /// The returned BridgeFnStore must also be kept alive.
 pub fn register_sync_bridge_fns(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     ctx: *const BridgeCallContext,
     methods: &[&str],
 ) -> BridgeFnStore {
@@ -2668,7 +2679,7 @@ pub fn register_sync_bridge_fns(
 
 /// V8 FunctionTemplate callback for sync-blocking bridge calls.
 fn sync_bridge_callback<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: v8::FunctionCallbackArguments<'s>,
     mut rv: v8::ReturnValue,
 ) {
@@ -2684,7 +2695,7 @@ fn sync_bridge_callback<'s>(
     let ctx = data.context();
 
     {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         match handle_local_bridge_call(tc, &data.method, &mut args, ctx) {
             Ok(Some(value)) => {
                 if tc.has_caught() {
@@ -2763,7 +2774,7 @@ fn sync_bridge_callback<'s>(
 /// The BridgeCallContext and PendingPromises pointers must remain valid
 /// for the lifetime of the V8 context.
 pub fn register_async_bridge_fns(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     ctx: *const BridgeCallContext,
     pending: *const PendingPromises,
     methods: &[&str],
@@ -2798,7 +2809,7 @@ pub fn register_async_bridge_fns(
 }
 
 fn attach_bridge_function_aliases<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     factory: Option<v8::Local<'s, v8::Function>>,
     func: v8::Local<'s, v8::Function>,
     aliases: &[&str],
@@ -2819,7 +2830,7 @@ fn attach_bridge_function_aliases<'s>(
 /// Compile the `apply`-style alias factory once per bridge installation; every
 /// bridge function's aliases are closures from this one factory.
 fn bridge_apply_wrapper_factory<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
 ) -> Option<v8::Local<'s, v8::Function>> {
     let source = v8::String::new(
         scope,
@@ -2831,7 +2842,7 @@ fn bridge_apply_wrapper_factory<'s>(
 }
 
 fn build_bridge_apply_wrapper<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     factory: v8::Local<'s, v8::Function>,
     func: v8::Local<'s, v8::Function>,
 ) -> Option<v8::Local<'s, v8::Function>> {
@@ -2843,7 +2854,7 @@ fn build_bridge_apply_wrapper<'s>(
 }
 
 fn reject_promise_with_error(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     resolver: v8::Local<v8::PromiseResolver>,
     message: &str,
     code: Option<&str>,
@@ -2861,7 +2872,7 @@ fn reject_promise_with_error(
 
 /// V8 FunctionTemplate callback for async promise-returning bridge calls.
 fn async_bridge_callback(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: v8::FunctionCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
@@ -2951,7 +2962,7 @@ fn async_bridge_callback(
 /// Returns (BridgeFnStore, AsyncBridgeFnStore) that must be kept alive
 /// for the lifetime of the V8 context.
 pub fn replace_bridge_fns(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     ctx: *const BridgeCallContext,
     pending: *const PendingPromises,
     sync_fns: &[&str],
@@ -2976,7 +2987,7 @@ pub fn replace_bridge_fns(
 /// After snapshot restore, these stubs are replaced with real functions
 /// that have proper External data pointing to a session-local BridgeCallContext.
 pub fn register_stub_bridge_fns(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     sync_fns: &[&str],
     async_fns: &[&str],
 ) {
@@ -3002,7 +3013,7 @@ pub fn register_stub_bridge_fns(
 
 /// Serialize V8 function arguments as an array.
 fn serialize_v8_args(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     args: &v8::FunctionCallbackArguments,
 ) -> Result<Vec<u8>, String> {
     let count = args.length();
@@ -3018,7 +3029,7 @@ fn serialize_v8_args(
 /// Called when a BridgeResponse arrives during the session event loop.
 /// Flushes microtasks after resolution to process .then() handlers.
 pub fn resolve_pending_promise(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     pending: &PendingPromises,
     call_id: u64,
     status: u8,
@@ -3126,7 +3137,7 @@ mod tests {
         isolate::init_v8_platform();
         let mut isolate = isolate::create_isolate(None);
         let context = isolate::create_context(&mut isolate);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
         install_session_bridge_fns(
@@ -3135,8 +3146,8 @@ mod tests {
             &["_kernelPoll"],
         )
         .unwrap();
-        fn run(scope: &mut v8::HandleScope, source: &str) {
-            let scope = &mut v8::TryCatch::new(scope);
+        fn run(scope: &mut v8::PinScope<'_, '_>, source: &str) {
+            v8::tc_scope!(scope, scope);
             let source = v8::String::new(scope, source).unwrap();
             let script = v8::Script::compile(scope, source, None).unwrap();
             assert!(script.run(scope).is_some(), "bridge guard script failed");
@@ -3287,7 +3298,7 @@ mod tests {
                 isolate::create_isolate(None)
             };
             let root = isolate::create_context(&mut isolate);
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let context = v8::Local::new(scope, &root);
             let scope = &mut v8::ContextScope::new(scope, context);
             let writer = Arc::new(Mutex::new(Vec::new()));
@@ -3300,8 +3311,7 @@ mod tests {
                 register_sync_bridge_fns(scope, &bridge_ctx, &["v8.getHeapStatistics"]);
             // Owning-test collection only; production queries and memory workers do not collect.
             scope.low_memory_notification();
-            let mut native = v8::HeapStatistics::default();
-            scope.get_heap_statistics(&mut native);
+            let native = scope.get_heap_statistics();
             let source = v8::String::new(
                 scope,
                 r#"
@@ -3320,7 +3330,7 @@ mod tests {
             )
             .unwrap();
             let result = {
-                let tc = &mut v8::TryCatch::new(scope);
+                v8::tc_scope!(tc, scope);
                 let script =
                     v8::Script::compile(tc, source, None).expect("compile heap-statistics control");
                 let result = script.run(tc).expect("run local heap-statistics control");
@@ -3392,7 +3402,7 @@ mod tests {
             };
             {
                 let root = isolate::create_context(&mut isolate);
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let context = v8::Local::new(scope, &root);
                 let scope = &mut v8::ContextScope::new(scope, context);
                 let bridge_ctx = BridgeCallContext::new(
@@ -3511,7 +3521,7 @@ mod tests {
 
         let mut isolate = isolate::create_isolate(None);
         let context = isolate::create_context(&mut isolate);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -3618,7 +3628,7 @@ mod tests {
             })
         "#;
         {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(tc, scope);
             let source = v8::String::new(tc, source).unwrap();
             let script = v8::Script::compile(tc, source, None).unwrap();
             let result = script.run(tc);
@@ -3665,7 +3675,7 @@ mod tests {
             })()
         "#;
         {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(tc, scope);
             let source = v8::String::new(tc, source).unwrap();
             let script = v8::Script::compile(tc, source, None).unwrap();
             let result = script.run(tc);
@@ -3708,7 +3718,7 @@ mod tests {
         // The handler/template data must not root a sandbox once the bounded
         // registry and ordinary handles release its only child context.
         let weak_sandbox = {
-            let inner = &mut v8::HandleScope::new(scope);
+            v8::scope!(inner, scope);
             let sandbox = v8::Object::new(inner);
             let global = context.global(inner);
             let name = v8::String::new(inner, "_vmCreateContext").unwrap();
@@ -3753,7 +3763,7 @@ mod tests {
             fill_count = MAX_PENDING_PROMISES,
         );
         {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(tc, scope);
             let source = v8::String::new(tc, &source).unwrap();
             let script = v8::Script::compile(tc, source, None).unwrap();
             assert!(script.run(tc).is_some());
@@ -3812,7 +3822,7 @@ mod tests {
             fill_count = MAX_PENDING_PROMISES - 1,
         );
         {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(tc, scope);
             let source = v8::String::new(tc, &source).unwrap();
             let script = v8::Script::compile(tc, source, None).unwrap();
             assert!(script.run(tc).is_some());
@@ -3865,7 +3875,7 @@ mod tests {
             globalThis.__bufferInnerPromise = bufferInnerPromise;
         "#;
         {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(tc, scope);
             let source = v8::String::new(tc, source).unwrap();
             let script = v8::Script::compile(tc, source, None).unwrap();
             assert!(script.run(tc).is_some());
@@ -3917,7 +3927,7 @@ mod tests {
         isolate::init_v8_platform();
         let mut isolate = isolate::create_isolate(None);
         let context = isolate::create_context(&mut isolate);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
 

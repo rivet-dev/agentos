@@ -20,6 +20,7 @@ import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { $ } from "execa";
 import * as semver from "semver";
+import { validatePublishVersion } from "./context.js";
 import { scoped } from "./logger.js";
 import { buildMetaPlatformMap, discoverPackages } from "./packages.js";
 
@@ -364,10 +365,7 @@ export async function resolveVersion(
 	opts: ResolveVersionOpts,
 ): Promise<string> {
 	if (opts.version) {
-		if (!semver.valid(opts.version)) {
-			throw new Error(`invalid semantic version: ${opts.version}`);
-		}
-		return opts.version;
+		return validatePublishVersion(opts.version);
 	}
 	if (!opts.major && !opts.minor && !opts.patch) {
 		throw new Error("must provide --version, --major, --minor, or --patch");

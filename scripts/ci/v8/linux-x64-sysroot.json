@@ -1,0 +1,5 @@
+{
+  "url": "https://github.com/denoland/deno_sysroot_build/releases/download/sysroot-20250207/sysroot-x86_64.tar.xz",
+  "sha256": "64513b04d8a38da6f47c0a9c4cb47b2ce7bcb735250b10eb10751aec6afe46ee",
+  "glibcFloor": "2.27"
+}

@@ -159,7 +159,7 @@ test("CI builds code before one default-software producer and restores artifacts
 
 test("backend packaging restores the verified GNU license from the command producer", () => {
 	const producer = step("name: wasm-command-licenses");
-	assert.match(producer, /uses: actions\/upload-artifact@v4/);
+	assert.match(producer, /uses: actions\/upload-artifact@[0-9a-f]{40}\s+# v4\./);
 	assert.match(producer, /path: toolchain\/c\/build\/awk\.COPYING/);
 	assert.match(producer, /if-no-files-found: error/);
 	const backend = job("wasm-backend-matrix");
@@ -168,7 +168,7 @@ test("backend packaging restores the verified GNU license from the command produ
 		source.includes("name: wasm-command-licenses"),
 	);
 	assert.ok(restoreIndex >= 0, "backend downloads the license artifact");
-	assert.match(steps[restoreIndex], /uses: actions\/download-artifact@v4/);
+	assert.match(steps[restoreIndex], /uses: actions\/download-artifact@[0-9a-f]{40}\s+# v4\./);
 	assert.match(steps[restoreIndex], /path: toolchain\/c\/build\s*$/);
 	const packageIndex = steps.findIndex((source) =>
 		source.includes("pnpm --filter '@agentos-software/*' build"),
@@ -194,17 +194,17 @@ test("publish restores the GNU license before building software packages", () =>
 		.split(/\n      - /)
 		.find((source) => source.includes("name: wasm-command-licenses"));
 	assert.ok(producer, "publish uploads the license artifact");
-	assert.match(producer, /uses: actions\/upload-artifact@v4/);
+	assert.match(producer, /uses: actions\/upload-artifact@[0-9a-f]{40}\s+# v4\./);
 	assert.match(producer, /path: toolchain\/c\/build\/awk\.COPYING/);
 	assert.match(producer, /if-no-files-found: error/);
-	const consumer = job("publish-npm", publish)
+	const consumer = job("prepare-npm", publish)
 		.split(/\n      - /)
 		.slice(1);
 	const restoreIndex = consumer.findIndex((source) =>
 		source.includes("name: wasm-command-licenses"),
 	);
 	assert.ok(restoreIndex >= 0, "publish downloads the license artifact");
-	assert.match(consumer[restoreIndex], /uses: actions\/download-artifact@v4/);
+	assert.match(consumer[restoreIndex], /uses: actions\/download-artifact@[0-9a-f]{40}\s+# v4\./);
 	assert.match(consumer[restoreIndex], /path: toolchain\/c\/build\s*$/);
 	const buildIndex = consumer.findIndex((source) =>
 		source.includes("npx turbo build"),

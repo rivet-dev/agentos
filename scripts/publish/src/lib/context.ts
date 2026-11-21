@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { $ } from "execa";
+import semver from "semver";
 
 /**
  * Publish context. Resolved once per workflow run by the `context-output` CI
@@ -16,7 +18,7 @@ export interface PublishContext {
 	version: string;
 	/** npm dist-tag. */
 	npmTag: string;
-	/** Short commit sha (7 chars). */
+	/** Full commit object ID. */
 	sha: string;
 	/** Only meaningful when trigger === "release". */
 	latest: boolean;
@@ -48,7 +50,7 @@ function findRepoRoot(): string {
 
 /**
  * Base for all preview pre-release strings. Hardcoded to `0.0.0` so preview
- * versions like `0.0.0-my-branch.abc1234` never look like real releases and
+ * versions like `0.0.0-preview-my-branch-0123456789abcdef.g<commit>` never look like real releases and
  * always sort below any published `X.Y.Z`. Using a committed `package.json`
  * version as the base would just embed whatever stale number happened to be
  * committed there. It has no semantic relationship to the branch being
@@ -56,11 +58,11 @@ function findRepoRoot(): string {
  */
 const PREVIEW_BASE_VERSION = "0.0.0";
 
-async function readShortSha(repoRoot: string): Promise<string> {
+async function readCommitSha(repoRoot: string): Promise<string> {
 	const envSha = process.env.GITHUB_SHA;
-	if (envSha) return envSha.slice(0, 7);
+	if (envSha) return envSha;
 	const { stdout } = await $({ cwd: repoRoot })`git rev-parse HEAD`;
-	return stdout.trim().slice(0, 7);
+	return stdout.trim();
 }
 
 async function readBranchName(repoRoot: string): Promise<string> {
@@ -73,21 +75,18 @@ async function readBranchName(repoRoot: string): Promise<string> {
 }
 
 /**
- * Sanitize a branch name into something safe to use as both an npm dist-tag
- * and a semver prerelease identifier. Lowercases, replaces any
- * non-alphanumeric character (other than hyphens) with a hyphen, collapses
- * runs of hyphens, and trims leading/trailing hyphens.
+ * Keep preview tags outside the release namespace and distinguish branches
+ * that normalize to the same readable slug.
  */
-function sanitizeBranch(branch: string): string {
+function previewBranchIdentifier(branch: string): string {
 	const cleaned = branch
 		.toLowerCase()
 		.replace(/[^a-z0-9-]+/g, "-")
 		.replace(/-+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	if (cleaned.length === 0) {
-		throw new Error(`branch name "${branch}" sanitized to empty string`);
-	}
-	return cleaned;
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 64);
+	const digest = createHash("sha256").update(branch).digest("hex").slice(0, 16);
+	return `preview-${cleaned || "branch"}-${digest}`;
 }
 
 function readInputFromEvent<T = unknown>(name: string): T | undefined {
@@ -136,10 +135,10 @@ function computeNpmTag(
 		if (!branch) {
 			throw new Error("branch trigger requires branch to compute npm tag");
 		}
-		return sanitizeBranch(branch);
+		return previewBranchIdentifier(branch);
 	}
 	// release
-	if (version.includes("-rc.")) return "rc";
+	if (semver.prerelease(version)?.[0] === "rc") return "rc";
 	return latest ? "latest" : "next";
 }
 
@@ -155,9 +154,28 @@ function computeVersion(
 		if (!branch) {
 			throw new Error("branch trigger requires branch to compute version");
 		}
-		return `${base}-${sanitizeBranch(branch)}.${sha}`;
+		return `${base}-${previewBranchIdentifier(branch)}.g${sha}`;
 	}
 	throw new Error("release trigger requires an explicit version override");
+}
+
+/** Validate a canonical version before publishing or writing version metadata. */
+export function validatePublishVersion(version: string): string {
+	if (semver.valid(version) === null || !/^[0-9][0-9A-Za-z.+-]*$/.test(version)) {
+		throw new TypeError("Publish version must be a valid SemVer string");
+	}
+	return version;
+}
+
+export function validatePublishSha(sha: string): string {
+	if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
+		throw new TypeError("Publish artifact staging requires a full hexadecimal commit SHA");
+	}
+	return sha.toLowerCase();
+}
+
+export function canPromoteLatest(version: string): boolean {
+	return semver.prerelease(version) === null;
 }
 
 /**
@@ -172,7 +190,7 @@ export async function resolveContext(
 	const repoRoot = findRepoRoot();
 	const trigger = deriveTrigger(overrides);
 
-	const sha = overrides.sha ?? (await readShortSha(repoRoot));
+	const sha = validatePublishSha(overrides.sha ?? (await readCommitSha(repoRoot)));
 
 	let branch = overrides.branch;
 	if (trigger === "branch" && !branch) {
@@ -200,13 +218,15 @@ export async function resolveContext(
 		);
 	}
 
+	validatePublishVersion(version);
+
 	// Latest: override > workflow_dispatch input > false.
 	let latest = overrides.latest;
 	if (latest === undefined) {
 		const input = readInputFromEvent<unknown>("latest");
 		latest = parseBoolInput(input, false);
 	}
-	if (trigger !== "release") latest = false;
+	if (trigger !== "release" || !canPromoteLatest(version)) latest = false;
 
 	const npmTag = computeNpmTag(trigger, version, latest, branch);
 
@@ -231,7 +251,6 @@ export function writeContextToGithubOutput(ctx: PublishContext): void {
 		console.log(`npm_tag=${ctx.npmTag}`);
 		console.log(`sha=${ctx.sha}`);
 		console.log(`latest=${ctx.latest}`);
-		if (ctx.branch !== undefined) console.log(`branch=${ctx.branch}`);
 		return;
 	}
 	const lines = [
@@ -241,7 +260,6 @@ export function writeContextToGithubOutput(ctx: PublishContext): void {
 		`sha=${ctx.sha}`,
 		`latest=${ctx.latest}`,
 	];
-	if (ctx.branch !== undefined) lines.push(`branch=${ctx.branch}`);
 	// Append (do not overwrite) in case other steps also wrote to GITHUB_OUTPUT.
 	appendFileSync(path, `${lines.join("\n")}\n`);
 }

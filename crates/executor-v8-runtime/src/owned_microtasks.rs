@@ -7,7 +7,7 @@ use std::rc::Rc;
 const MAX_FAMILY_CONTEXTS: usize = 1026;
 
 struct Family {
-    queue: v8::UniqueRef<v8::MicrotaskQueue>,
+    queue: v8::MicrotaskQueueHandle,
     default_queue: *const v8::MicrotaskQueue,
     contexts: Vec<v8::Weak<v8::Context>>,
     policy: v8::MicrotasksPolicy,
@@ -19,16 +19,16 @@ struct FamilySlot(Rc<RefCell<Family>>);
 
 /// Ensures custom queues are detached before the underlying isolate is disposed,
 /// including early returns and Rust unwinding. No realm-valued native root is added.
-pub(crate) struct SessionIsolate(Option<v8::OwnedIsolate>);
+pub(crate) struct SessionIsolate(Option<crate::isolate::GuestIsolate>);
 
 impl SessionIsolate {
-    pub(crate) fn new(isolate: v8::OwnedIsolate) -> Self {
+    pub(crate) fn new(isolate: crate::isolate::GuestIsolate) -> Self {
         Self(Some(isolate))
     }
 }
 
 impl std::ops::Deref for SessionIsolate {
-    type Target = v8::OwnedIsolate;
+    type Target = v8::Isolate;
     fn deref(&self) -> &Self::Target {
         self.0.as_ref().expect("live session isolate")
     }
@@ -48,9 +48,12 @@ impl Drop for SessionIsolate {
                 let mut family = slot.0.borrow_mut();
                 assert!(!family.queue.is_running_microtasks());
                 assert_eq!(family.queue.get_microtasks_scope_depth(), 0);
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 for weak in &family.contexts {
-                    if let Some(context) = weak.to_local(scope) {
+                    if let Some(context) = weak
+                        .to_local(scope)
+                        .filter(|c| c.get_microtask_queue().is_some())
+                    {
                         // Saved from the first context; the default queue belongs to
                         // this still-live isolate and outlives every custom queue.
                         context.set_microtask_queue(unsafe { &*family.default_queue });
@@ -109,17 +112,21 @@ fn room(isolate: &mut v8::Isolate, slot: &FamilySlot) -> Result<(), ContextAdmis
 }
 
 pub(crate) fn create_root(
-    isolate: &mut v8::OwnedIsolate,
+    isolate: &mut v8::Isolate,
 ) -> Result<v8::Global<v8::Context>, ContextAdmissionError> {
     let existing = isolate.get_slot::<FamilySlot>().cloned();
     if let Some(slot) = &existing {
         room(isolate, slot)?;
     }
-    let scope = &mut v8::HandleScope::new(isolate);
+    v8::scope!(scope, isolate);
     let context = v8::Context::new(scope, Default::default());
     let slot = existing.unwrap_or_else(|| {
         let policy = scope.get_microtasks_policy();
-        let default_queue = context.get_microtask_queue() as *const _;
+        let default_queue = std::ptr::from_ref(
+            context
+                .get_microtask_queue()
+                .expect("a new root context is attached to its isolate's default queue"),
+        );
         let slot = FamilySlot(Rc::new(RefCell::new(Family {
             queue: v8::MicrotaskQueue::new(scope, policy),
             default_queue,
@@ -139,35 +146,40 @@ pub(crate) fn create_root(
 
 /// Called by the sole node:vm native context factory before guest code can run.
 pub(crate) fn create_child<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     mut options: v8::ContextOptions<'s>,
 ) -> Result<v8::Local<'s, v8::Context>, ContextAdmissionError> {
     let Some(slot) = scope.get_slot::<FamilySlot>().cloned() else {
         return Ok(v8::Context::new(scope, options));
     };
     let parent = scope.get_current_context();
-    if !std::ptr::eq(parent.get_microtask_queue(), &*slot.0.borrow().queue) {
+    if !parent
+        .get_microtask_queue()
+        .is_some_and(|queue| std::ptr::eq(queue, &*slot.0.borrow().queue))
+    {
         return Ok(v8::Context::new(scope, options));
     }
     room(scope, &slot)?;
     let mut family = slot.0.borrow_mut();
-    let queue = &mut *family.queue as *mut v8::MicrotaskQueue;
+    let queue = std::ptr::from_ref(&*family.queue).cast_mut();
     options.microtask_queue = Some(queue);
     let context = v8::Context::new(scope, options);
     family.contexts.push(v8::Weak::new(scope, context));
     Ok(context)
 }
 
-pub(crate) fn is_owned(scope: &mut v8::HandleScope) -> bool {
+pub(crate) fn is_owned(scope: &mut v8::PinScope<'_, '_>) -> bool {
     let Some(slot) = scope.get_slot::<FamilySlot>().cloned() else {
         return false;
     };
     let context = scope.get_current_context();
-    let owned = std::ptr::eq(context.get_microtask_queue(), &*slot.0.borrow().queue);
+    let owned = context
+        .get_microtask_queue()
+        .is_some_and(|queue| std::ptr::eq(queue, &*slot.0.borrow().queue));
     owned
 }
 
-pub(crate) fn checkpoint(scope: &mut v8::HandleScope) {
+pub(crate) fn checkpoint(scope: &mut v8::PinScope<'_, '_>) {
     // A pending terminal owner must reach outer disposal before any queued job.
     // In particular, V8 forbids entering RunMicrotasks with delivered termination.
     if crate::terminal_callback::pending(scope) || scope.is_execution_terminating() {
@@ -187,10 +199,13 @@ pub(crate) fn discard_failed_call(isolate: &mut v8::Isolate) {
     assert_eq!(family.queue.get_microtasks_scope_depth(), 0);
     let replacement = v8::MicrotaskQueue::new(isolate, family.policy);
     {
-        let scope = &mut v8::HandleScope::new(isolate);
+        v8::scope!(scope, isolate);
         family.contexts.retain(|context| !context.is_empty());
         for weak in &family.contexts {
-            if let Some(context) = weak.to_local(scope) {
+            if let Some(context) = weak
+                .to_local(scope)
+                .filter(|c| c.get_microtask_queue().is_some())
+            {
                 context.set_microtask_queue(&replacement);
                 let scope = &mut v8::ContextScope::new(scope, context);
                 crate::next_ticks::discard(scope);

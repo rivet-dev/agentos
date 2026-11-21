@@ -7,7 +7,7 @@ import {
 	runInAsyncContextFrame,
 } from "./async-context.js";
 import { _stderr, _stdout } from "./console.js";
-import { _fdClose, _fdGetPath, encodeBridgeBytes, fs } from "./fs.js";
+import { _fdClose, encodeBridgeBytes, fs } from "./fs.js";
 import { normalizeChildProcessSignal } from "./os.js";
 import { routeAsyncCallbackError } from "./process.js";
 import { ipcInfo, openIpcChannel } from "./process-ipc.js";
@@ -89,15 +89,6 @@ function releaseChildInheritedFd(fd) {
 		try {
 			_fdClose.applySyncPromise(void 0, [fd]);
 		} catch {}
-	}
-}
-function childInheritedFdPath(fd) {
-	if (typeof fd !== "number") return null;
-	try {
-		const path = _fdGetPath.applySyncPromise(void 0, [fd]);
-		return typeof path === "string" && path.startsWith("/") ? path : null;
-	} catch {
-		return null;
 	}
 }
 function normalizeChildProcessSessionId(payload) {
@@ -442,24 +433,35 @@ function splitChildProcessIpcFrames(buffer, chunk) {
 // bytes straight to that descriptor (matching native node, where the child's
 // output lands in the inherited file/pipe rather than on child.stdout). Returns
 // true when the data was consumed by the fd so the caller skips stream emission.
-function writeChildOutputToInheritedFd(fd, buf, path = null) {
+function writeChildOutputToInheritedFd(fd, buf) {
+	if (typeof fd !== "number") return false;
 	const bytes =
 		typeof Buffer !== "undefined" && Buffer.isBuffer(buf)
 			? buf
 			: typeof Buffer !== "undefined"
 				? Buffer.from(buf)
 				: buf;
-	if (typeof path === "string") {
-		try {
-			fs.appendFileSync(path, bytes);
-			return true;
-		} catch {}
-	}
-	if (typeof fd !== "number") return false;
-	try {
-		fs.writeSync(fd, bytes, 0, bytes.length, null);
-	} catch {
-		return false;
+	for (let offset = 0; offset < bytes.length; ) {
+		const written = fs.writeSync(
+			fd,
+			bytes,
+			offset,
+			bytes.length - offset,
+			null,
+		);
+		if (
+			!Number.isInteger(written) ||
+			written <= 0 ||
+			written > bytes.length - offset
+		) {
+			throw Object.assign(
+				new Error("Inherited descriptor write made no progress"),
+				{
+					code: "EIO",
+				},
+			);
+		}
+		offset += written;
 	}
 	return true;
 }
@@ -538,13 +540,11 @@ function deliverChildProcessEventInner(child, sessionId, type, data) {
 	if (type === "stdout") {
 		const buf = typeof Buffer !== "undefined" ? Buffer.from(data) : data;
 
-		if (writeChildOutputToInheritedFd(child._stdoutFd, buf, child._stdoutPath))
-			return;
+		if (writeChildOutputToInheritedFd(child._stdoutFd, buf)) return;
 		child.stdout.emit("data", buf);
 	} else if (type === "stderr") {
 		const buf = typeof Buffer !== "undefined" ? Buffer.from(data) : data;
-		if (writeChildOutputToInheritedFd(child._stderrFd, buf, child._stderrPath))
-			return;
+		if (writeChildOutputToInheritedFd(child._stderrFd, buf)) return;
 		child.stderr.emit("data", buf);
 	} else if (type === "exit") {
 		if (
@@ -1785,8 +1785,6 @@ function spawn(command, args, options) {
 	// (which native node leaves null in that mode).
 	child._stdoutFd = typeof stdio[1] === "number" ? stdio[1] : null;
 	child._stderrFd = typeof stdio[2] === "number" ? stdio[2] : null;
-	child._stdoutPath = childInheritedFdPath(child._stdoutFd);
-	child._stderrPath = childInheritedFdPath(child._stderrFd);
 	child._inheritedFds = [];
 	for (const fd of [child._stdoutFd, child._stderrFd]) {
 		if (typeof fd === "number") {

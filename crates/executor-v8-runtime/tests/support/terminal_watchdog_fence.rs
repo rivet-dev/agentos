@@ -17,7 +17,7 @@ pub(crate) fn terminal_watchdog_fence_controls() {
     let mut isolate = crate::isolate::create_isolate(None);
     // Compile before requesting termination; execution, not the asynchronous
     // request flag, proves interruption at V8's actual interrupt check.
-    let scope = &mut v8::HandleScope::new(&mut isolate);
+    v8::scope!(scope, &mut *isolate);
     let context = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, context);
     let source = v8::String::new(
@@ -63,7 +63,7 @@ pub(crate) fn terminal_watchdog_fence_controls() {
     firing.join().unwrap();
     cancelling.join().unwrap();
     {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         assert!(
             script.run(tc).is_none(),
             "external termination interrupts finite work"

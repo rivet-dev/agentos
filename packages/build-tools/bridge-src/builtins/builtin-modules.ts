@@ -784,35 +784,55 @@ function ensureBuiltinUrlStdlibModule() {
 	}
 	return builtinUrlStdlibModule;
 }
+const builtinRequestString = String;
+const removeNodePrefix = Function.call.bind(String.prototype.replace);
+const splitBuiltinName = Function.call.bind(String.prototype.split);
+const builtinAllowed = Function.call.bind(Set.prototype.has);
+
 function normalizeBuiltinRequest(request) {
-	return String(request).replace(/^node:/, "");
+	return removeNodePrefix(builtinRequestString(request), /^node:/, "");
 }
-let __jsRuntimeBuiltinAllowlist = null;
+function builtinRootName(request) {
+	return splitBuiltinName(normalizeBuiltinRequest(request), "/")[0];
+}
+let __jsRuntimeBuiltinAllowlist: Set<string> | null = null;
 function rejectRestrictedBuiltinRequest(request) {
 	const normalized = normalizeBuiltinRequest(request);
-	// jsRuntime builtin allow-list gate. When the per-execution shim installed an
-	// allow-list (non-node platforms => empty => deny all; node + explicit list),
-	// deny any builtin whose root name is not permitted. Absent => unrestricted.
 	const allow = __jsRuntimeBuiltinAllowlist;
-	if (Array.isArray(allow)) {
-		const root = String(normalized == null ? request : normalized)
-			.replace(/^node:/, "")
-			.split("/")[0];
-		if (!allow.includes(root)) {
-			throw createAccessDeniedBuiltinError(request);
-		}
+	if (allow && !builtinAllowed(allow, builtinRootName(normalized))) {
+		throw createAccessDeniedBuiltinError(request);
 	}
 	return normalized;
 }
 exposeCustomGlobal("__agentOSInitJsRuntime", (allowlist) => {
-	__jsRuntimeBuiltinAllowlist = Array.isArray(allowlist)
-		? allowlist.map(
-				(name) =>
-					String(name)
-						.replace(/^node:/, "")
-						.split("/")[0],
-			)
-		: null;
+	if (__jsRuntimeBuiltinAllowlist !== null) {
+		throw new Error("Builtin allow-list is already installed");
+	}
+	const roots = Array.isArray(allowlist) ? allowlist.map(builtinRootName) : [];
+	const allow = new Set<string>(roots);
+	__jsRuntimeBuiltinAllowlist = allow;
+	// These compatibility aliases are the same module objects exposed by
+	// require() and static imports. Internal code uses their lexical bindings.
+	for (const [name, builtin] of [
+		["_asyncHooksModule", "async_hooks"],
+		["_childProcessModule", "child_process"],
+		["_dgramModule", "dgram"],
+		["_dnsModule", "dns"],
+		["_eventsModule", "events"],
+		["_fsModule", "fs"],
+		["_httpModule", "http"],
+		["_http2Module", "http2"],
+		["_httpsModule", "https"],
+		["_moduleModule", "module"],
+		["_netModule", "net"],
+		["_osModule", "os"],
+		["_sqliteModule", "sqlite"],
+		["_tlsModule", "tls"],
+	]) {
+		if (!builtinAllowed(allow, builtin)) {
+			Reflect.deleteProperty(globalThis, name);
+		}
+	}
 });
 function loadBuiltinModule(request) {
 	const normalized = rejectRestrictedBuiltinRequest(request);

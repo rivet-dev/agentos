@@ -2118,6 +2118,14 @@ var ReadStream = class extends CanonicalFileReadable {
 };
 
 var MAX_WRITE_STREAM_BYTES = 16 * 1024 * 1024;
+function checkStreamWriteProgress(written, remaining) {
+	if (!Number.isInteger(written) || written <= 0 || written > remaining) {
+		throw Object.assign(new Error("WriteStream write made no valid progress"), {
+			code: "EIO",
+		});
+	}
+}
+
 // Node's WriteStream is a function constructor: graceful-fs (and so webpack's
 // pack cache) initializes its own subclass instance with
 // `fs.WriteStream.apply(this, args)`, so the state must be set on `this`.
@@ -2277,6 +2285,15 @@ var WriteStream = class {
 		queueMicrotask(() => cb?.(null));
 		return true;
 	}
+	async _writeChunk(chunk, write) {
+		for (let offset = 0; offset < chunk.byteLength; ) {
+			const remaining = chunk.byteLength - offset;
+			const written = await write(offset, remaining);
+			checkStreamWriteProgress(written, remaining);
+			offset += written;
+			if (typeof this._position === "number") this._position += written;
+		}
+	}
 	end(chunkOrCb, encodingOrCallback, callback) {
 		if (this.writableEnded) {
 			return this;
@@ -2304,15 +2321,15 @@ var WriteStream = class {
 				try {
 					if (this._fileHandle) {
 						for (const chunk of this._chunks) {
-							const result = await this._fileHandle.write(
-								chunk,
-								0,
-								chunk.byteLength,
-								this._position,
-							);
-							if (typeof this._position === "number") {
-								this._position += result?.bytesWritten ?? chunk.byteLength;
-							}
+							await this._writeChunk(chunk, async (offset, length) => {
+								const { bytesWritten } = await this._fileHandle.write(
+									chunk,
+									offset,
+									length,
+									this._position,
+								);
+								return bytesWritten;
+							});
 						}
 						if (this.autoClose && !this._fileHandle.closed) {
 							await this._fileHandle.close();
@@ -2325,13 +2342,28 @@ var WriteStream = class {
 									? this.path.toString()
 									: null;
 						if (this.fd !== null && this.fd >= 0) {
-							const bytesWritten = fs.writevSync(
-								this.fd,
-								this._chunks,
-								this._position,
+							// Keep the normal path to one vectored write. A short
+							// result advances only through the consumed prefix.
+							let chunks = this._chunks.filter((chunk) => chunk.byteLength > 0);
+							let remaining = chunks.reduce(
+								(total, chunk) => total + chunk.byteLength,
+								0,
 							);
-							if (typeof this._position === "number") {
-								this._position += bytesWritten;
+							while (remaining > 0) {
+								const written = fs.writevSync(this.fd, chunks, this._position);
+								checkStreamWriteProgress(written, remaining);
+								remaining -= written;
+								if (typeof this._position === "number")
+									this._position += written;
+								if (remaining === 0) break;
+								let consumed = written;
+								let index = 0;
+								while (consumed >= chunks[index].byteLength) {
+									consumed -= chunks[index].byteLength;
+									index++;
+								}
+								chunks = chunks.slice(index);
+								if (consumed > 0) chunks[0] = chunks[0].subarray(consumed);
 							}
 							if (this.autoClose) {
 								await this._closeUnderlying();
@@ -4983,16 +5015,16 @@ var fs = {
 				buffer instanceof Uint8Array
 					? buffer
 					: new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-			totalBytesWritten += fs.writeSync(
+			const written = fs.writeSync(
 				normalizedFd,
 				bytes,
 				0,
 				bytes.length,
 				nextPosition,
 			);
-			if (nextPosition !== null) {
-				nextPosition += bytes.length;
-			}
+			totalBytesWritten += written;
+			if (nextPosition !== null) nextPosition += written;
+			if (written < bytes.length) break;
 		}
 		return totalBytesWritten;
 	},

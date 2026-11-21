@@ -55,8 +55,8 @@ jobs:
             {"platform":"darwin-arm64","target":"aarch64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"aarch64-apple-darwin20.4","tier":"all"}
             ]
         run: |
-          RUST='(\.rs$|(^|/)Cargo\.(toml|lock)$|^deny\.toml$|^rust-toolchain\.toml$|^docker/build/|^scripts/pipboy/|^\.github/workflows/pipboy\.yml$)'
-          PLATFORM_SENSITIVE='((^|/)Cargo\.(toml|lock)$|(^|/)build\.rs$|^docker/build/|^rust-toolchain\.toml$)'
+          RUST='(\.rs$|(^|/)Cargo\.(toml|lock)$|^deny\.toml$|^rust-toolchain\.toml$|^docker/build/|^scripts/ci/v8/(archives\.json|source\.json|engine\.py|.*\.patch)$|^scripts/pipboy/|^\.github/workflows/pipboy\.yml$)'
+          PLATFORM_SENSITIVE='((^|/)Cargo\.(toml|lock)$|(^|/)build\.rs$|^docker/build/|^scripts/ci/v8/(archives\.json|source\.json|engine\.py|.*\.patch)$|^rust-toolchain\.toml$)'
           matrix() { jq -c --arg tier "$1" 'map(select($tier == "all" or .tier == $tier))' <<< "$NATIVE_ALL"; }
 
           if [ "$EVENT" != "pull_request" ]; then
@@ -135,6 +135,10 @@ jobs:
     # Full command and software builds are explicit on PRs and run on main for baselines.
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 90
+    env:
+      # This measures npm tarballs; the platform binary is measured by native.
+      # Core's Turbo dependency can otherwise build the excluded sidecar package.
+      AGENTOS_SKIP_NATIVE_META_BUILD: '1'
     permissions:
       contents: read
       actions: read # download the base tarballs from a main run
@@ -247,14 +251,20 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ needs.changes.outputs.base }}
-        run: git worktree add "$RUNNER_TEMP/base-src" "$BASE_SHA"
+        run: git worktree add "$RUNNER_TEMP/pipboy-base/src" "$BASE_SHA"
+      - name: Stage the matching Rust source for each dependency comparison
+        run: |
+          python3 scripts/ci/v8/engine.py install-glue "$GITHUB_WORKSPACE" "$RUNNER_TEMP/v8-pr-glue" --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml"
+          if test -d "$RUNNER_TEMP/pipboy-base/src"; then
+            python3 scripts/ci/v8/engine.py install-glue "$RUNNER_TEMP/pipboy-base/src" "$RUNNER_TEMP/v8-base-glue" --cargo-config "$RUNNER_TEMP/pipboy-base/.cargo/config.toml"
+          fi
       - name: Diff findings
         env:
           EVENT: ${{ github.event_name }}
         run: |
           mkdir -p "$RUNNER_TEMP/reports"
           base=()
-          if [ "$EVENT" = "pull_request" ]; then base=(--base-root "$RUNNER_TEMP/base-src"); fi
+          if [ "$EVENT" = "pull_request" ]; then base=(--base-root "$RUNNER_TEMP/pipboy-base/src"); fi
           pnpm --silent --filter pipboy pipboy hygiene "${base[@]}" --out "$RUNNER_TEMP/reports/hygiene.json"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -272,6 +282,7 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -282,6 +293,11 @@ jobs:
           persist-credentials: false
       # The publish workflow's Dockerfile and build arguments in release mode, so
       # the size is what ships. Toolchain versions are read from publish.yaml.
+      - name: Stage the target's reviewed engine archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+        run: python3 scripts/ci/v8/engine.py fetch "$TARGET" "$RUNNER_TEMP/v8-inputs" --allow-actions
       - name: Build with the publish Dockerfile
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -298,7 +314,7 @@ jobs:
             args+=(--build-arg "LINUX_GNU_LLVM_VERSION=$(publish_env LINUX_GNU_LLVM_VERSION)"
               --build-arg "LINUX_GNU_SYSROOT_TAG=$(publish_env LINUX_GNU_SYSROOT_TAG)")
           fi
-          docker buildx build -f "docker/build/$DOCKERFILE.Dockerfile" "${args[@]}" -t pipboy-native --load .
+          docker buildx build --build-context "agentos-v8-inputs=$RUNNER_TEMP/v8-inputs" -f "docker/build/$DOCKERFILE.Dockerfile" "${args[@]}" -t pipboy-native --load .
           cid="$(docker create pipboy-native)"
           docker cp "$cid:/artifacts/agentos-sidecar" "$RUNNER_TEMP/agentos-native-sidecar"
           docker rm "$cid"
@@ -372,4 +388,4 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-      - run: uvx zizmor@1.31.1 --offline --min-severity low .github/workflows/pipboy.yml
+      - run: uvx zizmor@1.31.1 --offline --min-severity low .github/workflows

@@ -1,3 +1,4 @@
+import { checkExecutionCpuLimit } from "./execution-options.js";
 /**
  * NodeRuntime — ergonomic façade for running guest JavaScript end-to-end.
  *
@@ -28,6 +29,12 @@ import type {
 	HostFunctionCollections,
 	HostFunctionSchemas,
 } from "./host-functions.js";
+import {
+	CapturedOutputLimitError,
+	DEFAULT_HOST_CAPTURE_LIMIT_BYTES,
+	HostOutputCaptureBudget,
+	HostTextOutputCapture,
+} from "./host-output-capture.js";
 import { parseNodeRuntimeCreateOptions } from "./node-runtime-options-schema.js";
 import type { SidecarProcess } from "./sidecar-process.js";
 import type {
@@ -353,7 +360,9 @@ export interface NodeRuntimeExecOptions {
 	stdin?: string | Uint8Array;
 	/** Abort the run after this many milliseconds. */
 	timeout?: number;
-	/** Bound active guest CPU time independently of elapsed wall time. */
+	/** Maximum combined host-captured stdout and stderr bytes. Defaults to 16 MiB. */
+	maxCapturedOutputBytes?: number;
+	/** Unsupported by the native sidecar. Configure VM limits.jsRuntime.cpuTimeLimitMs. */
 	cpuTimeLimitMs?: number;
 	/**
 	 * Cancel the run when this signal aborts. On abort the guest process is
@@ -374,14 +383,14 @@ export interface NodeRuntimeExecOptions {
 	 * Called with each chunk the guest writes to stdout as it is produced,
 	 * letting you observe output incrementally instead of waiting for the run to
 	 * finish. Chunks arrive as raw bytes; decode with a `TextDecoder` for text.
-	 * The complete output is still returned as `result.stdout` when the run ends.
+	 * The run returns `result.stdout` when capture stays within its byte limit.
 	 */
 	onStdout?: (chunk: Uint8Array) => void;
 	/**
 	 * Called with each chunk the guest writes to stderr as it is produced,
 	 * letting you observe output incrementally instead of waiting for the run to
 	 * finish. Chunks arrive as raw bytes; decode with a `TextDecoder` for text.
-	 * The complete output is still returned as `result.stderr` when the run ends.
+	 * The run returns `result.stderr` when capture stays within its byte limit.
 	 */
 	onStderr?: (chunk: Uint8Array) => void;
 }
@@ -531,6 +540,8 @@ export interface NodeRuntimeResourceSnapshot {
 export interface NodeRuntimeResidentRunnerExecOptions {
 	/** Abort the guest eval after this many milliseconds. */
 	timeout?: number;
+	/** Maximum combined output per request, including framing. Defaults to 16 MiB. */
+	maxCapturedOutputBytes?: number;
 }
 
 export type NodeRuntimeResidentRunnerOptions = {};
@@ -710,6 +721,7 @@ export class NodeRuntime {
 		code: string,
 		options: NodeRuntimeExecOptions = {},
 	): Promise<NodeRuntimeExecResult> {
+		checkExecutionCpuLimit(options.cpuTimeLimitMs);
 		const programPath = `/tmp/agentos-program-${nextProgramId++}.mjs`;
 		await this.kernel.writeFile(programPath, withHostFunctionPreamble(code));
 		return this.runProgram(programPath, options);
@@ -732,10 +744,12 @@ export class NodeRuntime {
 		const signal = options.signal;
 		if (!signal) {
 			const result = await this.kernel.exec(`node ${programPath}`, {
+				wasmBackend: options.wasmBackend,
 				env: options.env,
 				cwd: options.cwd,
 				stdin: options.stdin,
 				timeout: options.timeout,
+				maxCapturedOutputBytes: options.maxCapturedOutputBytes,
 				onStdout: options.onStdout,
 				onStderr: options.onStderr,
 			});
@@ -750,17 +764,17 @@ export class NodeRuntime {
 		// kill: aborting the signal maps to a kernel kill of the underlying
 		// process. Aggregate the streamed output ourselves to reproduce the
 		// run-to-completion result that the shell path returns.
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
+		const capture = new HostTextOutputCapture(options.maxCapturedOutputBytes);
 		const proc = this.kernel.spawn("node", [programPath], {
+			wasmBackend: options.wasmBackend,
 			env: options.env,
 			cwd: options.cwd,
 			onStdout: (chunk) => {
-				stdoutChunks.push(chunk);
+				capture.append("stdout", chunk);
 				options.onStdout?.(chunk);
 			},
 			onStderr: (chunk) => {
-				stderrChunks.push(chunk);
+				capture.append("stderr", chunk);
 				options.onStderr?.(chunk);
 			},
 			streamStdin: options.stdin !== undefined,
@@ -790,8 +804,7 @@ export class NodeRuntime {
 				throw toAbortError(signal);
 			}
 			return {
-				stdout: decodeChunks(stdoutChunks),
-				stderr: decodeChunks(stderrChunks),
+				...capture.finish(),
 				exitCode,
 			};
 		} finally {
@@ -829,9 +842,11 @@ export class NodeRuntime {
 		code: string,
 		options: NodeRuntimeSpawnOptions = {},
 	): Promise<NodeRuntimeProcess> {
+		checkExecutionCpuLimit(options.cpuTimeLimitMs);
 		const programPath = `/tmp/agentos-program-${nextProgramId++}.mjs`;
 		await this.kernel.writeFile(programPath, withHostFunctionPreamble(code));
 		const proc = this.kernel.spawn("node", [programPath], {
+			wasmBackend: options.wasmBackend,
 			env: options.env,
 			cwd: options.cwd,
 			onStdout: options.onStdout,
@@ -871,6 +886,7 @@ export class NodeRuntime {
 		args: string[] = [],
 		options: NodeRuntimeSpawnOptions = {},
 	): NodeRuntimeProcess {
+		checkExecutionCpuLimit(options.cpuTimeLimitMs);
 		const proc = this.kernel.spawn(command, args, {
 			wasmBackend: options.wasmBackend,
 			env: options.env,
@@ -909,19 +925,18 @@ export class NodeRuntime {
 		args: string[] = [],
 		options: NodeRuntimeExecOptions = {},
 	): Promise<NodeRuntimeExecResult> {
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
+		const capture = new HostTextOutputCapture(options.maxCapturedOutputBytes);
 		const proc = this.spawnCommand(command, args, {
 			wasmBackend: options.wasmBackend,
 			env: options.env,
 			cwd: options.cwd,
 			cpuTimeLimitMs: options.cpuTimeLimitMs,
 			onStdout: (chunk) => {
-				stdoutChunks.push(chunk);
+				capture.append("stdout", chunk);
 				options.onStdout?.(chunk);
 			},
 			onStderr: (chunk) => {
-				stderrChunks.push(chunk);
+				capture.append("stderr", chunk);
 				options.onStderr?.(chunk);
 			},
 		});
@@ -951,8 +966,7 @@ export class NodeRuntime {
 				throw toAbortError(options.signal);
 			}
 			return {
-				stdout: decodeChunks(stdoutChunks),
-				stderr: decodeChunks(stderrChunks),
+				...capture.finish(),
 				exitCode,
 			};
 		} finally {
@@ -975,6 +989,7 @@ export class NodeRuntime {
 		code: string,
 		options: NodeRuntimeExecOptions = {},
 	): Promise<NodeRuntimeRunResult<T>> {
+		checkExecutionCpuLimit(options.cpuTimeLimitMs);
 		const id = nextProgramId++;
 		const resultPath = `/tmp/agentos-result-${id}.json`;
 		const programPath = `/tmp/agentos-program-${id}.mjs`;
@@ -1218,10 +1233,14 @@ for await (const line of rl) {
 class ResidentNodeRunner implements NodeRuntimeResidentRunner {
 	private proc: NodeRuntimeProcess | null = null;
 	private stdoutBuffer = "";
+	private readonly stdoutDecoder = new TextDecoder();
+	private failure: Error | undefined;
 	private active: {
 		id: number;
-		stdout: Uint8Array[];
-		stderr: Uint8Array[];
+		stdout: string;
+		stderr: string;
+		stderrDecoder: InstanceType<typeof TextDecoder>;
+		capture: HostOutputCaptureBudget;
 		resolve: (result: NodeRuntimeExecResult) => void;
 		reject: (error: Error) => void;
 		timer?: ReturnType<typeof setTimeout>;
@@ -1235,6 +1254,8 @@ class ResidentNodeRunner implements NodeRuntimeResidentRunner {
 			this.resolveReady = resolve;
 			this.rejectReady = reject;
 		});
+		// Output may arrive before create() finishes obtaining its process handle.
+		void this.readyPromise.catch(() => {});
 	}
 
 	static async create(runtime: NodeRuntime): Promise<ResidentNodeRunner> {
@@ -1260,7 +1281,12 @@ class ResidentNodeRunner implements NodeRuntimeResidentRunner {
 				runner.active = null;
 			},
 		);
-		await runner.readyPromise;
+		try {
+			await runner.readyPromise;
+		} catch (error) {
+			await runner.dispose();
+			throw error;
+		}
 		return runner;
 	}
 
@@ -1269,6 +1295,7 @@ class ResidentNodeRunner implements NodeRuntimeResidentRunner {
 		options: NodeRuntimeResidentRunnerExecOptions = {},
 	): Promise<NodeRuntimeExecResult> {
 		await this.readyPromise;
+		if (this.failure) throw this.failure;
 		if (!this.proc) {
 			throw new Error("resident runner is not running");
 		}
@@ -1277,11 +1304,17 @@ class ResidentNodeRunner implements NodeRuntimeResidentRunner {
 		}
 		const proc = this.proc;
 		const id = nextResidentRequestId++;
+		const capture = new HostOutputCaptureBudget(
+			options.maxCapturedOutputBytes ?? DEFAULT_HOST_CAPTURE_LIMIT_BYTES,
+			"raise maxCapturedOutputBytes",
+		);
 		return new Promise((resolve, reject) => {
 			const active = {
 				id,
-				stdout: [],
-				stderr: [],
+				stdout: "",
+				stderr: "",
+				stderrDecoder: new TextDecoder(),
+				capture,
 				resolve,
 				reject,
 				timer: undefined as ReturnType<typeof setTimeout> | undefined,
@@ -1312,7 +1345,29 @@ class ResidentNodeRunner implements NodeRuntimeResidentRunner {
 	}
 
 	private handleStdout(chunk: Uint8Array): void {
-		this.stdoutBuffer += new TextDecoder().decode(chunk);
+		if (this.failure) return;
+		const active = this.active;
+		const captureError = active?.capture.append(chunk.byteLength);
+		if (captureError) {
+			this.failOutput(captureError);
+			return;
+		}
+		// Idle output has no request budget. Bound the parser's carry and input
+		// even if a resident writes before it is ready or after a request ends.
+		if (
+			!active &&
+			chunk.byteLength >
+				DEFAULT_HOST_CAPTURE_LIMIT_BYTES - this.stdoutBuffer.length
+		) {
+			this.failOutput(
+				new CapturedOutputLimitError(
+					DEFAULT_HOST_CAPTURE_LIMIT_BYTES,
+					"limit unsolicited resident output or use a streaming process",
+				),
+			);
+			return;
+		}
+		this.stdoutBuffer += this.stdoutDecoder.decode(chunk, { stream: true });
 		while (true) {
 			const newlineIndex = this.stdoutBuffer.indexOf("\n");
 			if (newlineIndex < 0) {
@@ -1329,12 +1384,30 @@ class ResidentNodeRunner implements NodeRuntimeResidentRunner {
 				this.finishRequest(line.slice(RESIDENT_RESULT_PREFIX.length));
 				continue;
 			}
-			this.active?.stdout.push(new TextEncoder().encode(`${line}\n`));
+			if (this.active) this.active.stdout += `${line}\n`;
 		}
 	}
 
 	private handleStderr(chunk: Uint8Array): void {
-		this.active?.stderr.push(chunk);
+		const active = this.active;
+		if (!active || this.failure || chunk.byteLength === 0) return;
+		const captureError = active.capture.append(chunk.byteLength);
+		if (captureError) {
+			this.failOutput(captureError);
+			return;
+		}
+		active.stderr += active.stderrDecoder.decode(chunk, { stream: true });
+	}
+
+	private failOutput(error: CapturedOutputLimitError): void {
+		this.failure = error;
+		this.stdoutBuffer = "";
+		this.rejectReady(error);
+		const active = this.active;
+		this.active = null;
+		if (active?.timer !== undefined) clearTimeout(active.timer);
+		active?.reject(error);
+		this.proc?.kill("SIGKILL");
 	}
 
 	private finishRequest(payload: string): void {
@@ -1365,9 +1438,10 @@ class ResidentNodeRunner implements NodeRuntimeResidentRunner {
 			clearTimeout(active.timer);
 		}
 		this.active = null;
-		const stderr = `${decodeChunks(active.stderr)}${parsed.stderr ?? ""}`;
+		const stderr =
+			active.stderr + active.stderrDecoder.decode() + (parsed.stderr ?? "");
 		active.resolve({
-			stdout: decodeChunks(active.stdout),
+			stdout: active.stdout,
 			stderr,
 			exitCode: parsed.exitCode ?? 1,
 		});
@@ -1465,23 +1539,6 @@ function delayUntil(ms: number, signal?: AbortSignal): Promise<void> {
  * {@link NodeRuntime.exec} path returns when a run is driven as a process for
  * cancellation support.
  */
-function decodeChunks(chunks: Uint8Array[]): string {
-	if (chunks.length === 0) {
-		return "";
-	}
-	let total = 0;
-	for (const chunk of chunks) {
-		total += chunk.length;
-	}
-	const merged = new Uint8Array(total);
-	let offset = 0;
-	for (const chunk of chunks) {
-		merged.set(chunk, offset);
-		offset += chunk.length;
-	}
-	return new TextDecoder().decode(merged);
-}
-
 function toExecResult(result: ExecResult): NodeRuntimeExecResult {
 	return {
 		stdout: result.stdout,

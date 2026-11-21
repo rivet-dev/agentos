@@ -4999,6 +4999,10 @@ try {
 
 const deflated = zlib.deflateSync(Buffer.from("agentos", "utf8"));
 const inflated = zlib.inflateSync(deflated).toString("utf8");
+const brotliInput = Buffer.from("ordinary Brotli round trip");
+const brotliPacked = zlib.brotliCompressSync(brotliInput);
+assert.deepEqual(zlib.brotliDecompressSync(brotliPacked, { maxOutputLength: brotliInput.length }), brotliInput);
+assert.throws(() => zlib.brotliDecompressSync(brotliPacked, { maxOutputLength: brotliInput.length - 1 }));
 
 console.log(JSON.stringify({
   constants: {

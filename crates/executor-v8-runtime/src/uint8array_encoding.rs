@@ -1,6 +1,6 @@
 //! One V8-owned ASCII allocation per encoding, with no IPC or host resources.
 
-fn range_error(scope: &mut v8::HandleScope, message: &str, code: &str) {
+fn range_error(scope: &mut v8::PinScope<'_, '_>, message: &str, code: &str) {
     let message = v8::String::new(scope, message).unwrap();
     let error = v8::Exception::range_error(scope, message);
     let object = error.to_object(scope).unwrap();
@@ -11,7 +11,7 @@ fn range_error(scope: &mut v8::HandleScope, message: &str, code: &str) {
 }
 
 pub(crate) fn encode<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: &v8::FunctionCallbackArguments<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let input = v8::Local::<v8::Uint8Array>::try_from(args.get(0))

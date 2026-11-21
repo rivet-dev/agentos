@@ -372,7 +372,7 @@ impl SidecarTransport {
         let _pending_guard = PendingRequestGuard::new(self, request_id);
 
         if self.request_writer_tx.send(bytes).await.is_err() {
-            self.pending.remove(&request_id);
+            self.pending.remove_sync(&request_id);
             return Err(TransportError::Disconnected(
                 "sidecar transport closed".to_string(),
             ));
@@ -401,7 +401,7 @@ impl SidecarTransport {
     /// Register a callback that answers a class of sidecar-initiated requests using generated wire
     /// protocol types.
     pub fn register_wire_callback(&self, key: &'static str, callback: WireSidecarCallback) {
-        let _ = self.callbacks.insert(key, callback);
+        let _ = self.callbacks.insert_sync(key, callback);
     }
 
     /// Return the currently negotiated max frame size.
@@ -553,7 +553,7 @@ impl SidecarTransport {
     async fn handle_wire_frame(self: &Arc<Self>, frame: wire::ProtocolFrame) {
         match frame {
             wire::ProtocolFrame::ResponseFrame(response) => {
-                match self.pending.remove(&response.request_id) {
+                match self.pending.remove_sync(&response.request_id) {
                     Some((_, tx)) => {
                         let _ = tx.send(response.payload);
                     }
@@ -598,7 +598,7 @@ impl SidecarTransport {
     /// issues through this transport.
     async fn dispatch_sidecar_request(self: &Arc<Self>, frame: wire::SidecarRequestFrame) {
         let key = sidecar_request_key(&frame.payload);
-        let callback = self.callbacks.read(&key, |_, value| value.clone());
+        let callback = self.callbacks.read_sync(&key, |_, value| value.clone());
         match callback {
             Some(callback) => {
                 let transport = Arc::downgrade(self);
@@ -634,7 +634,7 @@ impl SidecarTransport {
         // Serialized with `register_pending_request`, so no request can register after this
         // clear without seeing `disconnected`.
         let _guard = self.pending_request_lock.lock();
-        self.pending.clear();
+        self.pending.clear_sync();
     }
 
     fn disconnect(&self) {
@@ -698,7 +698,7 @@ impl SidecarTransport {
                 "sidecar pending request limit exceeded: at most {PENDING_REQUEST_LIMIT} requests can be in flight"
             )));
         }
-        let _ = self.pending.insert(request_id, tx);
+        let _ = self.pending.insert_sync(request_id, tx);
         Ok(())
     }
 }
@@ -737,14 +737,16 @@ impl<'a> PendingRequestGuard<'a> {
 
 impl Drop for PendingRequestGuard<'_> {
     fn drop(&mut self) {
-        let _ = self.transport.pending.remove(&self.request_id);
+        let _ = self.transport.pending.remove_sync(&self.request_id);
     }
 }
 
 fn pending_request_count(transport: &SidecarTransport) -> usize {
     let mut count = 0;
-    transport.pending.scan(|_, _| {
+    transport.pending.iter_sync(|_, _| {
         count += 1;
+
+        true
     });
     count
 }

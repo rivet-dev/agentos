@@ -7797,6 +7797,22 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 ));
             }
             if let Some((base, inheriting)) = requested_rights {
+                if flags & O_CREAT != 0
+                    && parent.rights & crate::fd_table::WASI_RIGHT_PATH_CREATE_FILE == 0
+                {
+                    return Err(KernelError::new(
+                        "EACCES",
+                        "path_open requires PATH_CREATE_FILE for O_CREAT",
+                    ));
+                }
+                if flags & O_TRUNC != 0
+                    && parent.rights & crate::fd_table::WASI_RIGHT_PATH_FILESTAT_SET_SIZE == 0
+                {
+                    return Err(KernelError::new(
+                        "EACCES",
+                        "path_open requires PATH_FILESTAT_SET_SIZE for O_TRUNC",
+                    ));
+                }
                 let unavailable = (base | inheriting) & !parent.rights_inheriting;
                 if unavailable != 0 {
                     return Err(KernelError::new(
@@ -15216,11 +15232,39 @@ mod tests {
             WASI_PREOPEN_WRITE_RIGHTS_INHERITING
         );
 
-        let child_fd = kernel
+        let denied = kernel
             .fd_open_with_rights(
                 "wasm",
                 pid,
                 Some(directory_fd),
+                "/cap/child",
+                O_CREAT | O_RDWR,
+                Some(0o600),
+                Some((WASI_RIGHT_FD_READ | WASI_RIGHT_FD_WRITE, 0)),
+            )
+            .expect_err("inheriting write rights alone cannot create a directory entry");
+        assert_eq!(denied.code(), "EACCES");
+        assert!(!kernel.exists("/cap/child").expect("check child path"));
+
+        let create_fd = kernel
+            .fd_open_with_rights(
+                "wasm",
+                pid,
+                Some(root_fd),
+                "/cap",
+                O_DIRECTORY | O_RDONLY,
+                None,
+                Some((
+                    WASI_PREOPEN_READ_RIGHTS_BASE | crate::fd_table::WASI_RIGHT_PATH_CREATE_FILE,
+                    WASI_PREOPEN_WRITE_RIGHTS_INHERITING,
+                )),
+            )
+            .expect("open nested directory with create permission");
+        let child_fd = kernel
+            .fd_open_with_rights(
+                "wasm",
+                pid,
+                Some(create_fd),
                 "/cap/child",
                 O_CREAT | O_RDWR,
                 Some(0o600),

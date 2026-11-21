@@ -288,7 +288,10 @@ impl SessionPauseControl {
 }
 
 #[cfg(not(test))]
-extern "C" fn pause_isolate_interrupt(_isolate: &mut v8::Isolate, data: *mut std::ffi::c_void) {
+extern "C" fn pause_isolate_interrupt(
+    _isolate: v8::UnsafeRawIsolatePtr,
+    data: *mut std::ffi::c_void,
+) {
     // SAFETY: pause_session passes one Arc strong reference with into_raw for
     // this callback. V8 invokes each accepted interrupt exactly once.
     let control = unsafe { Arc::from_raw(data.cast::<SessionPauseControl>()) };
@@ -1870,6 +1873,9 @@ impl SessionManager {
             .sessions
             .drain()
             .filter_map(|(session_id, mut entry)| {
+                // V8 termination cannot wake a thread parked on our pause
+                // condition variable, including from an interrupt callback.
+                entry.pause_control.shutdown();
                 signal_execution_abort_durable(
                     &entry.execution_abort,
                     ExecutionAbortReason::Terminated,
@@ -2344,7 +2350,7 @@ fn handle_late_session_message(
 }
 
 #[cfg(not(test))]
-fn install_wasm_module_bytes_global<'s>(scope: &mut v8::HandleScope<'s>, bytes: &[u8]) -> bool {
+fn install_wasm_module_bytes_global<'s>(scope: &mut v8::PinScope<'s, '_>, bytes: &[u8]) -> bool {
     let global = scope.get_current_context().global(scope);
     let Some(name) = v8::String::new(scope, "__agentOSWasmModuleBytes") else {
         return false;
@@ -2362,11 +2368,7 @@ fn install_wasm_module_bytes_global<'s>(scope: &mut v8::HandleScope<'s>, bytes: 
 /// to first Execute (when bridge code is known for snapshot lookup), and
 /// processes commands until shutdown.
 fn spawn_session_thread(assignment: SessionAssignment) -> std::io::Result<thread::JoinHandle<()>> {
-    let name_prefix = if assignment.session_id.len() > 8 {
-        assignment.session_id[..8].to_string()
-    } else {
-        assignment.session_id.clone()
-    };
+    let name_prefix: String = assignment.session_id.chars().take(8).collect();
     // AGENTOS_THREAD_SITE: admitted-v8-session-executor
     thread::Builder::new()
         .name(format!("session-{}", name_prefix))
@@ -2919,7 +2921,7 @@ fn session_thread(
                         };
 
                         if retain_context && retained_bridge_fns_installed {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             crate::async_context::clear_async_context(scope);
@@ -2946,7 +2948,7 @@ fn session_thread(
                         }
 
                         if high_resolution_time {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             execution::install_high_resolution_time_global(
@@ -2957,7 +2959,7 @@ fn session_thread(
 
                         // Inject globals from last InjectGlobals payload
                         if let Some(ref payload) = last_globals_payload {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             if let Err(error) =
@@ -3044,7 +3046,7 @@ fn session_thread(
                         let pending = Rc::new(bridge::PendingPromises::new());
                         let _active_bridge_execution;
                         {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             _active_bridge_execution = bridge::activate_bridge_execution(
@@ -3108,7 +3110,7 @@ fn session_thread(
                         }
 
                         if let Some(wasm_module_bytes) = wasm_module_bytes.as_ref() {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             if !install_wasm_module_bytes_global(scope, wasm_module_bytes) {
@@ -3272,7 +3274,7 @@ fn session_thread(
                         // through the same guard cancellation and retirement as
                         // ordinary execution failures; no early result bypass.
                         let initialization_error = {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             match crate::guest_bridge_policy::prepare(
@@ -3332,7 +3334,7 @@ fn session_thread(
                             if let Some(error) = initialization_error {
                                 (1, None, Some(error))
                             } else if !module_mode {
-                                let scope = &mut v8::HandleScope::new(iso);
+                                v8::scope!(let scope, iso);
                                 let ctx = v8::Local::new(scope, &exec_context);
                                 let scope = &mut v8::ContextScope::new(scope, ctx);
                                 crate::async_context::clear_async_context(scope);
@@ -3346,7 +3348,7 @@ fn session_thread(
                                 );
                                 (c, None, e)
                             } else {
-                                let scope = &mut v8::HandleScope::new(iso);
+                                v8::scope!(let scope, iso);
                                 let ctx = v8::Local::new(scope, &exec_context);
                                 let scope = &mut v8::ContextScope::new(scope, ctx);
                                 crate::async_context::clear_async_context(scope);
@@ -3366,7 +3368,7 @@ fn session_thread(
                         // needing a bridge event-loop round-trip.
                         if module_mode && error.is_none() && !crate::terminal_callback::pending(iso)
                         {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             if let Some((next_code, next_exports, next_error)) =
@@ -3383,7 +3385,7 @@ fn session_thread(
                         // Retire its queued callbacks before handle cleanup performs
                         // a checkpoint; cleanup may still schedule its own work.
                         if complete_on_settle && error.is_some() {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             crate::next_ticks::discard(scope);
@@ -3400,7 +3402,7 @@ fn session_thread(
                                 || execution::has_pending_module_evaluation()
                                 || execution::has_pending_script_evaluation());
                         let event_loop_status = if should_enter_event_loop {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             run_event_loop_with_readiness(
@@ -3439,7 +3441,7 @@ fn session_thread(
                             && error.is_none()
                             && !crate::terminal_callback::pending(iso)
                         {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             if let Some((next_code, next_exports, next_error)) =
@@ -3475,7 +3477,7 @@ fn session_thread(
                                 // Failures
                                 // after this point go to stderr; they never
                                 // rewrite the completed call's outcome.
-                                let scope = &mut v8::HandleScope::new(iso);
+                                v8::scope!(let scope, iso);
                                 let ctx = v8::Local::new(scope, &exec_context);
                                 let scope = &mut v8::ContextScope::new(scope, ctx);
                                 if !module_mode && error.is_none() {
@@ -3554,7 +3556,7 @@ fn session_thread(
                                     // Phase 1: wait for the registered handles and ref'd
                                     // timers to drain.
                                     {
-                                        let scope = &mut v8::HandleScope::new(iso);
+                                        v8::scope!(let scope, iso);
                                         let ctx = v8::Local::new(scope, &exec_context);
                                         let scope = &mut v8::ContextScope::new(scope, ctx);
                                         let global = ctx.global(scope);
@@ -3590,7 +3592,7 @@ fn session_thread(
                                     let pumped = pending.has_refed_calls()
                                         || execution::has_pending_script_evaluation();
                                     if pumped {
-                                        let scope = &mut v8::HandleScope::new(iso);
+                                        v8::scope!(let scope, iso);
                                         let ctx = v8::Local::new(scope, &exec_context);
                                         let scope = &mut v8::ContextScope::new(scope, ctx);
                                         let event_loop_status = run_event_loop_with_readiness(
@@ -3638,7 +3640,7 @@ fn session_thread(
                             && error.is_none()
                             && !crate::terminal_callback::pending(iso)
                         {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             if let Some((next_code, next_error)) =
@@ -3658,7 +3660,7 @@ fn session_thread(
                             && error.is_none()
                             && !crate::terminal_callback::pending(iso)
                         {
-                            let scope = &mut v8::HandleScope::new(iso);
+                            v8::scope!(let scope, iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
                             if let Some(process_exit_code) =
@@ -3682,7 +3684,7 @@ fn session_thread(
                             {
                                 terminated = true;
                             } else {
-                                let scope = &mut v8::HandleScope::new(iso);
+                                v8::scope!(let scope, iso);
                                 let ctx = v8::Local::new(scope, &exec_context);
                                 let scope = &mut v8::ContextScope::new(scope, ctx);
                                 match execution::finalize_natural_process_exit(scope) {
@@ -3709,7 +3711,7 @@ fn session_thread(
                                 crate::terminal_callback::result(iso)
                             {
                                 if crate::terminal_callback::after_settle(iso) {
-                                    let scope = &mut v8::HandleScope::new(iso);
+                                    v8::scope!(let scope, iso);
                                     let context = v8::Local::new(scope, &exec_context);
                                     let scope = &mut v8::ContextScope::new(scope, context);
                                     execution::report_after_call_failure(scope, &terminal_error);
@@ -3742,7 +3744,7 @@ fn session_thread(
                             // Keep the original guards active while guest closers
                             // run; external stops publish before V8 termination.
                             if !invalidate_context {
-                                let scope = &mut v8::HandleScope::new(iso);
+                                v8::scope!(let scope, iso);
                                 let context = v8::Local::new(scope, &exec_context);
                                 let scope = &mut v8::ContextScope::new(scope, context);
                                 if let Err(cleanup_error) =
@@ -4015,7 +4017,7 @@ pub fn reset_pending_promises(pending: &mut crate::bridge::PendingPromises) {
 }
 
 #[cfg(not(test))]
-fn reset_process_exit_state(scope: &mut v8::HandleScope) -> Result<(), ExecutionError> {
+fn reset_process_exit_state(scope: &mut v8::PinScope<'_, '_>) -> Result<(), ExecutionError> {
     let failure = || ExecutionError {
         error_type: "Error".into(),
         message: "could not reset call-owned process exit state".into(),
@@ -4025,7 +4027,7 @@ fn reset_process_exit_state(scope: &mut v8::HandleScope) -> Result<(), Execution
     // Do not flush continuations before the new call's initialization.
     let mut suppression_storage = std::pin::pin!(execution::MicrotaskSuppressionStorage::new());
     let mut explicit = execution::ExplicitMicrotaskScope::new(scope, suppression_storage.as_mut());
-    let tc = &mut v8::TryCatch::new(&mut *explicit);
+    v8::tc_scope!(let tc, &mut *explicit);
     let global = tc.get_current_context().global(tc);
     let Some(key) = v8::String::new(tc, "__runtimeResetProcessExitState") else {
         return Err(failure());
@@ -4061,8 +4063,8 @@ fn reset_process_exit_state(scope: &mut v8::HandleScope) -> Result<(), Execution
     }
 }
 
-fn retire_stdin_operation(scope: &mut v8::HandleScope) -> Result<(), ExecutionError> {
-    let tc = &mut v8::TryCatch::new(scope);
+fn retire_stdin_operation(scope: &mut v8::PinScope<'_, '_>) -> Result<(), ExecutionError> {
+    v8::tc_scope!(let tc, scope);
     let context = tc.get_current_context();
     let global = context.global(tc);
     let failure = |message: &str| ExecutionError {
@@ -4113,7 +4115,7 @@ fn retire_stdin_operation(scope: &mut v8::HandleScope) -> Result<(), ExecutionEr
 /// Returns true if execution completed normally, false if terminated.
 #[doc(hidden)]
 pub fn run_event_loop(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     rx: &Receiver<SessionCommand>,
     pending: &crate::bridge::PendingPromises,
     abort_rx: Option<&crossbeam_channel::Receiver<()>>,
@@ -4167,7 +4169,7 @@ enum EventLoopExit {
 }
 
 fn event_loop_can_exit(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     pending: &crate::bridge::PendingPromises,
     exit: EventLoopExit,
 ) -> bool {
@@ -4192,7 +4194,7 @@ fn event_loop_can_exit(
 /// not requested exit.
 #[cfg(not(test))]
 fn guest_liveness_remains(iso: &mut v8::Isolate, exec_context: &v8::Global<v8::Context>) -> bool {
-    let scope = &mut v8::HandleScope::new(iso);
+    v8::scope!(let scope, iso);
     let ctx = v8::Local::new(scope, exec_context);
     let scope = &mut v8::ContextScope::new(scope, ctx);
     let Some(source) = v8::String::new(
@@ -4209,7 +4211,7 @@ fn guest_liveness_remains(iso: &mut v8::Isolate, exec_context: &v8::Global<v8::C
 }
 
 fn run_event_loop_with_readiness(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     sources: EventLoopSources<'_>,
     pending: &crate::bridge::PendingPromises,
 ) -> EventLoopStatus {
@@ -4546,7 +4548,7 @@ impl IdleHeapReduction {
         self.checked_this_idle_period = false;
     }
 
-    fn on_idle_tick(&mut self, scope: &mut v8::HandleScope) {
+    fn on_idle_tick(&mut self, scope: &mut v8::PinScope<'_, '_>) {
         if self.checked_this_idle_period || self.idle_since.elapsed() < IDLE_HEAP_REDUCTION_DELAY {
             return;
         }
@@ -4570,9 +4572,8 @@ impl IdleHeapReduction {
     }
 }
 
-fn used_heap_bytes(scope: &mut v8::HandleScope) -> usize {
-    let mut statistics = v8::HeapStatistics::default();
-    scope.get_heap_statistics(&mut statistics);
+fn used_heap_bytes(scope: &mut v8::PinScope<'_, '_>) -> usize {
+    let statistics = scope.get_heap_statistics();
     statistics.used_heap_size()
 }
 
@@ -4597,7 +4598,7 @@ fn report_unexplained_abort_lane_disconnect(
 }
 
 fn try_recv_session_command(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     rx: &Receiver<SessionCommand>,
     ready_rx: &Receiver<ReadyWake>,
     ready_broker: &SessionReadiness,
@@ -4658,7 +4659,7 @@ fn try_recv_session_command(
 }
 
 fn dispatch_session_command(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     cmd: SessionCommand,
     pending: &crate::bridge::PendingPromises,
     ready_broker: &SessionReadiness,
@@ -4683,7 +4684,7 @@ fn dispatch_session_command(
 /// return reaches `complete_ready_batch_dispatch` before control returns to the
 /// reusable session loop.
 fn dispatch_ready_batch(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     batch: RuntimeReadyBatch,
     ready_broker: &SessionReadiness,
 ) -> EventLoopStatus {
@@ -4694,13 +4695,13 @@ fn dispatch_ready_batch(
 }
 
 fn dispatch_ready_batch_callbacks(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     batch: &RuntimeReadyBatch,
     ready_broker: &SessionReadiness,
     delivered: &mut Vec<ReadyObservation>,
 ) -> EventLoopStatus {
     for entry in &batch.entries {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(let tc, scope);
         let dispatch = crate::stream::dispatch_readiness(
             tc,
             entry.capability_id,
@@ -4747,7 +4748,7 @@ fn dispatch_ready_batch_callbacks(
             let Some(signal_name) = signal_name_for_stream_event(signal.signal) else {
                 continue;
             };
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(let tc, scope);
             crate::stream::dispatch_signal_event(
                 tc,
                 signal_name,
@@ -4773,7 +4774,7 @@ fn dispatch_ready_batch_callbacks(
             Err(error) => return readiness_dispatch_failure(error),
         };
         for timer_id in timers {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(let tc, scope);
             crate::stream::dispatch_timer_event(tc, timer_id);
             crate::owned_microtasks::checkpoint(tc);
             if let Some((code, error)) = crate::terminal_callback::result(tc) {
@@ -4855,8 +4856,8 @@ fn signal_name_for_stream_event(signal: i32) -> Option<&'static str> {
     }
 }
 
-fn pending_guest_timer_count(scope: &mut v8::HandleScope) -> usize {
-    let tc = &mut v8::TryCatch::new(scope);
+fn pending_guest_timer_count(scope: &mut v8::PinScope<'_, '_>) -> usize {
+    v8::tc_scope!(let tc, scope);
     let context = tc.get_current_context();
     let global = context.global(tc);
     let key = match v8::String::new(tc, "_getPendingTimerCount") {
@@ -4879,8 +4880,8 @@ fn pending_guest_timer_count(scope: &mut v8::HandleScope) -> usize {
         .unwrap_or(0)
 }
 
-fn pending_guest_immediate_count(scope: &mut v8::HandleScope) -> usize {
-    let tc = &mut v8::TryCatch::new(scope);
+fn pending_guest_immediate_count(scope: &mut v8::PinScope<'_, '_>) -> usize {
+    v8::tc_scope!(let tc, scope);
     let context = tc.get_current_context();
     let global = context.global(tc);
     let key = match v8::String::new(tc, "_getPendingImmediateCount") {
@@ -4903,10 +4904,10 @@ fn pending_guest_immediate_count(scope: &mut v8::HandleScope) -> usize {
         .unwrap_or(0)
 }
 
-fn drain_guest_immediates(scope: &mut v8::HandleScope) -> EventLoopStatus {
+fn drain_guest_immediates(scope: &mut v8::PinScope<'_, '_>) -> EventLoopStatus {
     let mut suppression_storage = std::pin::pin!(execution::MicrotaskSuppressionStorage::new());
     let mut explicit = execution::ExplicitMicrotaskScope::new(scope, suppression_storage.as_mut());
-    let tc = &mut v8::TryCatch::new(&mut *explicit);
+    v8::tc_scope!(let tc, &mut *explicit);
     let context = tc.get_current_context();
     let global = context.global(tc);
     let key = match v8::String::new(tc, "_drainImmediates") {
@@ -4938,7 +4939,7 @@ fn drain_guest_immediates(scope: &mut v8::HandleScope) -> EventLoopStatus {
 }
 
 /// Drain runnable V8 foreground tasks. Returns whether any task ran.
-fn pump_v8_message_loop(scope: &mut v8::HandleScope) -> bool {
+fn pump_v8_message_loop(scope: &mut v8::PinScope<'_, '_>) -> bool {
     let platform = v8::V8::get_current_platform();
     let mut ran = false;
     while v8::Platform::pump_message_loop(&platform, scope, false) {
@@ -4984,7 +4985,7 @@ pub enum EventLoopStatus {
 }
 
 fn dispatch_event_loop_frame(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     frame: SessionMessage,
     pending: &crate::bridge::PendingPromises,
 ) -> EventLoopStatus {
@@ -5022,7 +5023,7 @@ fn dispatch_event_loop_frame(
             event_type,
             payload,
         }) => {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(let tc, scope);
             crate::stream::dispatch_stream_event(tc, &event_type, &payload);
             crate::owned_microtasks::checkpoint(tc);
             if let Some((code, error)) = crate::terminal_callback::result(tc) {
@@ -5097,7 +5098,7 @@ mod tests {
                 Ok(())
             }
         }
-        fn run(scope: &mut v8::HandleScope, source: &str) {
+        fn run(scope: &mut v8::PinScope<'_, '_>, source: &str) {
             let source = v8::String::new(scope, source).unwrap();
             let script = v8::Script::compile(scope, source, None).unwrap();
             assert!(script.run(scope).is_some(), "stdin fixture must execute");
@@ -5106,7 +5107,7 @@ mod tests {
 
         let mut isolate = isolate::create_isolate(None);
         let context = isolate::create_context(&mut isolate);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(let scope, &mut *isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
         assert!(
@@ -5676,6 +5677,34 @@ mod tests {
             assert_eq!(mgr.session_count(), 0);
             assert_eq!(mgr.active_slot_count(), 0);
         }
+    }
+
+    #[test]
+    fn security_shutdown_releases_paused_sessions() {
+        let mut mgr = test_manager(1);
+        mgr.create_session("paused-shutdown".into(), None, None, None)
+            .expect("create session");
+        let control = Arc::clone(&mgr.sessions["paused-shutdown"].pause_control);
+        control.pause();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let waiting = Arc::clone(&control);
+        let waiter = std::thread::spawn(move || {
+            waiting.wait_while_paused();
+            done_tx.send(()).expect("report resumed waiter");
+        });
+        let handles = mgr.take_session_shutdown_handles();
+        let resumed = done_rx.recv_timeout(Duration::from_millis(200));
+        // Retire every test thread even when exercising the unfixed path.
+        control.shutdown();
+        waiter.join().expect("join pause waiter");
+        for handle in handles {
+            handle.join().expect("join session");
+        }
+        assert!(
+            resumed.is_ok(),
+            "whole-runtime shutdown must wake paused sessions"
+        );
+        assert_eq!(mgr.active_slot_count(), 0);
     }
 
     #[test]
@@ -6291,7 +6320,7 @@ mod tests {
 
         let mut v8_isolate = isolate::create_isolate(None);
         let context = isolate::create_context(&mut v8_isolate);
-        let scope = &mut v8::HandleScope::new(&mut v8_isolate);
+        v8::scope!(let scope, &mut *v8_isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
 
@@ -6315,7 +6344,7 @@ mod tests {
         );
         let source = format!("for (let i = 0; i < {REGISTERED}; i++) {{ _asyncFn(i); }}");
         {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(let tc, scope);
             let code = v8::String::new(tc, &source).unwrap();
             let script = v8::Script::compile(tc, code, None).unwrap();
             assert!(

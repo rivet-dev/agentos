@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.2.0 or 0.2.0-rc.1). Leave empty for preview publish on the dispatched branch."
+        description: "Version to release (e.g. 0.2.0 or 0.2.0-rc.1). Leave empty to publish to a preview-<branch>-<hash> tag."
         required: false
         type: string
       latest:
-        description: "Tag as @latest (release only)"
+        description: "Promote to latest (stable releases only)"
         required: true
         type: boolean
         default: true
@@ -35,6 +35,9 @@ env:
   LINUX_GNU_LLVM_VERSION: "22"
   LINUX_GNU_SYSROOT_TAG: "sysroot-20250207"
 
+permissions:
+  contents: read
+
 jobs:
   context:
     name: Context
@@ -47,11 +50,12 @@ jobs:
       latest: ${{ steps.ctx.outputs.latest }}
       build_profile: ${{ steps.mode.outputs.profile }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 1
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -88,14 +92,16 @@ jobs:
     name: WASM Commands (default set)
     runs-on: depot-ubuntu-24.04-8
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
         with:
           targets: wasm32-wasip1
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...'
@@ -103,12 +109,12 @@ jobs:
       # tar keeps the alias and stub symlinks of the canonical command tree.
       - name: Pack the default command tree
         run: tar -C toolchain/target/wasm32-wasip1/release -cf "$RUNNER_TEMP/wasm-commands-default.tar" commands
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wasm-commands-part-default
           path: ${{ runner.temp }}/wasm-commands-default.tar
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wasm-command-licenses
           path: toolchain/c/build/awk.COPYING
@@ -143,7 +149,7 @@ jobs:
                       raise ValueError(f"missing regular Git packaging input: {source}")
                   archive.add(source)
           PYTHON
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: software-build-inputs-git
           path: ${{ runner.temp }}/software-build-inputs-git.tar
@@ -159,14 +165,16 @@ jobs:
         command: [duckdb, vim]
     runs-on: depot-ubuntu-24.04-8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - run: make -C toolchain cmd/${{ matrix.command }}
       - name: Pack the ${{ matrix.command }} command
         run: |
           set -euo pipefail
           test -s "toolchain/target/wasm32-wasip1/release/commands/${{ matrix.command }}"
           tar -C toolchain/target/wasm32-wasip1/release -cf "$RUNNER_TEMP/wasm-commands-${{ matrix.command }}.tar" "commands/${{ matrix.command }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wasm-commands-part-${{ matrix.command }}
           path: ${{ runner.temp }}/wasm-commands-${{ matrix.command }}.tar
@@ -183,7 +191,7 @@ jobs:
           mkdir -p "$stage/toolchain/c/libs/vim"
           cp -R software/vim/share/vim/vim92 "$stage/toolchain/c/libs/vim/runtime"
           tar -C "$stage" -cf "$RUNNER_TEMP/software-build-inputs-vim.tar" toolchain
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: matrix.command == 'vim'
         with:
           name: software-build-inputs-vim
@@ -197,11 +205,13 @@ jobs:
     name: WASM Commands
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: wasm-commands-part-*
           path: ${{ runner.temp }}/wasm-commands-parts
@@ -215,7 +225,7 @@ jobs:
             tar -C "$release_dir" -xf "$RUNNER_TEMP/wasm-commands-parts/wasm-commands-$part.tar"
           done
       - run: node packages/core/scripts/copy-wasm-commands.mjs --require
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wasm-commands
           path: packages/core/commands
@@ -236,12 +246,14 @@ jobs:
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           name: agentos-${{ matrix.platform }}
       - name: Build linux artifacts
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: docker/build/linux-gnu.Dockerfile
@@ -266,14 +278,14 @@ jobs:
           test -f "$sidecar_out/agentos-sidecar"
           echo "sidecar_dir=$sidecar_out" >> "$GITHUB_OUTPUT"
       - name: Check glibc floor
-        run: |
-          scripts/ci/check-linux-glibc-floor.sh \
-            "${{ steps.extract.outputs.sidecar_dir }}/agentos-sidecar"
+        env:
+          SIDECAR_DIR: ${{ steps.extract.outputs.sidecar_dir }}
+        run: scripts/ci/check-linux-glibc-floor.sh "$SIDECAR_DIR/agentos-sidecar"
       - name: Smoke-run binaries in old Linux containers
-        run: |
-          scripts/ci/smoke-linux-artifacts.sh binary \
-            "${{ steps.extract.outputs.sidecar_dir }}/agentos-sidecar"
-      - uses: actions/upload-artifact@v4
+        env:
+          SIDECAR_DIR: ${{ steps.extract.outputs.sidecar_dir }}
+        run: scripts/ci/smoke-linux-artifacts.sh binary "$SIDECAR_DIR/agentos-sidecar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sidecar-${{ matrix.platform }}
           path: ${{ steps.extract.outputs.sidecar_dir }}
@@ -295,15 +307,22 @@ jobs:
             target: aarch64-apple-darwin
             clang: aarch64-apple-darwin20.4
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           name: agentos-${{ matrix.platform }}
       - name: Log in to ghcr.io
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf "%s\n" "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
       - name: Cross-compile via osxcross
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: docker/build/darwin.Dockerfile
@@ -330,7 +349,7 @@ jobs:
             *) echo "unknown darwin platform: ${{ matrix.platform }}" >&2; exit 2 ;;
           esac
           file "$sidecar_out/agentos-sidecar" | grep -F "$expected_arch"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sidecar-${{ matrix.platform }}
           path: target/sidecar-artifacts/${{ matrix.platform }}
@@ -344,41 +363,41 @@ jobs:
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - run: pnpm install --frozen-lockfile
       - name: Rehearse crate publish
         run: pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates --rehearse
 
-  publish-npm:
+  prepare-npm:
     needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin, crates-rehearsal]
-    name: Publish npm
+    name: Prepare npm tarballs
     if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && (needs.context.outputs.trigger != 'release' || needs.crates-rehearsal.result == 'success') }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-commands
           path: packages/core/commands
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-command-licenses
           path: toolchain/c/build
@@ -389,7 +408,7 @@ jobs:
           mkdir -p "$commands_dir"
           cp -a packages/core/commands/. "$commands_dir/"
           test -s "$commands_dir/sh"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: software-build-inputs-*
           path: ${{ runner.temp }}/software-build-inputs
@@ -402,7 +421,7 @@ jobs:
           done
           test -x toolchain/c/build/git-upstream/git-*/tools/generate-script.sh
           test -f toolchain/c/libs/vim/runtime/defaults.vim
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: sidecar-*
           path: artifacts
@@ -418,9 +437,11 @@ jobs:
             chmod +x "${agent_dest}/agentos-sidecar"
           done
       - name: Bump package versions for build
+        env:
+          VERSION: ${{ needs.context.outputs.version }}
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
-            --version ${{ needs.context.outputs.version }} \
+            --version "$VERSION" \
             --version-only
       - run: node packages/core/scripts/copy-wasm-commands.mjs --require
       - name: Build TypeScript packages
@@ -434,26 +455,78 @@ jobs:
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts stage-software \
             --output "$GITHUB_WORKSPACE/software-artifacts"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: software-artifacts
           path: software-artifacts
           if-no-files-found: error
       - name: Finalize package versions for publish
+        env:
+          VERSION: ${{ needs.context.outputs.version }}
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
-            --version ${{ needs.context.outputs.version }}
-      - name: Publish npm packages
+            --version "$VERSION"
+      - name: Pack npm packages
+        env:
+          VERSION: ${{ needs.context.outputs.version }}
+        run: |
+          pnpm --filter=publish exec tsx src/ci/bin.ts prepare-packed-npm \
+            --version "$VERSION" --output "$RUNNER_TEMP/npm-packages"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-publish-tarballs
+          path: ${{ runner.temp }}/npm-packages/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish-npm:
+    needs: [context, prepare-npm]
+    name: Publish npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/publish
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-publish-tarballs
+          path: ${{ runner.temp }}/npm-packages/
+      - name: Publish prepared npm packages
         env:
           NODE_AUTH_TOKEN: ""
-        run: |
-          pnpm --filter=publish exec tsx src/ci/bin.ts publish-npm \
-            --tag ${{ needs.context.outputs.npm_tag }} \
-            --parallel 16 \
-            --retries 3 \
-            ${{ needs.context.outputs.trigger == 'release' && '--release-mode' || '' }}
+          VERSION: ${{ needs.context.outputs.version }}
+          NPM_TAG: ${{ needs.context.outputs.npm_tag }}
+          TRIGGER: ${{ needs.context.outputs.trigger }}
+        run: node scripts/publish/src/ci/publish-packed-npm.ts "$RUNNER_TEMP/npm-packages"
+
+  publish-software-mirror:
+    needs: [context, publish-npm]
+    name: Publish software mirror
+    if: ${{ needs.context.outputs.trigger == 'release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --filter=publish --filter=@rivet-dev/agentos-toolchain
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: software-artifacts
+          path: software-artifacts
       - name: Upload software artifacts to R2
-        if: ${{ needs.context.outputs.trigger == 'release' }}
         env:
           R2_RELEASES_ACCESS_KEY_ID: ${{ secrets.R2_RELEASES_ACCESS_KEY_ID }}
           R2_RELEASES_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASES_SECRET_ACCESS_KEY }}
@@ -478,22 +551,23 @@ jobs:
   release-assets:
     needs: [context, build-sidecar, build-sidecar-darwin]
     name: Release assets
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile --filter=publish --filter=@rivet-dev/agentos-toolchain
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: sidecar-*
           path: artifacts
@@ -566,18 +640,22 @@ jobs:
     if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.crates-rehearsal.result == 'success' && needs.build-sidecar.result == 'success' && (needs.release-assets.result == 'success' || needs.release-assets.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: . -> target
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/.rusty_v8
           key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
@@ -585,20 +663,24 @@ jobs:
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
       - run: pnpm install --frozen-lockfile
       - name: Stage crates for publish
+        env:
+          VERSION: ${{ needs.context.outputs.version }}
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts stage-crates \
-            --version ${{ needs.context.outputs.version }}
+            --version "$VERSION"
       - name: Publish crates
         env:
+          VERSION: ${{ needs.context.outputs.version }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates \
-            --version ${{ needs.context.outputs.version }} \
+            --version "$VERSION" \
             --allow-dirty
 
   notify-managed-services:
     name: Notify managed services
-    needs: [context, publish-npm, release-assets, publish-crates]
+    permissions: {}
+    needs: [context, publish-npm, publish-software-mirror, release-assets, publish-crates]
     if: ${{ success() && needs.context.outputs.trigger == 'release' }}
     runs-on: ubuntu-latest
     steps:
