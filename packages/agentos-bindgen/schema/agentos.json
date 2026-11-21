@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "apiVersion": "agentos-sdk.dev/v1alpha1",
   "contractMajor": 1,
-  "contractHash": "sha256:9c5e0ec013530cb4bf52b77202cd0320c4375285377cc87bb4de4676584133d8",
+  "contractHash": "sha256:ccea87b6633c9a7106c4d0b0df5f70fbadd7beb3414d6084f429581bc6da8399",
   "capabilities": [
     "config.merge-patch",
     "network.pull-streaming",
@@ -963,7 +963,7 @@
     },
     {
       "name": "JsRuntimeLimits",
-      "declaration": "type JsRuntimeLimits = { maxReadlineHistoryEntries: bigint | null, v8HeapLimitMb: bigint | null, syncRpcWaitTimeoutMs: bigint | null, cpuTimeLimitMs: bigint | null, wallClockLimitMs: bigint | null, importCacheMaterializeTimeoutMs: bigint | null, capturedOutputLimitBytes: bigint | null, stdinBufferLimitBytes: bigint | null, eventPayloadLimitBytes: bigint | null, v8IpcMaxFrameBytes: bigint | null, };"
+      "declaration": "type JsRuntimeLimits = { maxReadlineHistoryEntries: bigint | null, v8HeapLimitMb: bigint | null, v8SerializationLimitBytes: bigint | null, maxBlobBytes: bigint | null, syncRpcWaitTimeoutMs: bigint | null, cpuTimeLimitMs: bigint | null, wallClockLimitMs: bigint | null, importCacheMaterializeTimeoutMs: bigint | null, capturedOutputLimitBytes: bigint | null, stdinBufferLimitBytes: bigint | null, eventPayloadLimitBytes: bigint | null, v8IpcMaxFrameBytes: bigint | null, };"
     },
     {
       "name": "JsonValue",
