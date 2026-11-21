@@ -2570,7 +2570,7 @@ const POSIX_ERROR_DESCRIPTIONS = {
 // Node always runs an fs callback asynchronously and passes a failure to it;
 // it never throws an fs error from the callback form.
 function settleFsCallback(callback, run) {
-	let value;
+	let value: unknown;
 	try {
 		value = run();
 	} catch (error) {
@@ -2975,7 +2975,7 @@ function createBridgeAsyncFacade(name, syscall?: string) {
 	const call = (invoke, args) => {
 		if (!syscall) return invoke();
 		const normalize = (err) => toNodeFsError(err, syscall, args?.[0]);
-		let pending;
+		let pending: unknown;
 		try {
 			pending = invoke();
 		} catch (err) {
