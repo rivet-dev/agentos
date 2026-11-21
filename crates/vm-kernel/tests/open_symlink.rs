@@ -67,3 +67,64 @@ fn open_create_follows_dangling_link_but_exclusive_create_does_not() {
         "EEXIST"
     );
 }
+
+// The DAC search walk asks the overlay for each component with its parent
+// already resolved. Deep paths must still see whiteouts, copy-up metadata,
+// and renames made in the upper layer.
+#[test]
+fn guest_walk_through_overlay_sees_upper_whiteouts_metadata_and_renames() {
+    use agentos_vm_kernel::kernel::VirtualProcessOptions;
+    use agentos_vm_kernel::vfs::MemoryFileSystem;
+
+    let mut lower = MemoryFileSystem::new();
+    lower.mkdir("/pkg/lib/deep", true).unwrap();
+    lower.mkdir("/pkg/sub", true).unwrap();
+    for path in [
+        "/pkg/lib/deep/old.js",
+        "/pkg/lib/deep/keep.js",
+        "/pkg/sub/x.js",
+    ] {
+        lower.write_file(path, b"lower".to_vec()).unwrap();
+    }
+    let fs = OverlayFileSystem::new(vec![lower], OverlayMode::Ephemeral);
+    let mut config = KernelVmConfig::new("overlay-walk");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(fs, config);
+    let process = kernel
+        .create_virtual_process(
+            "walk",
+            "walk",
+            "walk",
+            Vec::new(),
+            VirtualProcessOptions::default(),
+        )
+        .unwrap();
+    let pid = process.pid();
+
+    kernel.remove_file("/pkg/lib/deep/old.js").unwrap();
+    kernel.rename("/pkg/sub", "/pkg/moved").unwrap();
+    let code = |kernel: &mut KernelVm<_>, path: &str| {
+        kernel
+            .stat_for_process("walk", pid, path)
+            .err()
+            .map(|error| error.code().to_owned())
+    };
+    assert_eq!(
+        code(&mut kernel, "/pkg/lib/deep/old.js").as_deref(),
+        Some("ENOENT")
+    );
+    assert_eq!(code(&mut kernel, "/pkg/lib/deep/keep.js"), None);
+    assert_eq!(
+        code(&mut kernel, "/pkg/sub/x.js").as_deref(),
+        Some("ENOENT")
+    );
+    assert_eq!(code(&mut kernel, "/pkg/moved/x.js"), None);
+
+    // A copied-up chmod on an ancestor denies search below it.
+    kernel.chown("/pkg/lib", 0, 0).unwrap();
+    kernel.chmod("/pkg/lib", 0o700).unwrap();
+    assert_eq!(
+        code(&mut kernel, "/pkg/lib/deep/keep.js").as_deref(),
+        Some("EACCES")
+    );
+}

@@ -102,6 +102,10 @@ pub trait MountedFileSystem: Any + Send {
     fn symlink(&mut self, target: &str, link_path: &str) -> VfsResult<()>;
     fn read_link(&self, path: &str) -> VfsResult<String>;
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat>;
+    /// See [`VirtualFileSystem::lstat_resolved_parent`].
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        self.lstat(path)
+    }
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()>;
     fn reserve_unnamed_inode(
         &mut self,
@@ -554,6 +558,10 @@ where
         VirtualFileSystem::lstat(&self.inner, path)
     }
 
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        VirtualFileSystem::lstat_resolved_parent(&self.inner, path)
+    }
+
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         VirtualFileSystem::link(&mut self.inner, old_path, new_path)
     }
@@ -850,6 +858,10 @@ where
         (**self).lstat(path)
     }
 
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        (**self).lstat_resolved_parent(path)
+    }
+
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         (**self).link(old_path, new_path)
     }
@@ -1110,6 +1122,10 @@ where
 
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat> {
         self.inner.lstat(path)
+    }
+
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        self.inner.lstat_resolved_parent(path)
     }
 
     fn link(&mut self, _old_path: &str, new_path: &str) -> VfsResult<()> {
@@ -2550,7 +2566,10 @@ impl MountTable {
         self.namespace_component_probes
             .set(self.namespace_component_probes.get() + 1);
         let (index, relative) = self.resolve_index(path)?;
-        match self.mounts[index].filesystem.lstat(&relative) {
+        match self.mounts[index]
+            .filesystem
+            .lstat_resolved_parent(&relative)
+        {
             Ok(stat) => Ok((stat, false)),
             Err(error) if error.code() == "ENOENT" => self
                 .missing_mount_directory_inner(index, &relative, false)?
