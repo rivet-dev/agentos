@@ -900,13 +900,52 @@ function createMissingWatcherStats() {
 		birthtimeMs: 0,
 	});
 }
-function createWatcherSnapshot(path) {
+// Like Linux inotify, a watched directory reports changes to its direct
+// entries. The poller snapshots each entry's lstat, so bound the entries it
+// compares per poll.
+var MAX_FS_WATCH_DIRECTORY_ENTRIES = 4096;
+var warnedFsWatchDirectoryEntryLimit = false;
+function createWatcherChildSignatures(path) {
+	const children = /* @__PURE__ */ new Map();
+	const names = fs.readdirSync(path);
+	if (
+		names.length > MAX_FS_WATCH_DIRECTORY_ENTRIES &&
+		!warnedFsWatchDirectoryEntryLimit
+	) {
+		warnedFsWatchDirectoryEntryLimit = true;
+		globalThis.process?.emitWarning?.(
+			`fs.watch(${path}) compares only the first ${MAX_FS_WATCH_DIRECTORY_ENTRIES} of ${names.length} entries; changes to later entries are not reported`,
+			{ code: "ERR_AGENTOS_FS_WATCH_DIRECTORY_ENTRY_LIMIT" },
+		);
+	}
+	for (const name of names.slice(0, MAX_FS_WATCH_DIRECTORY_ENTRIES)) {
+		try {
+			const child = fs.lstatSync(`${path === "/" ? "" : path}/${name}`);
+			children.set(
+				name,
+				`${child.ino}:${child.mode}:${child.size}:${child.mtimeMs}:${child.ctimeMs}`,
+			);
+		} catch (error) {
+			// The entry was removed between readdir and lstat; the next poll
+			// reports it as a rename.
+			if (error?.code !== "ENOENT") throw error;
+		}
+	}
+	return children;
+}
+function createWatcherSnapshot(path, trackChildren = false) {
 	try {
 		const stats = fs.statSync(path);
+		const children =
+			trackChildren && stats.isDirectory()
+				? createWatcherChildSignatures(path)
+				: void 0;
 		return {
 			exists: true,
 			stats,
+			children,
 			signature: JSON.stringify({
+				children: children ? Array.from(children) : void 0,
 				dev: stats.dev,
 				ino: stats.ino,
 				mode: stats.mode,
@@ -915,7 +954,8 @@ function createWatcherSnapshot(path) {
 				gid: stats.gid,
 				rdev: stats.rdev,
 				size: stats.size,
-				atimeMs: stats.atimeMs,
+				// Listing a watched directory updates its atime; access is not a change.
+				atimeMs: children ? void 0 : stats.atimeMs,
 				mtimeMs: stats.mtimeMs,
 				ctimeMs: stats.ctimeMs,
 				birthtimeMs: stats.birthtimeMs,
@@ -965,7 +1005,8 @@ var PollingFsWatcher = class {
 		this._closed = false;
 		this._persistent = options.persistent !== false;
 		this._signal = options.signal;
-		this._snapshot = createWatcherSnapshot(path);
+		this._trackChildren = options.trackChildren === true;
+		this._snapshot = createWatcherSnapshot(path, this._trackChildren);
 		this._schedulePoll = () => {
 			if (this._closed) {
 				return;
@@ -981,7 +1022,7 @@ var PollingFsWatcher = class {
 			}
 			let next: ReturnType<typeof createWatcherSnapshot>;
 			try {
-				next = createWatcherSnapshot(this._path);
+				next = createWatcherSnapshot(this._path, this._trackChildren);
 			} catch (error) {
 				this._nextIntervalMs = Math.min(
 					this._nextIntervalMs * 2,
@@ -1032,6 +1073,7 @@ var PollingFsWatcher = class {
 	_signal;
 	_handleAbort;
 	_snapshot;
+	_trackChildren;
 	_schedulePoll;
 	_poll;
 	on(event, listener) {
@@ -1132,13 +1174,37 @@ function unregisterStatWatcher(path, watcher) {
 }
 function createFsWatcher(path, options) {
 	const filename = createWatcherFilename(path, options.encoding);
+	const childFilename = (name) =>
+		options.encoding === "buffer" ? import_buffer.Buffer.from(name) : name;
 	const watcher = new PollingFsWatcher(path, {
 		interval: DEFAULT_FS_WATCH_INTERVAL_MS,
 		maxInterval: MAX_IDLE_FS_WATCH_INTERVAL_MS,
 		persistent: options.persistent,
 		signal: options.signal,
+		trackChildren: true,
 		onChange(current, previous) {
-			watcher.emit("change", watcherEventType(previous, current), filename);
+			if (!current.children || !previous.children) {
+				watcher.emit("change", watcherEventType(previous, current), filename);
+				return;
+			}
+			// A directory reports each changed entry by name, as inotify does:
+			// "rename" when an entry appears or disappears, "change" when it is
+			// modified.
+			let emitted = false;
+			const emitEntry = (eventType, name) => {
+				emitted = true;
+				watcher.emit("change", eventType, childFilename(name));
+			};
+			for (const [name, signature] of current.children) {
+				const before = previous.children.get(name);
+				if (before === void 0) emitEntry("rename", name);
+				else if (before !== signature) emitEntry("change", name);
+			}
+			for (const name of previous.children.keys()) {
+				if (!current.children.has(name)) emitEntry("rename", name);
+			}
+			// Only the directory's own metadata changed.
+			if (!emitted) watcher.emit("change", "change", filename);
 		},
 	});
 	return watcher;
