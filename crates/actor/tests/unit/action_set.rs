@@ -61,11 +61,11 @@ fn typescript_undefined_properties_and_escaped_arrays_preserve_defaults() {
     let decoded: serde_json::Value = decode_action_input(&encoded).unwrap();
     assert_eq!(
         decoded,
-        serde_json::json!([{
+        serde_json::json!({
             "second": "preserved",
             "nested": { "cwd": "/tmp" },
             "array": [null, ["$Undefined", 0], ["$$custom", 1]]
-        }])
+        })
     );
 }
 

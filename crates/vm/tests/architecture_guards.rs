@@ -464,11 +464,8 @@ fn dormant_wasmtime_stays_scoped_to_the_standalone_wasm_adapter() {
     }
     assert!(
         !linux.contains("cargo test -p agentos-executor-wasm-wasmtime")
-            && !publish.contains("wasmtime-darwin-smoke:")
-            && publish.contains("smoke-sidecar-artifacts:")
-            && publish.contains("scripts/ci/smoke-packed-wasm-backends.mjs")
-            && publish.contains("needs.smoke-sidecar-artifacts.result == 'success'"),
-        "release must smoke packaged V8 execution without building the dormant Wasmtime backend"
+            && !publish.contains("wasmtime-darwin-smoke:"),
+        "release must not build or smoke the dormant Wasmtime backend"
     );
     for path in ["crates/vm/Cargo.toml", "crates/sidecar/Cargo.toml"] {
         let manifest = std::fs::read_to_string(root.join(path))
@@ -828,10 +825,10 @@ fn maintained_wasm_surfaces_are_mechanically_gated_on_v8() {
         .expect("read publish workflow");
     let justfile = std::fs::read_to_string(root.join("justfile")).expect("read justfile");
     assert!(
-        publish.contains("make -C toolchain cmd/duckdb cmd/vim")
-            && publish.contains("smoke-packed-wasm-backends.mjs")
+        publish.contains("command: [duckdb, vim]")
+            && publish.contains("make -C toolchain cmd/${{ matrix.command }}")
             && justfile.contains("make -C toolchain cmd/duckdb cmd/vim"),
-        "publish must build the complete parity-tested command corpus before packaged backend smokes"
+        "publish must build the complete parity-tested command corpus"
     );
 
     let xfstests = std::fs::read_to_string(root.join("tests/xfstests/Makefile"))

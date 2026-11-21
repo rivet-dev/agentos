@@ -1619,7 +1619,11 @@ var Agent = class _Agent {
 						socket._freeTimer = null;
 						socket.destroy();
 					}, this.timeout);
+					socket._freeTimer?.unref?.();
 				}
+				// Like Node's Agent#keepSocketAlive: an idle pooled socket must
+				// not keep the process alive.
+				socket.unref?.();
 				socket.emit("free");
 				this.emit("free", socket, options);
 			} else {
@@ -1670,6 +1674,8 @@ var Agent = class _Agent {
 					socket._freeTimer = null;
 				}
 				if (freeList.length === 0) delete this.freeSockets[name];
+				// Like Node's Agent#reuseSocket.
+				socket.ref?.();
 				return socket;
 			}
 			this.totalSocketCount = Math.max(0, this.totalSocketCount - 1);

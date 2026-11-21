@@ -182,8 +182,15 @@ where
                 vm.resources.buffered_bytes_release_generation()
             })?;
             let response = vm.try_command("service admitted compatibility RPC", |vm| {
-                let socket_paths = build_socket_path_context(vm)?;
+                // No `fs.*` method reads the socket path context; skip copying
+                // the mount table and scanning processes on every file call.
+                let socket_paths = if call.request.method.starts_with("fs.") {
+                    None
+                } else {
+                    Some(build_socket_path_context(vm)?)
+                };
                 if call.request.method == "net.http_request" {
+                    let socket_paths = required_socket_paths(socket_paths.as_ref(), &call.request.method)?;
                     let payload: crate::service::JavascriptHttpLoopbackRequest = serde_json::from_value(call.request.args.first().cloned().ok_or_else(|| VmError::host("EINVAL", "net.http_request requires payload"))?).map_err(|error| VmError::host("EINVAL", format!("invalid loopback HTTP request: {error}")))?;
                     if !crate::service::is_javascript_loopback_host(&payload.host) {
                         return Err(VmError::host("EACCES", "HTTP loopback request requires a loopback host"));
@@ -204,7 +211,7 @@ where
                 let refs = path.iter().map(String::as_str).collect::<Vec<_>>();
                 let process = Self::active_process_by_path_mut(root, &refs).ok_or_else(|| VmError::host("ESTALE", "compatibility RPC caller exited"))?;
                 let mut future = Box::pin(service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
-                    bridge: &bridge, vm_id: &vm_id, dns: &dns, socket_paths: &socket_paths,
+                    bridge: &bridge, vm_id: &vm_id, dns: &dns, socket_paths: socket_paths.as_ref(),
                     kernel, kernel_readiness, process, sync_request: &call.request,
                     capabilities, managed_descriptions: Some(managed_descriptions),
                 }));

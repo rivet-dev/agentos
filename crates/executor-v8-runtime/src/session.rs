@@ -3547,69 +3547,88 @@ fn session_thread(
                                     }
                                 }
                             } else {
-                                // Phase 1: call _waitForActiveHandles() once. Repeating
-                                // this after it resolves can re-capture an idle HTTP
-                                // keep-alive socket and prevent an otherwise-complete
-                                // one-shot script from ever exiting.
-                                {
-                                    v8::scope!(let scope, iso);
-                                    let ctx = v8::Local::new(scope, &exec_context);
-                                    let scope = &mut v8::ContextScope::new(scope, ctx);
-                                    let global = ctx.global(scope);
-                                    let key =
-                                        v8::String::new(scope, "_waitForActiveHandles").unwrap();
-                                    if let Some(func) = global.get(scope, key.into()) {
-                                        if func.is_function() {
-                                            let func =
-                                                v8::Local::<v8::Function>::try_from(func).unwrap();
-                                            let recv = v8::undefined(scope).into();
-                                            if let Some(result) = func.call(scope, recv, &[]) {
-                                                if result.is_promise() {
-                                                    let promise =
-                                                        v8::Local::<v8::Promise>::try_from(result)
+                                // Liveness is a loop condition, as in Node: a handle
+                                // registered after the wait drained (for example a
+                                // child forked once ref'd bridge work settles) keeps
+                                // the process alive. Idle pooled HTTP sockets are
+                                // unref'd, so they do not.
+                                loop {
+                                    // Phase 1: wait for the registered handles and ref'd
+                                    // timers to drain.
+                                    {
+                                        v8::scope!(let scope, iso);
+                                        let ctx = v8::Local::new(scope, &exec_context);
+                                        let scope = &mut v8::ContextScope::new(scope, ctx);
+                                        let global = ctx.global(scope);
+                                        let key = v8::String::new(scope, "_waitForActiveHandles")
+                                            .unwrap();
+                                        if let Some(func) = global.get(scope, key.into()) {
+                                            if func.is_function() {
+                                                let func =
+                                                    v8::Local::<v8::Function>::try_from(func)
+                                                        .unwrap();
+                                                let recv = v8::undefined(scope).into();
+                                                if let Some(result) = func.call(scope, recv, &[]) {
+                                                    if result.is_promise() {
+                                                        let promise =
+                                                            v8::Local::<v8::Promise>::try_from(
+                                                                result,
+                                                            )
                                                             .unwrap();
-                                                    if promise.state() == v8::PromiseState::Pending
-                                                    {
-                                                        execution::set_pending_script_evaluation(
-                                                            scope, promise,
-                                                        );
+                                                        if promise.state()
+                                                            == v8::PromiseState::Pending
+                                                        {
+                                                            execution::set_pending_script_evaluation(
+                                                                scope, promise,
+                                                            );
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                // Phase 2: pump the event loop for that quiescence wait.
-                                if pending.has_refed_calls()
-                                    || execution::has_pending_script_evaluation()
-                                {
-                                    v8::scope!(let scope, iso);
-                                    let ctx = v8::Local::new(scope, &exec_context);
-                                    let scope = &mut v8::ContextScope::new(scope, ctx);
-                                    let event_loop_status = run_event_loop_with_readiness(
-                                        scope,
-                                        EventLoopSources {
-                                            commands: &rx,
-                                            readiness: &ready_broker,
-                                            readiness_wakes: &ready_rx,
-                                            bridge_responses: Some(&async_response_rx),
-                                            abort: Some(&abort_rx),
-                                            abort_state: Some(&execution_abort),
-                                            pause: Some(&pause_control),
-                                            exit: EventLoopExit::Drained,
-                                        },
-                                        &pending,
-                                    );
+                                    // Phase 2: pump the event loop for that quiescence wait.
+                                    let pumped = pending.has_refed_calls()
+                                        || execution::has_pending_script_evaluation();
+                                    if pumped {
+                                        v8::scope!(let scope, iso);
+                                        let ctx = v8::Local::new(scope, &exec_context);
+                                        let scope = &mut v8::ContextScope::new(scope, ctx);
+                                        let event_loop_status = run_event_loop_with_readiness(
+                                            scope,
+                                            EventLoopSources {
+                                                commands: &rx,
+                                                readiness: &ready_broker,
+                                                readiness_wakes: &ready_rx,
+                                                bridge_responses: Some(&async_response_rx),
+                                                abort: Some(&abort_rx),
+                                                abort_state: Some(&execution_abort),
+                                                pause: Some(&pause_control),
+                                                exit: EventLoopExit::Drained,
+                                            },
+                                            &pending,
+                                        );
 
-                                    if matches!(event_loop_status, EventLoopStatus::Terminated) {
-                                        terminated = true;
+                                        if matches!(event_loop_status, EventLoopStatus::Terminated)
+                                        {
+                                            terminated = true;
+                                        }
+                                        if let EventLoopStatus::Failed(next_code, next_error) =
+                                            event_loop_status
+                                        {
+                                            code = next_code;
+                                            error = Some(next_error);
+                                        }
                                     }
-                                    if let EventLoopStatus::Failed(next_code, next_error) =
-                                        event_loop_status
+                                    // Without a pending wait there is nothing to pump.
+                                    if !pumped
+                                        || terminated
+                                        || error.is_some()
+                                        || crate::terminal_callback::pending(iso)
+                                        || !guest_liveness_remains(iso, &exec_context)
                                     {
-                                        code = next_code;
-                                        error = Some(next_error);
+                                        break;
                                     }
                                 }
                             }
@@ -4171,6 +4190,26 @@ fn event_loop_can_exit(
     }
 }
 
+/// True while the guest still has a registered handle or a ref'd timer and has
+/// not requested exit.
+#[cfg(not(test))]
+fn guest_liveness_remains(iso: &mut v8::Isolate, exec_context: &v8::Global<v8::Context>) -> bool {
+    v8::scope!(let scope, iso);
+    let ctx = v8::Local::new(scope, exec_context);
+    let scope = &mut v8::ContextScope::new(scope, ctx);
+    let Some(source) = v8::String::new(
+        scope,
+        "!(globalThis._processExitRequested?.()) && \
+         ((globalThis._getActiveHandles?.().length ?? 0) > 0 || \
+          (globalThis._getPendingTimerCount?.() ?? 0) > 0)",
+    ) else {
+        return false;
+    };
+    v8::Script::compile(scope, source, None)
+        .and_then(|script| script.run(scope))
+        .is_some_and(|value| value.is_true())
+}
+
 fn run_event_loop_with_readiness(
     scope: &mut v8::PinScope<'_, '_>,
     sources: EventLoopSources<'_>,
@@ -4196,6 +4235,15 @@ fn run_event_loop_with_readiness(
         // spin forever and prevent explicit session destruction from joining.
         if abort_rx.is_some_and(execution_abort_requested) {
             scope.terminate_execution();
+            return EventLoopStatus::Terminated;
+        }
+        // The near-heap-limit guard stops guest JavaScript from inside V8, so
+        // neither the abort lane nor a dispatch status reports it. A stop that
+        // unwinds a promise continuation in a microtask checkpoint leaves the
+        // guest's handles registered and its queued jobs unrunnable; the loop
+        // would wait for them forever. The execution owner reads the same flag
+        // to report the typed heap-limit result.
+        if crate::isolate::heap_limit_exceeded(scope) {
             return EventLoopStatus::Terminated;
         }
         if let Some((code, error)) = crate::terminal_callback::result(scope) {
@@ -4295,6 +4343,10 @@ fn run_event_loop_with_readiness(
         // Instead of blocking indefinitely, use a short timeout so we can
         // periodically flush microtasks (like Node.js's libuv + DrainTasks pattern).
         let cmd = loop {
+            // An idle microtask or platform turn can hit the heap limit too.
+            if crate::isolate::heap_limit_exceeded(scope) {
+                return EventLoopStatus::Terminated;
+            }
             if pending_guest_immediate_count(scope) > 0 {
                 match try_recv_session_command(
                     scope,

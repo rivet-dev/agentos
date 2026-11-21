@@ -190,7 +190,7 @@ test("publish restores the GNU license before building software packages", () =>
 		new URL("../.github/workflows/publish.yaml", import.meta.url),
 		"utf8",
 	);
-	const producer = job("wasm-commands", publish)
+	const producer = job("wasm-commands-default", publish)
 		.split(/\n      - /)
 		.find((source) => source.includes("name: wasm-command-licenses"));
 	assert.ok(producer, "publish uploads the license artifact");

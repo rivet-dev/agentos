@@ -2263,8 +2263,18 @@ mod pending_event_reservation_tests {
 
     #[test]
     fn root_host_function_signal_state_drain_preserves_output_and_exit_events() {
+        let events = [
+            ActiveExecutionEvent::Stdout(b"host_function-output".to_vec()),
+            ActiveExecutionEvent::Exited(0),
+        ];
+        // Size the budget to exactly these events, so the test does not depend
+        // on the size of `ActiveExecutionEvent` and a requeue that reserves a
+        // leased event twice still overflows.
         let event_budget = VmPendingByteBudget::new(
-            1024,
+            events
+                .iter()
+                .map(ActiveExecutionEvent::retained_bytes)
+                .sum(),
             queue_tracker::TrackedLimit::PendingExecutionEventBytes,
         );
         let host_function = HostFunctionExecution::default()
@@ -2310,10 +2320,7 @@ mod pending_event_reservation_tests {
             &process.vm_pending_event_bytes_budget,
         ));
 
-        for event in [
-            ActiveExecutionEvent::Stdout(b"host_function-output".to_vec()),
-            ActiveExecutionEvent::Exited(0),
-        ] {
+        for event in events {
             assert!(send_host_function_process_event(
                 &cancelled,
                 &pending_events,

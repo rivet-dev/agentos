@@ -261,6 +261,7 @@ async function validateBridgeContractGlobals(sourceText) {
 		"_processConfig",
 		"__agentOsHrNowUs",
 		"__agentOsRequireEsmSync",
+		"__agentOsCompileCommonjsWrapper",
 		// Pure URL bootstrap parser retained in the isolate; no host RPC.
 		"__agentOsDomainToASCII",
 		"_osConfig",

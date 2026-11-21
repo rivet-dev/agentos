@@ -485,6 +485,10 @@ impl VirtualFileSystem for RootFileSystem {
         self.overlay.lstat(path)
     }
 
+    fn lstat_resolved_parent(&self, path: &str) -> VfsResult<VirtualStat> {
+        self.overlay.lstat_resolved_parent(path)
+    }
+
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {
         self.overlay.link(old_path, new_path)
     }

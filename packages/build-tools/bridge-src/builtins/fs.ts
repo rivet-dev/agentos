@@ -900,13 +900,52 @@ function createMissingWatcherStats() {
 		birthtimeMs: 0,
 	});
 }
-function createWatcherSnapshot(path) {
+// Like Linux inotify, a watched directory reports changes to its direct
+// entries. The poller snapshots each entry's lstat, so bound the entries it
+// compares per poll.
+var MAX_FS_WATCH_DIRECTORY_ENTRIES = 4096;
+var warnedFsWatchDirectoryEntryLimit = false;
+function createWatcherChildSignatures(path) {
+	const children = /* @__PURE__ */ new Map();
+	const names = fs.readdirSync(path);
+	if (
+		names.length > MAX_FS_WATCH_DIRECTORY_ENTRIES &&
+		!warnedFsWatchDirectoryEntryLimit
+	) {
+		warnedFsWatchDirectoryEntryLimit = true;
+		globalThis.process?.emitWarning?.(
+			`fs.watch(${path}) compares only the first ${MAX_FS_WATCH_DIRECTORY_ENTRIES} of ${names.length} entries; changes to later entries are not reported`,
+			{ code: "ERR_AGENTOS_FS_WATCH_DIRECTORY_ENTRY_LIMIT" },
+		);
+	}
+	for (const name of names.slice(0, MAX_FS_WATCH_DIRECTORY_ENTRIES)) {
+		try {
+			const child = fs.lstatSync(`${path === "/" ? "" : path}/${name}`);
+			children.set(
+				name,
+				`${child.ino}:${child.mode}:${child.size}:${child.mtimeMs}:${child.ctimeMs}`,
+			);
+		} catch (error) {
+			// The entry was removed between readdir and lstat; the next poll
+			// reports it as a rename.
+			if (error?.code !== "ENOENT") throw error;
+		}
+	}
+	return children;
+}
+function createWatcherSnapshot(path, trackChildren = false) {
 	try {
 		const stats = fs.statSync(path);
+		const children =
+			trackChildren && stats.isDirectory()
+				? createWatcherChildSignatures(path)
+				: void 0;
 		return {
 			exists: true,
 			stats,
+			children,
 			signature: JSON.stringify({
+				children: children ? Array.from(children) : void 0,
 				dev: stats.dev,
 				ino: stats.ino,
 				mode: stats.mode,
@@ -915,7 +954,8 @@ function createWatcherSnapshot(path) {
 				gid: stats.gid,
 				rdev: stats.rdev,
 				size: stats.size,
-				atimeMs: stats.atimeMs,
+				// Listing a watched directory updates its atime; access is not a change.
+				atimeMs: children ? void 0 : stats.atimeMs,
 				mtimeMs: stats.mtimeMs,
 				ctimeMs: stats.ctimeMs,
 				birthtimeMs: stats.birthtimeMs,
@@ -965,7 +1005,8 @@ var PollingFsWatcher = class {
 		this._closed = false;
 		this._persistent = options.persistent !== false;
 		this._signal = options.signal;
-		this._snapshot = createWatcherSnapshot(path);
+		this._trackChildren = options.trackChildren === true;
+		this._snapshot = createWatcherSnapshot(path, this._trackChildren);
 		this._schedulePoll = () => {
 			if (this._closed) {
 				return;
@@ -981,7 +1022,7 @@ var PollingFsWatcher = class {
 			}
 			let next: ReturnType<typeof createWatcherSnapshot>;
 			try {
-				next = createWatcherSnapshot(this._path);
+				next = createWatcherSnapshot(this._path, this._trackChildren);
 			} catch (error) {
 				this._nextIntervalMs = Math.min(
 					this._nextIntervalMs * 2,
@@ -1032,6 +1073,7 @@ var PollingFsWatcher = class {
 	_signal;
 	_handleAbort;
 	_snapshot;
+	_trackChildren;
 	_schedulePoll;
 	_poll;
 	on(event, listener) {
@@ -1132,13 +1174,37 @@ function unregisterStatWatcher(path, watcher) {
 }
 function createFsWatcher(path, options) {
 	const filename = createWatcherFilename(path, options.encoding);
+	const childFilename = (name) =>
+		options.encoding === "buffer" ? import_buffer.Buffer.from(name) : name;
 	const watcher = new PollingFsWatcher(path, {
 		interval: DEFAULT_FS_WATCH_INTERVAL_MS,
 		maxInterval: MAX_IDLE_FS_WATCH_INTERVAL_MS,
 		persistent: options.persistent,
 		signal: options.signal,
+		trackChildren: true,
 		onChange(current, previous) {
-			watcher.emit("change", watcherEventType(previous, current), filename);
+			if (!current.children || !previous.children) {
+				watcher.emit("change", watcherEventType(previous, current), filename);
+				return;
+			}
+			// A directory reports each changed entry by name, as inotify does:
+			// "rename" when an entry appears or disappears, "change" when it is
+			// modified.
+			let emitted = false;
+			const emitEntry = (eventType, name) => {
+				emitted = true;
+				watcher.emit("change", eventType, childFilename(name));
+			};
+			for (const [name, signature] of current.children) {
+				const before = previous.children.get(name);
+				if (before === void 0) emitEntry("rename", name);
+				else if (before !== signature) emitEntry("change", name);
+			}
+			for (const name of previous.children.keys()) {
+				if (!current.children.has(name)) emitEntry("rename", name);
+			}
+			// Only the directory's own metadata changed.
+			if (!emitted) watcher.emit("change", "change", filename);
 		},
 	});
 	return watcher;
@@ -2060,79 +2126,85 @@ function checkStreamWriteProgress(written, remaining) {
 	}
 }
 
+// Node's WriteStream is a function constructor: graceful-fs (and so webpack's
+// pack cache) initializes its own subclass instance with
+// `fs.WriteStream.apply(this, args)`, so the state must be set on `this`.
+function initWriteStream(filePath, _options) {
+	this._options = undefined;
+	this.bytesWritten = 0;
+	this.path = undefined;
+	this.pending = false;
+	this.writable = true;
+	this.writableAborted = false;
+	this.writableEnded = false;
+	this.writableFinished = false;
+	this.writableHighWaterMark = 16384;
+	this.writableLength = 0;
+	this.writableObjectMode = false;
+	this.writableCorked = 0;
+	this.destroyed = false;
+	this.closed = false;
+	this.errored = null;
+	this.writableNeedDrain = false;
+	this.fd = null;
+	this.autoClose = true;
+	this._chunks = [];
+	this._listeners = /* @__PURE__ */ new Map();
+	this._fileHandle = null;
+	this._streamFs = undefined;
+	this._position = null;
+	this._options = _options;
+	const fdOption = normalizeStreamFd(_options?.fd);
+	const startOption = _options?.start;
+	const highWaterMarkCandidate =
+		_options?.highWaterMark ?? _options?.bufferSize;
+	const openFlags = _options?.flags ?? "w";
+	this.path = filePath;
+	this.autoClose = _options?.autoClose !== false;
+	this.writableHighWaterMark =
+		typeof highWaterMarkCandidate === "number" &&
+		Number.isFinite(highWaterMarkCandidate) &&
+		highWaterMarkCandidate > 0
+			? Math.floor(highWaterMarkCandidate)
+			: 16384;
+	this._position = typeof startOption === "number" ? startOption : null;
+	this._streamFs = validateStreamFsOverride(_options?.fs, [
+		"open",
+		"close",
+		"write",
+	]);
+	if (_options?.fs !== void 0) {
+		validateStreamFsOverride(_options?.fs, ["writev"]);
+	}
+	if (fdOption instanceof FileHandle) {
+		this._fileHandle = fdOption;
+		this.fd = fdOption.fd;
+		return;
+	}
+	if (typeof fdOption === "number") {
+		this.fd = fdOption;
+		return;
+	}
+	const pathStr =
+		typeof this.path === "string"
+			? this.path
+			: this.path instanceof import_buffer.Buffer
+				? this.path.toString()
+				: null;
+	if (!pathStr) {
+		throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
+	}
+	this.fd = fs.openSync(pathStr, openFlags, _options?.mode);
+	queueMicrotask(() => {
+		if (this.fd !== null && this.fd >= 0) {
+			this.emit("open", this.fd);
+		}
+	});
+}
 var WriteStream = class {
 	constructor(filePath, _options) {
-		this._options = _options;
-		const fdOption = normalizeStreamFd(_options?.fd);
-		const startOption = _options?.start;
-		const highWaterMarkCandidate =
-			_options?.highWaterMark ?? _options?.bufferSize;
-		const openFlags = _options?.flags ?? "w";
-		this.path = filePath;
-		this.autoClose = _options?.autoClose !== false;
-		this.writableHighWaterMark =
-			typeof highWaterMarkCandidate === "number" &&
-			Number.isFinite(highWaterMarkCandidate) &&
-			highWaterMarkCandidate > 0
-				? Math.floor(highWaterMarkCandidate)
-				: 16384;
-		this._position = typeof startOption === "number" ? startOption : null;
-		this._streamFs = validateStreamFsOverride(_options?.fs, [
-			"open",
-			"close",
-			"write",
-		]);
-		if (_options?.fs !== void 0) {
-			validateStreamFsOverride(_options?.fs, ["writev"]);
-		}
-		if (fdOption instanceof FileHandle) {
-			this._fileHandle = fdOption;
-			this.fd = fdOption.fd;
-			return;
-		}
-		if (typeof fdOption === "number") {
-			this.fd = fdOption;
-			return;
-		}
-		const pathStr =
-			typeof this.path === "string"
-				? this.path
-				: this.path instanceof import_buffer.Buffer
-					? this.path.toString()
-					: null;
-		if (!pathStr) {
-			throw createFsError("EBADF", "EBADF: bad file descriptor", "write");
-		}
-		this.fd = fs.openSync(pathStr, openFlags, _options?.mode);
-		queueMicrotask(() => {
-			if (this.fd !== null && this.fd >= 0) {
-				this.emit("open", this.fd);
-			}
-		});
+		initWriteStream.call(this, filePath, _options);
 	}
-	_options;
-	bytesWritten = 0;
-	path;
-	pending = false;
-	writable = true;
-	writableAborted = false;
-	writableEnded = false;
-	writableFinished = false;
-	writableHighWaterMark = 16384;
-	writableLength = 0;
-	writableObjectMode = false;
-	writableCorked = 0;
-	destroyed = false;
-	closed = false;
-	errored = null;
-	writableNeedDrain = false;
-	fd = null;
-	autoClose = true;
-	_chunks = [];
-	_listeners = /* @__PURE__ */ new Map();
-	_fileHandle = null;
-	_streamFs;
-	_position = null;
 	async _closeUnderlying() {
 		if (this._fileHandle) {
 			if (!this._fileHandle.closed) {
@@ -2456,7 +2528,11 @@ Object.defineProperty(ReadStream.prototype, "constructor", {
 var WriteStreamFactory = function WriteStream2(path, options) {
 	validateEncodingOption(options);
 	validateWriteStreamStartOption(options ?? {});
-	return new WriteStreamClass(path, options);
+	if (!(this instanceof WriteStreamClass)) {
+		return new WriteStreamClass(path, options);
+	}
+	initWriteStream.call(this, path, options);
+	return this;
 };
 WriteStreamFactory.prototype = WriteStream.prototype;
 function parseFlags(flags) {
@@ -2564,6 +2640,68 @@ function createFsError(code, message, syscall, path) {
 	if (path) err.path = path;
 	return err;
 }
+// libuv's uv_strerror text, which Node puts in fs error messages.
+const POSIX_ERROR_DESCRIPTIONS = {
+	EPERM: "operation not permitted",
+	ENOENT: "no such file or directory",
+	EIO: "i/o error",
+	ENXIO: "no such device or address",
+	EBADF: "bad file descriptor",
+	EAGAIN: "resource temporarily unavailable",
+	ENOMEM: "not enough memory",
+	EACCES: "permission denied",
+	EBUSY: "resource busy or locked",
+	EEXIST: "file already exists",
+	EXDEV: "cross-device link not permitted",
+	ENOTDIR: "not a directory",
+	EISDIR: "illegal operation on a directory",
+	EINVAL: "invalid argument",
+	ENFILE: "file table overflow",
+	EMFILE: "too many open files",
+	ETXTBSY: "text file is busy",
+	EFBIG: "file too large",
+	ENOSPC: "no space left on device",
+	ESPIPE: "invalid seek",
+	EROFS: "read-only file system",
+	EMLINK: "too many links",
+	EPIPE: "broken pipe",
+	ENAMETOOLONG: "name too long",
+	ENOSYS: "function not implemented",
+	ENOTEMPTY: "directory not empty",
+	ELOOP: "too many symbolic links encountered",
+	ENOTSUP: "operation not supported on socket",
+	EOVERFLOW: "value too large for defined data type",
+};
+// Every fs failure that names a POSIX errno reaches the guest shaped like a
+// Node fs error: `code`, negative `errno`, `syscall`, `path`, and the
+// `CODE: description, syscall 'path'` message.
+// Node always runs an fs callback asynchronously and passes a failure to it;
+// it never throws an fs error from the callback form.
+function settleFsCallback(callback, run) {
+	let value: unknown;
+	try {
+		value = run();
+	} catch (error) {
+		queueMicrotask(() => callback(error));
+		return;
+	}
+	queueMicrotask(() => callback(null, value));
+}
+function toNodeFsError(err, syscall, path) {
+	const code = bridgeErrorCode(err);
+	if (!code || !Object.prototype.hasOwnProperty.call(POSIX_ERRNO, code)) {
+		return err;
+	}
+	const description =
+		POSIX_ERROR_DESCRIPTIONS[code] ?? code.slice(1).toLowerCase();
+	const target = typeof path === "string" ? ` '${path}'` : "";
+	return createFsError(
+		code,
+		`${code}: ${description}, ${syscall}${target}`,
+		syscall,
+		typeof path === "string" ? path : undefined,
+	);
+}
 // Like Node, `filter(src, dest)` runs before the pair is validated, and a false
 // result skips that path and everything under it.
 function cpFilterSkips(srcPath, destPath, opts) {
@@ -2633,6 +2771,22 @@ function bridgeErrorText(err) {
 }
 function bridgeErrorCode(err) {
 	const msg = bridgeErrorText(err);
+	if (msg.includes("ERR_ACCESS_DENIED")) {
+		return "ERR_ACCESS_DENIED";
+	}
+	if (
+		typeof err?.code === "string" &&
+		Object.prototype.hasOwnProperty.call(POSIX_ERRNO, err.code)
+	) {
+		return err.code;
+	}
+	// Kernel and host-mount errors name their errno (`ENOTDIR: ...`); trust it
+	// over the free-text heuristics below.
+	for (const match of msg.matchAll(/\bE[A-Z0-9]{2,}\b/g)) {
+		if (Object.prototype.hasOwnProperty.call(POSIX_ERRNO, match[0])) {
+			return match[0];
+		}
+	}
 	if (
 		msg.includes("ENOENT") ||
 		msg.includes("entry not found") ||
@@ -2680,52 +2834,18 @@ function fdMetadataCall(fn, syscall) {
 		throw error;
 	}
 }
+// `throwIfNoEntry: false` makes statSync and lstatSync return undefined for a
+// missing entry. Node treats ENOENT and ENOTDIR as missing.
+function isMissingEntryWithoutThrow(err, options) {
+	if (options?.throwIfNoEntry !== false) return false;
+	const code = bridgeErrorCode(err);
+	return code === "ENOENT" || code === "ENOTDIR";
+}
 function bridgeCall(fn, syscall, path) {
 	try {
 		return fn();
 	} catch (err) {
-		const code = bridgeErrorCode(err);
-		if (code === "ENOENT") {
-			throw createFsError(
-				"ENOENT",
-				`ENOENT: no such file or directory, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		if (code === "EACCES") {
-			throw createFsError(
-				"EACCES",
-				`EACCES: permission denied, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		if (code === "EEXIST") {
-			throw createFsError(
-				"EEXIST",
-				`EEXIST: file already exists, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		if (code === "EINVAL") {
-			throw createFsError(
-				"EINVAL",
-				`EINVAL: invalid argument, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		if (code === "EXDEV") {
-			throw createFsError(
-				"EXDEV",
-				`EXDEV: cross-device link not permitted, ${syscall} '${path}'`,
-				syscall,
-				path,
-			);
-		}
-		throw err;
+		throw toNodeFsError(err, syscall, path);
 	}
 }
 function _globToRegex(pattern) {
@@ -2886,28 +3006,38 @@ function toPathString(path) {
 function getBridgeSyncFn(name) {
 	return typeof globalThis !== "undefined" ? globalThis[name] : void 0;
 }
-function createBridgeSyncFacade(name) {
+// `syscall` names the Node syscall of a path-based bridge call. Its errors
+// then reach callers as Node fs errors even where the call site rethrows.
+function createBridgeSyncFacade(name, syscall?: string) {
+	const call = (invoke, args) => {
+		if (!syscall) return invoke();
+		try {
+			return invoke();
+		} catch (err) {
+			throw toNodeFsError(err, syscall, args?.[0]);
+		}
+	};
 	return {
 		applySync(_thisArg, args) {
 			const fn = getBridgeSyncFn(name);
 			if (typeof fn === "function") {
-				return fn(...(args || []));
+				return call(() => fn(...(args || [])), args);
 			}
 			if (fn && typeof fn.applySync === "function") {
-				return fn.applySync(_thisArg, args);
+				return call(() => fn.applySync(_thisArg, args), args);
 			}
 			return void 0;
 		},
 		applySyncPromise(_thisArg, args) {
 			const fn = getBridgeSyncFn(name);
 			if (typeof fn === "function") {
-				return fn(...(args || []));
+				return call(() => fn(...(args || [])), args);
 			}
 			if (fn && typeof fn.applySync === "function") {
-				return fn.applySync(_thisArg, args);
+				return call(() => fn.applySync(_thisArg, args), args);
 			}
 			if (fn && typeof fn.applySyncPromise === "function") {
-				return fn.applySyncPromise(_thisArg, args);
+				return call(() => fn.applySyncPromise(_thisArg, args), args);
 			}
 			return void 0;
 		},
@@ -2928,70 +3058,112 @@ function hasBridgeAsyncFn(name) {
 	const fn = getBridgeSyncFn(name);
 	return typeof fn === "function" || !!(fn && typeof fn.apply === "function");
 }
-function createBridgeAsyncFacade(name) {
+var _pendingFsReadWaitId = 0;
+// A callback fs.read that waits on stdin is pending I/O, like a libuv fs
+// request: it keeps the event loop alive until the callback runs. The runtime
+// does not count `_kernelStdinRead` as liveness (process.stdin owns it), so a
+// process whose only work is `fs.read(0, cb)` (Go js/wasm, esbuild-wasm) would
+// exit with the read in flight.
+function holdEventLoopWhilePending(promise, fd) {
+	if (
+		typeof _registerHandle !== "function" ||
+		typeof _unregisterHandle !== "function"
+	) {
+		return promise;
+	}
+	const id = `fs.read:${fd}:${++_pendingFsReadWaitId}`;
+	_registerHandle(id, `fs.read(fd ${fd})`);
+	return promise.then(
+		(value) => {
+			_unregisterHandle(id);
+			return value;
+		},
+		(error) => {
+			_unregisterHandle(id);
+			throw error;
+		},
+	);
+}
+// Like createBridgeSyncFacade: `syscall` makes the call reject with a Node
+// fs error.
+function createBridgeAsyncFacade(name, syscall?: string) {
+	const call = (invoke, args) => {
+		if (!syscall) return invoke();
+		const normalize = (err) => toNodeFsError(err, syscall, args?.[0]);
+		let pending: unknown;
+		try {
+			pending = invoke();
+		} catch (err) {
+			return Promise.reject(normalize(err));
+		}
+		return Promise.resolve(pending).catch((err) => {
+			throw normalize(err);
+		});
+	};
 	return {
 		apply(_thisArg, args) {
 			const fn = getBridgeSyncFn(name);
 			if (typeof fn === "function") {
-				return fn(...(args || []));
+				return call(() => fn(...(args || [])), args);
 			}
 			if (fn && typeof fn.apply === "function") {
-				return fn.apply(_thisArg, args);
+				return call(() => fn.apply(_thisArg, args), args);
 			}
 			return Promise.resolve(void 0);
 		},
 	};
 }
 var _fs = {
-	readFile: createBridgeSyncFacade("_fsReadFile"),
-	writeFile: createBridgeSyncFacade("_fsWriteFile"),
-	readFileBinary: createBridgeSyncFacade("_fsReadFileBinary"),
-	writeFileBinary: createBridgeSyncFacade("_fsWriteFileBinary"),
-	writeFileBinaryRaw: createBridgeSyncFacade("_fsWriteFileBinaryRaw"),
-	readDir: createBridgeSyncFacade("_fsReadDir"),
-	mkdir: createBridgeSyncFacade("_fsMkdir"),
-	rmdir: createBridgeSyncFacade("_fsRmdir"),
+	readFile: createBridgeSyncFacade("_fsReadFile", "open"),
+	writeFile: createBridgeSyncFacade("_fsWriteFile", "open"),
+	readFileBinary: createBridgeSyncFacade("_fsReadFileBinary", "open"),
+	writeFileBinary: createBridgeSyncFacade("_fsWriteFileBinary", "open"),
+	writeFileBinaryRaw: createBridgeSyncFacade("_fsWriteFileBinaryRaw", "open"),
+	readDir: createBridgeSyncFacade("_fsReadDir", "scandir"),
+	mkdir: createBridgeSyncFacade("_fsMkdir", "mkdir"),
+	rmdir: createBridgeSyncFacade("_fsRmdir", "rmdir"),
 	exists: createBridgeSyncFacade("_fsExists"),
-	stat: createBridgeSyncFacade("_fsStat"),
-	unlink: createBridgeSyncFacade("_fsUnlink"),
-	rename: createBridgeSyncFacade("_fsRename"),
-	chmod: createBridgeSyncFacade("_fsChmod"),
-	chown: createBridgeSyncFacade("_fsChown"),
-	link: createBridgeSyncFacade("_fsLink"),
-	symlink: createBridgeSyncFacade("_fsSymlink"),
-	readlink: createBridgeSyncFacade("_fsReadlink"),
-	lstat: createBridgeSyncFacade("_fsLstat"),
-	truncate: createBridgeSyncFacade("_fsTruncate"),
-	utimes: createBridgeSyncFacade("_fsUtimes"),
-	lutimes: createBridgeSyncFacade("_fsLutimes"),
+	stat: createBridgeSyncFacade("_fsStat", "stat"),
+	unlink: createBridgeSyncFacade("_fsUnlink", "unlink"),
+	rename: createBridgeSyncFacade("_fsRename", "rename"),
+	chmod: createBridgeSyncFacade("_fsChmod", "chmod"),
+	chown: createBridgeSyncFacade("_fsChown", "chown"),
+	link: createBridgeSyncFacade("_fsLink", "link"),
+	symlink: createBridgeSyncFacade("_fsSymlink", "symlink"),
+	readlink: createBridgeSyncFacade("_fsReadlink", "readlink"),
+	realpath: createBridgeSyncFacade("_fsRealpath"),
+	lstat: createBridgeSyncFacade("_fsLstat", "lstat"),
+	truncate: createBridgeSyncFacade("_fsTruncate", "open"),
+	utimes: createBridgeSyncFacade("_fsUtimes", "utime"),
+	lutimes: createBridgeSyncFacade("_fsLutimes", "lutime"),
 };
 var _fsAsync = {
-	readFile: createBridgeAsyncFacade("_fsReadFileAsync"),
-	writeFile: createBridgeAsyncFacade("_fsWriteFileAsync"),
-	readFileBinary: createBridgeAsyncFacade("_fsReadFileBinaryAsync"),
-	writeFileBinary: createBridgeAsyncFacade("_fsWriteFileBinaryAsync"),
-	readDir: createBridgeAsyncFacade("_fsReadDirAsync"),
-	mkdir: createBridgeAsyncFacade("_fsMkdirAsync"),
-	rmdir: createBridgeAsyncFacade("_fsRmdirAsync"),
-	stat: createBridgeAsyncFacade("_fsStatAsync"),
-	unlink: createBridgeAsyncFacade("_fsUnlinkAsync"),
-	rename: createBridgeAsyncFacade("_fsRenameAsync"),
-	chmod: createBridgeAsyncFacade("_fsChmodAsync"),
-	chown: createBridgeAsyncFacade("_fsChownAsync"),
-	link: createBridgeAsyncFacade("_fsLinkAsync"),
-	symlink: createBridgeAsyncFacade("_fsSymlinkAsync"),
-	readlink: createBridgeAsyncFacade("_fsReadlinkAsync"),
-	lstat: createBridgeAsyncFacade("_fsLstatAsync"),
-	truncate: createBridgeAsyncFacade("_fsTruncateAsync"),
-	utimes: createBridgeAsyncFacade("_fsUtimesAsync"),
-	lutimes: createBridgeAsyncFacade("_fsLutimesAsync"),
-	access: createBridgeAsyncFacade("_fsAccessAsync"),
+	readFile: createBridgeAsyncFacade("_fsReadFileAsync", "open"),
+	writeFile: createBridgeAsyncFacade("_fsWriteFileAsync", "open"),
+	readFileBinary: createBridgeAsyncFacade("_fsReadFileBinaryAsync", "open"),
+	writeFileBinary: createBridgeAsyncFacade("_fsWriteFileBinaryAsync", "open"),
+	readDir: createBridgeAsyncFacade("_fsReadDirAsync", "scandir"),
+	mkdir: createBridgeAsyncFacade("_fsMkdirAsync", "mkdir"),
+	rmdir: createBridgeAsyncFacade("_fsRmdirAsync", "rmdir"),
+	stat: createBridgeAsyncFacade("_fsStatAsync", "stat"),
+	unlink: createBridgeAsyncFacade("_fsUnlinkAsync", "unlink"),
+	rename: createBridgeAsyncFacade("_fsRenameAsync", "rename"),
+	chmod: createBridgeAsyncFacade("_fsChmodAsync", "chmod"),
+	chown: createBridgeAsyncFacade("_fsChownAsync", "chown"),
+	link: createBridgeAsyncFacade("_fsLinkAsync", "link"),
+	symlink: createBridgeAsyncFacade("_fsSymlinkAsync", "symlink"),
+	readlink: createBridgeAsyncFacade("_fsReadlinkAsync", "readlink"),
+	lstat: createBridgeAsyncFacade("_fsLstatAsync", "lstat"),
+	truncate: createBridgeAsyncFacade("_fsTruncateAsync", "open"),
+	utimes: createBridgeAsyncFacade("_fsUtimesAsync", "utime"),
+	lutimes: createBridgeAsyncFacade("_fsLutimesAsync", "lutime"),
+	access: createBridgeAsyncFacade("_fsAccessAsync", "access"),
 };
-var _fdOpen = createBridgeSyncFacade("fs.openSync");
+var _fdOpen = createBridgeSyncFacade("fs.openSync", "open");
 var _fdClose = createBridgeSyncFacade("fs.closeSync");
 var _fdRead = createBridgeSyncFacade("fs.readSync");
 var _fsReadRaw = createBridgeSyncFacade("_fsReadRaw");
-var _fsReadFileRangeRaw = createBridgeSyncFacade("_fsReadFileRangeRaw");
+var _fsReadFileRangeRaw = createBridgeSyncFacade("_fsReadFileRangeRaw", "open");
 var _fdWrite = createBridgeSyncFacade("fs.writeSync");
 var _fsWriteRaw = createBridgeSyncFacade("_fsWriteRaw");
 var _fsWritevRaw = createBridgeSyncFacade("_fsWritevRaw");
@@ -3020,54 +3192,51 @@ function encodeBridgeBytes(value) {
 		base64: import_buffer.Buffer.from(value).toString("base64"),
 	};
 }
+// One kernel realpath call instead of an lstat/readlink round trip per
+// path component.
+function kernelRealpath(raw, lookup) {
+	try {
+		return _fs.realpath.applySyncPromise(void 0, [lookup]);
+	} catch (e) {
+		if (bridgeErrorCode(e) === "ENOENT") {
+			throw createFsError(
+				"ENOENT",
+				`ENOENT: no such file or directory, realpath '${raw}'`,
+				"realpath",
+				raw,
+			);
+		}
+		throwNormalizedFsBridgeError(e, "realpath", raw);
+	}
+}
 function throwNormalizedFsBridgeError(err, syscall, path) {
-	const code = bridgeErrorCode(err);
-	if (code === "ENOENT") {
+	if (bridgeErrorCode(err) === "ERR_ACCESS_DENIED") {
 		throw createFsError(
-			"ENOENT",
-			`ENOENT: no such file or directory, ${syscall} '${path}'`,
-			syscall,
-			path,
-		);
-	}
-	if (code === "EROFS") {
-		throw createFsError(
-			"EROFS",
-			`EROFS: read-only file system, ${syscall} '${path}'`,
-			syscall,
-			path,
-		);
-	}
-	if (code === "ERR_ACCESS_DENIED") {
-		const error = createFsError(
 			"ERR_ACCESS_DENIED",
 			`ERR_ACCESS_DENIED: permission denied, ${syscall} '${path}'`,
 			syscall,
 			path,
 		);
-		error.code = "ERR_ACCESS_DENIED";
-		throw error;
 	}
-	if (code === "EACCES") {
-		throw createFsError(
-			"EACCES",
-			`EACCES: permission denied, ${syscall} '${path}'`,
-			syscall,
-			path,
-		);
-	}
-	if (
-		code &&
-		Object.prototype.hasOwnProperty.call(POSIX_ERRNO, code) &&
-		err &&
-		typeof err === "object"
-	) {
-		err.code = code;
-		err.errno ??= errnoForCode(code);
-		err.syscall ??= syscall;
-		err.path ??= path;
-	}
-	throw err;
+	throw toNodeFsError(err, syscall, path);
+}
+// A whole-file write is one bridge call, but Node opens the file first, so a
+// failure to reach or open it reports `open`, as in Node.
+const WRITE_FILE_OPEN_ERROR_CODES = new Set([
+	"EACCES",
+	"EISDIR",
+	"ELOOP",
+	"ENAMETOOLONG",
+	"ENOENT",
+	"ENOTDIR",
+	"EPERM",
+	"EROFS",
+]);
+function throwWriteFileBridgeError(err, path) {
+	const syscall = WRITE_FILE_OPEN_ERROR_CODES.has(bridgeErrorCode(err))
+		? "open"
+		: "write";
+	throwNormalizedFsBridgeError(err, syscall, path);
 }
 function joinDirEntryPath(dirPath, entryName) {
 	if (dirPath === "/") {
@@ -3234,7 +3403,7 @@ async function fsWriteFileAsync(file, data, options) {
 		}
 		return await _fsAsync.writeFile.apply(void 0, [pathStr, String(data)]);
 	} catch (err) {
-		throwNormalizedFsBridgeError(err, "write", rawPath);
+		throwWriteFileBridgeError(err, rawPath);
 	}
 }
 async function fsReaddirAsync(path, options) {
@@ -3644,7 +3813,7 @@ var fs = {
 				return _fs.writeFile.applySyncPromise(void 0, [pathStr, String(data)]);
 			}
 		} catch (err) {
-			throwNormalizedFsBridgeError(err, "write", rawPath);
+			throwWriteFileBridgeError(err, rawPath);
 		}
 	},
 	appendFileSync(path, data, options) {
@@ -3772,13 +3941,14 @@ var fs = {
 			return false;
 		}
 	},
-	statSync(path, _options) {
+	statSync(path, options) {
 		const rawPath = normalizePathLike(path);
 		const pathStr = resolveOperationPath(path);
 		let statJson: ReturnType<typeof _fs.stat.applySyncPromise>;
 		try {
 			statJson = _fs.stat.applySyncPromise(void 0, [pathStr]);
 		} catch (err) {
+			if (isMissingEntryWithoutThrow(err, options)) return undefined;
 			if (bridgeErrorCode(err) === "ENOENT") {
 				throw createFsError(
 					"ENOENT",
@@ -3792,13 +3962,15 @@ var fs = {
 		const stat = decodeBridgeJson(statJson);
 		return new Stats(stat);
 	},
-	lstatSync(path, _options) {
+	lstatSync(path, options) {
 		const pathStr = normalizePathLike(path);
-		const statJson = bridgeCall(
-			() => _fs.lstat.applySyncPromise(void 0, [pathStr]),
-			"lstat",
-			pathStr,
-		);
+		let statJson: ReturnType<typeof _fs.lstat.applySyncPromise>;
+		try {
+			statJson = _fs.lstat.applySyncPromise(void 0, [pathStr]);
+		} catch (err) {
+			if (isMissingEntryWithoutThrow(err, options)) return undefined;
+			throw toNodeFsError(err, "lstat", pathStr);
+		}
 		const stat = decodeBridgeJson(statJson);
 		return new Stats(stat);
 	},
@@ -4694,50 +4866,51 @@ var fs = {
 					buffer.byteOffset + offset,
 					length,
 				);
-				_kernelStdinRead
-					.apply(void 0, [length, null], {
+				holdEventLoopWhilePending(
+					_kernelStdinRead.apply(void 0, [length, null], {
 						result: { promise: true },
-					})
-					.then(
-						(next) => {
-							if (next == null) {
-								queueMicrotask(() =>
-									cb(
-										createFsError(
-											"EAGAIN",
-											"EAGAIN: stdin readiness wait returned without data",
-											"read",
-										),
+					}),
+					fd,
+				).then(
+					(next) => {
+						if (next == null) {
+							queueMicrotask(() =>
+								cb(
+									createFsError(
+										"EAGAIN",
+										"EAGAIN: stdin readiness wait returned without data",
+										"read",
 									),
-								);
-								return;
-							}
-							if (next?.done) {
-								queueMicrotask(() => cb(null, 0, buffer));
-								return;
-							}
-							const dataBase64 = String(next?.dataBase64 ?? "");
-							if (!dataBase64) {
-								queueMicrotask(() =>
-									cb(
-										createFsError(
-											"EAGAIN",
-											"EAGAIN: stdin readiness wait returned an empty payload",
-											"read",
-										),
+								),
+							);
+							return;
+						}
+						if (next?.done) {
+							queueMicrotask(() => cb(null, 0, buffer));
+							return;
+						}
+						const dataBase64 = String(next?.dataBase64 ?? "");
+						if (!dataBase64) {
+							queueMicrotask(() =>
+								cb(
+									createFsError(
+										"EAGAIN",
+										"EAGAIN: stdin readiness wait returned an empty payload",
+										"read",
 									),
-								);
-								return;
-							}
-							const bytes = import_buffer.Buffer.from(dataBase64, "base64");
-							const bytesRead = Math.min(length, bytes.length);
-							target.set(bytes.subarray(0, bytesRead), 0);
-							queueMicrotask(() => cb(null, bytesRead, buffer));
-						},
-						(error) => {
-							queueMicrotask(() => cb(error));
-						},
-					);
+								),
+							);
+							return;
+						}
+						const bytes = import_buffer.Buffer.from(dataBase64, "base64");
+						const bytesRead = Math.min(length, bytes.length);
+						target.set(bytes.subarray(0, bytesRead), 0);
+						queueMicrotask(() => cb(null, bytesRead, buffer));
+					},
+					(error) => {
+						queueMicrotask(() => cb(error));
+					},
+				);
 				return;
 			}
 			const attemptRead = () => {
@@ -5080,69 +5253,22 @@ var fs = {
 	realpathSync: Object.assign(
 		function realpathSync(path, options) {
 			validateEncodingOption(options);
-			const MAX_SYMLINK_DEPTH = 40;
-			let symlinksFollowed = 0;
 			const raw = normalizePathLike(path);
-			const pending = [];
-			for (const seg of raw.split("/")) {
+			// Node's realpathSync resolves `..` lexically before it follows
+			// links; realpathSync.native leaves `..` to the kernel walk.
+			const segments = [];
+			for (const seg of resolveOperationPath(raw).split("/")) {
 				if (!seg || seg === ".") continue;
-				if (seg === "..") {
-					if (pending.length > 0) pending.pop();
-				} else pending.push(seg);
+				if (seg === "..") segments.pop();
+				else segments.push(seg);
 			}
-			const resolved = [];
-			while (pending.length > 0) {
-				const seg = pending.shift();
-				if (seg === ".") continue;
-				if (seg === "..") {
-					if (resolved.length > 0) resolved.pop();
-					continue;
-				}
-				resolved.push(seg);
-				const currentPath = "/" + resolved.join("/");
-				try {
-					const stat = fs.lstatSync(currentPath);
-					if (stat.isSymbolicLink()) {
-						if (++symlinksFollowed > MAX_SYMLINK_DEPTH) {
-							const err = new Error(
-								`ELOOP: too many levels of symbolic links, realpath '${raw}'`,
-							);
-							err.code = "ELOOP";
-							err.syscall = "realpath";
-							err.path = raw;
-							throw err;
-						}
-						const target = fs.readlinkSync(currentPath);
-						const targetSegs = target.split("/").filter(Boolean);
-						if (target.startsWith("/")) {
-							resolved.length = 0;
-						} else {
-							resolved.pop();
-						}
-						pending.unshift(...targetSegs);
-					}
-				} catch (e) {
-					const err = e;
-					if (err.code === "ELOOP") throw e;
-					if (err.code === "ENOENT" || err.code === "ENOTDIR") {
-						throw createFsError(
-							"ENOENT",
-							`ENOENT: no such file or directory, realpath '${raw}'`,
-							"realpath",
-							raw,
-						);
-					}
-					// Any other errno must reach the caller: returning here handed back the
-					// partially resolved prefix as if it were the real path.
-					throwNormalizedFsBridgeError(err, "realpath", raw);
-				}
-			}
-			return "/" + resolved.join("/") || "/";
+			return kernelRealpath(raw, `/${segments.join("/")}`);
 		},
 		{
 			native(path, options) {
 				validateEncodingOption(options);
-				return fs.realpathSync(path);
+				const raw = normalizePathLike(path);
+				return kernelRealpath(raw, raw);
 			},
 		},
 	),
@@ -5155,10 +5281,15 @@ var fs = {
 				options = optionsOrCallback;
 			}
 			if (callback) {
+				validateCallback(callback);
 				validateEncodingOption(options);
-				callback(null, fs.realpathSync(path, options));
+				settleFsCallback(callback, () => fs.realpathSync(path, options));
 			} else {
-				return Promise.resolve(fs.realpathSync(path, options));
+				try {
+					return Promise.resolve(fs.realpathSync(path, options));
+				} catch (error) {
+					return Promise.reject(error);
+				}
 			}
 		},
 		{
@@ -5170,10 +5301,17 @@ var fs = {
 					options = optionsOrCallback;
 				}
 				if (callback) {
+					validateCallback(callback);
 					validateEncodingOption(options);
-					callback(null, fs.realpathSync.native(path, options));
+					settleFsCallback(callback, () =>
+						fs.realpathSync.native(path, options),
+					);
 				} else {
-					return Promise.resolve(fs.realpathSync.native(path, options));
+					try {
+						return Promise.resolve(fs.realpathSync.native(path, options));
+					} catch (error) {
+						return Promise.reject(error);
+					}
 				}
 			},
 		},

@@ -142,8 +142,17 @@ pub fn decode_action_input_with_limits<A: serde::de::DeserializeOwned>(
     let mut normalized = Vec::new();
     ciborium::into_writer(&value, &mut normalized)
         .context("invalid_input: encode normalized action input")?;
-    let decoded = rivetkit::action::decode_positional(&normalized)
-        .context("invalid_input: decode typed action input")?;
+    // Every agentOS action takes one input object, sent as the sole positional
+    // argument. Decode that argument as the input: RivetKit first tries the
+    // input type against the argument array itself, and an input whose first
+    // field accepts any JSON value (config.patch) then swallows the array.
+    let decoded = match &value {
+        ciborium::Value::Array(arguments) if arguments.len() == 1 => {
+            rivetkit::action::decode_positional::<(A,)>(&normalized).map(|(input,)| input)
+        }
+        _ => rivetkit::action::decode_positional(&normalized),
+    }
+    .context("invalid_input: decode typed action input")?;
     if limits.hosted_actor {
         warn_near_budget(
             "actor.codec.maxInputDepth",

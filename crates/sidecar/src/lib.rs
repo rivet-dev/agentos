@@ -2,6 +2,7 @@
 
 //! agentOS sidecar composition root.
 
+pub mod process_entrypoint;
 pub mod transport;
 
 pub fn extensions() -> Vec<Box<dyn agentos_vm::Extension>> {

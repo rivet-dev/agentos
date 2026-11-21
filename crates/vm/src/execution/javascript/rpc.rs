@@ -585,13 +585,28 @@ pub(crate) struct JavascriptSyncRpcServiceRequest<'a, B> {
     pub(crate) bridge: &'a SharedBridge<B>,
     pub(crate) vm_id: &'a str,
     pub(crate) dns: &'a VmDnsConfig,
-    pub(crate) socket_paths: &'a SocketPathContext,
+    /// `None` when the caller skipped building it: only socket-family methods
+    /// (`net.*`, `tls.*`, `dgram.*`, descriptor rights) read it, and building it
+    /// copies the VM mount table and scans every process.
+    pub(crate) socket_paths: Option<&'a SocketPathContext>,
     pub(crate) kernel: &'a mut SidecarKernel,
     pub(crate) kernel_readiness: KernelSocketReadinessRegistry,
     pub(crate) process: &'a mut ActiveProcess,
     pub(crate) sync_request: &'a HostRpcRequest,
     pub(crate) capabilities: CapabilityRegistry,
     pub(crate) managed_descriptions: Option<crate::state::ManagedHostNetDescriptionRegistry>,
+}
+
+pub(crate) fn required_socket_paths<'a>(
+    socket_paths: Option<&'a SocketPathContext>,
+    method: &str,
+) -> Result<&'a SocketPathContext, VmError> {
+    socket_paths.ok_or_else(|| {
+        VmError::host(
+            "ERR_AGENTOS_RPC_SOCKET_CONTEXT",
+            format!("{method} requires the socket path context, but the caller did not build it"),
+        )
+    })
 }
 
 pub(in crate::execution) fn descriptor_rights_compat_request(
@@ -1916,7 +1931,7 @@ where
                 bridge,
                 vm_id,
                 dns,
-                socket_paths,
+                socket_paths: required_socket_paths(socket_paths, &request.method)?,
                 kernel,
                 kernel_readiness: Arc::clone(&kernel_readiness),
                 process,
@@ -1951,7 +1966,7 @@ where
                 kernel,
                 vm_id,
                 dns,
-                socket_paths,
+                socket_paths: required_socket_paths(socket_paths, &request.method)?,
                 process,
                 sync_request: request,
                 capabilities: capabilities.clone(),
@@ -1987,7 +2002,7 @@ where
                 bridge,
                 vm_id,
                 dns,
-                socket_paths,
+                socket_paths: required_socket_paths(socket_paths, &request.method)?,
                 kernel,
                 kernel_readiness: Arc::clone(&kernel_readiness),
                 process,
@@ -1996,7 +2011,7 @@ where
             })
         }
         "dgram.poll" => {
-            return service_javascript_dgram_poll_response(socket_paths, kernel, process, request)
+            return service_javascript_dgram_poll_response(required_socket_paths(socket_paths, &request.method)?, kernel, process, request)
                 .await;
         }
         "dgram.createSocket"
@@ -2016,7 +2031,7 @@ where
                 kernel,
                 vm_id,
                 dns,
-                socket_paths,
+                socket_paths: required_socket_paths(socket_paths, &request.method)?,
                 process,
                 kernel_readiness,
                 operation,
@@ -3285,7 +3300,7 @@ where
             })
             .map_err(kernel_error),
         "process.fd_sendmsg_rights" | "process.fd_recvmsg_rights" => {
-            service_descriptor_rights_sync_rpc(kernel, kernel_readiness, process, socket_paths, capabilities, managed_descriptions, request)
+            service_descriptor_rights_sync_rpc(kernel, kernel_readiness, process, required_socket_paths(socket_paths, &request.method)?, capabilities, managed_descriptions, request)
         }
         "process.fd_socket_shutdown" => {
             let socket_fd = javascript_sync_rpc_arg_u32(&request.args, 0, "shutdown socket fd")?;

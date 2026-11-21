@@ -350,7 +350,7 @@ fn production_dispatch_policy_raises_depth_and_value_count_and_warns_once() {
         (nested, "actor.codec.maxInputDepth"),
         (shallow_many, "actor.codec.maxInputValues"),
     ] {
-        let encoded = rivetkit::action::encode_positional(&value).unwrap();
+        let encoded = rivetkit::action::encode_positional(&(&value,)).unwrap();
         let records = Arc::new(std::sync::Mutex::new(Vec::new()));
         let decoded: serde_json::Value =
             tracing::subscriber::with_default(WarningObserver(Arc::clone(&records)), || {
