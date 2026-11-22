@@ -54,6 +54,7 @@ test("Rust crate publish order satisfies internal dependencies", () => {
 	assert(!RUST_CRATES.includes("agentos-vm-core" as never));
 
 	assertBefore("agentos-rivetkit-ars-client", "agentos-vm");
+	assertBefore("agentos-v8", "agentos-executor-v8-runtime");
 	assertBefore("agentos-vm-host-interface", "agentos-executor-v8-runtime");
 	assertBefore("agentos-executor-contract", "agentos-executor-v8-runtime");
 	assertBefore("agentos-resource-accounting", "agentos-driver-tokio");
@@ -174,6 +175,22 @@ test("real crate releases require every locked V8 dependency to resolve through 
 			write(root, "Cargo.lock", registry + '[[package]]\nname = "v8"\nversion = "2.0.0"\n' + source);
 			assert.throws(() => assertPublishableV8Source(root), /outside the agentOS workspace/);
 		}
+	});
+});
+
+test("owned V8 bindings require a real publishable crate and durable pins", () => {
+	withFixture((root) => {
+		write(root, "Cargo.lock", '[[package]]\nname = "agentos-v8"\nversion = "0.0.1"\n');
+		assert.throws(() => assertPublishableV8Source(root), /outside the agentOS workspace/);
+		write(root, "crates/v8/Cargo.toml", '[package]\nname = "agentos-v8"\n');
+		const pins = Object.fromEntries([
+			"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+			"x86_64-apple-darwin", "aarch64-apple-darwin",
+		].map((target) => [target, "a".repeat(64)]));
+		write(root, "scripts/ci/v8/archives.json", JSON.stringify(pins));
+		assert.doesNotThrow(() => assertPublishableV8Source(root));
+		write(root, "Cargo.lock", '[[package]]\nname = "agentos-v8"\nversion = "0.0.1"\nsource = "git+https://example.org/binding"\n');
+		assert.throws(() => assertPublishableV8Source(root), /outside the agentOS workspace/);
 	});
 });
 

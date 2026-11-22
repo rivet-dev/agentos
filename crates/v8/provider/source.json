@@ -1,0 +1,25 @@
+{
+  "rustyV8": "548adfd54db42c670e0f3fd42211c3af109c0a73",
+  "denoV8": "ac3d6e2607b8a240131d47da8e97dca0965a457c",
+  "upstreamPatches": [
+    "d49521fd906188ecaeb3fcb9e8e8b20955fe8290",
+    "6b7ccfda00c9525c1edf0fddfd0da85042164a7c",
+    "0b690e4bf2bb9c37fd870408588c6eadd3ae9761",
+    "2f24dea22a2931666a8d32f36c20e0607dccea94",
+    "d03e7ab1999d78f7b20cb3e7901de1dc3f46e8c0",
+    "79c1ad6a9cecc8b7f759b266caed1f3eee10a0d5"
+  ],
+  "agentosPatches": [
+    {
+      "file": "cppgc-generated-config.patch",
+      "sha256": "48640d3017eb66382df416b6ddfcd683bb1b1b02543afa2e1fd73033357b71b7"
+    },
+    {
+      "file": "node-wire-format-15.patch",
+      "sha256": "462897ebb1039638fdbbf6ad9989975c2677445e107a8b024d60dee4c319e244"
+    }
+  ],
+  "v8Tree": "91306fc87da850ec8b222f0030b37d2da90a6dea",
+  "version": "15.8.62.58",
+  "icu": "2a51536dfb3b448bdf3dae70c782ea2879c90904"
+}

@@ -1,0 +1,26 @@
+{
+    "protocol": {
+        "package": "src/deno_inspector/protocol",
+        "output": "protocol",
+        "namespace": ["deno_inspector", "protocol"]
+    },
+    "imported": {
+        "path": "../../v8/include/js_protocol.pdl",
+        "header": "<v8-inspector-protocol.h>",
+        "namespace": ["v8_inspector", "protocol"],
+        "options": [
+            {
+                "domain": "Runtime",
+                "imported": ["StackTrace", "RemoteObject", "ExecutionContextId", "StackTraceId"]
+            }
+        ]
+    },
+    "lib": {
+        "package": "src/deno_inspector/protocol",
+        "output": "protocol",
+        "string_header": "src/deno_inspector/string_util.h"
+    },
+    "crdtp": {
+        "namespace": "v8_crdtp"
+    }
+}

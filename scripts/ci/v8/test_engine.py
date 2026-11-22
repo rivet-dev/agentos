@@ -14,6 +14,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import engine
 
 
+class BindingProvenanceTests(unittest.TestCase):
+    def test_published_binding_keeps_reviewed_sources_and_verifier(self):
+        repo = Path(__file__).resolve().parents[3]
+        binding = repo / "crates/v8"
+        upstream = json.loads((binding / "UPSTREAM.json").read_text())
+        self.assertEqual(upstream["revision"], engine.SOURCE["rustyV8"])
+        actual = {p.relative_to(binding).as_posix(): engine.digest(p)
+                  for p in (binding / "src").rglob("*") if p.is_file()}
+        self.assertEqual(actual, upstream["rustSources"])
+        for name in ("engine.py", "source.json", "linux-x64-sysroot.json", "archives.json"):
+            self.assertEqual((binding / "provider" / name).read_bytes(), (engine.HERE / name).read_bytes())
+
+
 class BundleTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

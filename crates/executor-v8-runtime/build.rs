@@ -18,20 +18,10 @@ fn required_file(path: &Path) -> Vec<u8> {
 }
 
 fn v8_source_root() -> PathBuf {
-    println!("cargo:rerun-if-env-changed=AGENTOS_RUSTY_V8_SOURCE");
-    println!("cargo:rerun-if-env-changed=RUSTY_V8_ARCHIVE");
-    if let Some(root) = env::var_os("AGENTOS_RUSTY_V8_SOURCE") {
-        return root.into();
-    }
-    if let Some(archive) = env::var_os("RUSTY_V8_ARCHIVE").map(PathBuf::from) {
-        if archive.is_file() {
-            return archive
-                .parent()
-                .expect("archive parent directory")
-                .to_owned();
-        }
-    }
-    panic!("set AGENTOS_RUSTY_V8_SOURCE to the prepared agentOS V8 source or pass the local matched bundle archive via RUSTY_V8_ARCHIVE");
+    PathBuf::from(
+        env::var_os("DEP_AGENTOS_V8_BUNDLE_ROOT")
+            .expect("matched agentOS V8 binding bundle metadata"),
+    )
 }
 
 fn header_paths(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -162,10 +152,7 @@ fn main() {
     let include = root.join("v8/include");
     println!("cargo:rerun-if-changed={}", include.display());
     verify_v8_headers(&include);
-    println!("cargo:rerun-if-env-changed=AGENTOS_RUSTY_V8_GN_INCLUDE");
-    let gn_include = env::var_os("AGENTOS_RUSTY_V8_GN_INCLUDE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("generated"));
+    let gn_include = root.join("generated");
     let gn_header = gn_include.join("v8-gn.h");
     println!("cargo:rerun-if-changed={}", gn_header.display());
     emit_snapshot_fingerprint(&manifest_dir, &required_file(&gn_header));

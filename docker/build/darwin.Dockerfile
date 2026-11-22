@@ -19,6 +19,7 @@ ARG DARWIN_LLVM_VERSION=21
 
 ENV SDK=/root/osxcross/target/SDK/MacOSX14.5.sdk \
     SDKROOT=/root/osxcross/target/SDK/MacOSX14.5.sdk \
+    OSXCROSS_SDKROOT=/root/osxcross/target/SDK/MacOSX14.5.sdk \
     OSXCROSS_SDK=MacOSX14.5.sdk \
     RUSTC_WRAPPER=sccache \
     SCCACHE_DIR=/root/.cache/sccache \
@@ -76,8 +77,8 @@ RUN --mount=type=cache,id=cargo-registry-agentos-darwin,target=/usr/local/cargo/
     tu=$(echo "$TARGET" | tr 'a-z-' 'A-Z_') && \
     tl=$(echo "$TARGET" | tr - _) && \
     export BINDGEN_EXTRA_CLANG_ARGS_${tl}="--sysroot=$SDK -isystem $SDK/usr/include" && \
-    export CFLAGS_${tl}="-B/root/osxcross/target/bin" && \
-    export CXXFLAGS_${tl}="-B/root/osxcross/target/bin" && \
+    export CFLAGS_${tl}="-B/root/osxcross/target/bin -isysroot $SDK" && \
+    export CXXFLAGS_${tl}="-B/root/osxcross/target/bin -isysroot $SDK -nostdinc++ -isystem $SDK/usr/include/c++/v1" && \
     export CC_${tl}=${CLANG}-clang && \
     export CXX_${tl}=${CLANG}-clang++ && \
     export AR_${tl}=${CLANG}-ar && \

@@ -24,6 +24,7 @@ members = [
     "crates/sidecar-client",
     "crates/sidecar-protocol",
     "crates/executor-v8-runtime",
+    "crates/v8",
     "crates/vfs-core",
     "crates/vfs-storage",
     "crates/vm-config",
@@ -39,7 +40,7 @@ repository = "https://github.com/rivet-dev/agent-os"
 # AgentOS crates are published as a lock-step chain and are self-contained in
 # this workspace.
 [workspace.dependencies]
-v8 = "=158.0.0"
+v8 = { package = "agentos-v8", path = "crates/v8", version = "0.0.1" }
 agentos-actor = { path = "crates/actor", version = "0.0.1" }
 agentos-actor-contract = { path = "crates/actor-contract", version = "0.0.1" }
 agentos-preload = { path = "crates/preload", version = "0.0.1" }
@@ -91,10 +92,6 @@ codegen-units = 1
 panic = "abort"
 strip = "symbols"
 
-# Keep the embedder bindings pinned until the matching crate is published.
-[patch.crates-io]
-v8 = { git = "https://github.com/denoland/rusty_v8", rev = "548adfd54db42c670e0f3fd42211c3af109c0a73" }
-
-# Upstream requires optimized Rust bindings even with a debug embedder.
-[profile.dev.package."v8:158.0.0"]
+# The binding's upstream code requires optimization even with a debug embedder.
+[profile.dev.package.agentos-v8]
 opt-level = 1

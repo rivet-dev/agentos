@@ -264,7 +264,8 @@ def reviewed_archive(target, dest, allow_actions):
             download_action_bundle(artifact_id, target, work)
         else:
             url = f"https://releases.rivet.dev/agent-os/v8/{SOURCE['v8Tree']}/{checksum}/{target}.tar.gz"
-            with urllib.request.urlopen(url, timeout=120) as response, (work / "bundle").open("wb") as out:
+            request = urllib.request.Request(url, headers={"User-Agent": "agentos-v8/" + SOURCE["version"]})
+            with urllib.request.urlopen(request, timeout=120) as response, (work / "bundle").open("wb") as out:
                 shutil.copyfileobj(response, out)
         require(digest(work / "bundle") == checksum, "V8 archive SHA-256 mismatch")
         yield work / "bundle", checksum
