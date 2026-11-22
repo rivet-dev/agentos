@@ -774,7 +774,7 @@ fn maintained_wasm_surfaces_are_mechanically_gated_on_v8() {
         "AGENTOS_TEST_WASM_BACKEND: ${{ matrix.backend }}",
         "EXPECT_WASM_BACKEND_MATRIX:",
         "required WASM backend CI job did not succeed",
-        "cargo test --release -p agentos-vm --features all-executors --tests -- --test-threads=1",
+        "cargo test --release -p agentos-vm --features all-executors --tests --no-fail-fast -- --test-threads=1",
         "toolchain/conformance/c-parity.test.ts",
         "wasm-c-parity-fixtures",
         "packages/core exec vitest run",

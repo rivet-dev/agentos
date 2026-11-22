@@ -845,7 +845,7 @@ jobs:
           cargo test --release --locked -p agentos-actor --lib runtime::tests:: \
             -- --ignored --nocapture --test-threads=1
       - name: Run all sidecar tests through the selected VM backend
-        run: cargo test --release -p agentos-vm --features all-executors --tests -- --test-threads=1
+        run: cargo test --release -p agentos-vm --features all-executors --tests --no-fail-fast -- --test-threads=1
       - name: Run native-vs-WASM C conformance through the selected VM backend
         run: pnpm --dir packages/core exec vitest run --root ../.. toolchain/conformance/c-parity.test.ts --reporter=verbose --maxWorkers=1 --minWorkers=1
       - name: Run core WASM and cross-runtime integration serially

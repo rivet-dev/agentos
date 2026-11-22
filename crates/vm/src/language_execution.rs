@@ -1841,19 +1841,6 @@ where
             )
             .await?;
         }
-        // Attached executions have no writeStdin API after admission. Their
-        // supplied bytes are the entire input stream, so publish EOF as soon
-        // as the initial write has been accepted. Spawned executions keep the
-        // pipe open for later writes through WriteExecutionStdin.
-        if !operation.background {
-            self.close_stdin(
-                request,
-                CloseStdinRequest {
-                    process_id: process_id.clone(),
-                },
-            )
-            .await?;
-        }
         // An attached run outside a context returns no stdin handle, so the
         // `stdin` option is all its input: end it, as `< file` does on Linux.
         // Left open, a command that reads to end of input (`cat`, `tr`) runs
