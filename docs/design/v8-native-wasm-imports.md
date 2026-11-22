@@ -107,31 +107,108 @@ both; it is not part of this change.
 
 ## Results
 
-Measured on the release sidecar against the JavaScript runner it replaces,
-with Wasmtime as a reference. Medians; the full charts and method are in the
-agent workbook (Cycle 257).
+Measured on a release sidecar (AMD EPYC 7443P, 48 threads) on November 22,
+2026. "Runner" is V8 with the JavaScript WASM runner this change removed;
+"native" is V8 with native host imports; Wasmtime is the opt-in executor.
+Values are medians. Raw medians for every row are in
+`packages/benchmarks/results/v8-native-wasm-imports-20261122.json`.
 
-| Workload | Runner | Native V8 | Wasmtime |
+### Commands, end to end
+
+| Workload | Runner warm | Native warm | Wasmtime warm | Runner first | Native first | Wasmtime first |
+| --- | --- | --- | --- | --- | --- | --- |
+| `true` | 50.5 ms | 17.0 ms | 17.1 ms | 73.4 ms | 20.3 ms | 76.7 ms |
+| `ls -la`, 64 files | 175 ms | 56.6 ms | 67.3 ms | 201 ms | 103 ms | 1,195 ms |
+| `sh` pipeline | 173 ms | 45.6 ms | 121 ms | 241 ms | 112 ms | 4,452 ms |
+| `curl` over loopback | 189 ms | 60.1 ms | 180 ms | 290 ms | 133 ms | 6,289 ms |
+| `sqlite3` sum | 104 ms | 27.8 ms | 54.7 ms | 145 ms | 52.2 ms | 1,340 ms |
+| `git --version` | 94.4 ms | 39.6 ms | 133 ms | 182 ms | 93.7 ms | 3,938 ms |
+| `sha256sum`, compute | 206 ms | 92.4 ms | 127 ms | 345 ms | 100 ms | 823 ms |
+
+"First" is the first run of a command in a fresh sidecar. Wasmtime compiles
+each module from scratch in a fresh process, so its first runs are slow.
+
+### Short commands
+
+These come from `wasm-command-floor`, which runs without the per-phase
+diagnostics that `wasm-backend-comparison` enables, so the same command is
+faster here than in the table above.
+
+| Command | Runner | Native |
+| --- | --- | --- |
+| `true` | 25.4 ms | 14.4 ms |
+| `pwd` | 37.4 ms | 16.4 ms |
+| `printf`, 1 byte | 31.9 ms | 16.3 ms |
+| `printf`, 64 KiB | 88.3 ms | 28.5 ms |
+| `ls` of an empty directory | 57.5 ms | 20.1 ms |
+| `date --version` | 50.6 ms | 24.7 ms |
+| `ls` of 1,000 files | 742 ms | 350 ms |
+| `echo`, warm, 10 at once | 134 ms | 33.7 ms |
+
+### Many commands at once
+
+Copies of `true` started together in one VM, all three engines in the same
+session. Throughput counts only commands that succeeded.
+
+| At once | Runner | Native | Wasmtime | Runner peak memory | Native peak memory | Wasmtime peak memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 22 per second | 47 per second | 44 per second | 158 MiB | 81 MiB | 135 MiB |
+| 10 | 59 per second | 232 per second | 184 per second | 215 MiB | 92 MiB | 140 MiB |
+| 50 | 99 per second | 380 per second | 268 per second | 664 MiB | 143 MiB | 151 MiB |
+| 100 | 119 per second | 348 per second | 266 per second (99 of 100) | 1,334 MiB | 220 MiB | 189 MiB |
+
+- At 200 at once every engine loses about a third of the commands to the
+  VM's pipe limit (`EAGAIN: maximum pipe count reached`), so that level does
+  not compare engines.
+- Wasmtime drops commands above 50 at once with a mixed workload because it
+  reserves each guest's maximum memory against
+  `runtime.resources.maxWasmMemoryBytes`. V8 guests do not take that
+  reservation (see Follow-up).
+
+### Every WASM operation in the latency matrix
+
+| Family | Operations | Median speedup | Range |
 | --- | --- | --- | --- |
-| `true`, warm | 50.5 ms | 17.0 ms | 17.1 ms |
-| `sqlite3` sum, warm | 104 ms | 27.8 ms | 54.7 ms |
-| `sh` pipeline, warm | 173 ms | 45.6 ms | 121 ms |
-| `git --version`, warm | 94.4 ms | 39.6 ms | 133 ms |
-| 200 commands at once, throughput | 95 per second | 346 per second | not measured |
-| 200 commands at once, peak sidecar memory | 1,810 MiB | 307 MiB | not measured |
+| Filesystem (`fs`) | 14 | 3.6x | 1.3x to 7.8x |
+| Shell commands (`ecosystem`) | 16 | 2.9x | 1.8x to 3.7x |
+| Control | 2 | 1.4x | 1.3x to 1.5x |
+| Timers | 3 | 0.55x | 0.42x to 4.8x |
 
-- Warm commands run 2.2 to 3.8 times faster, and first runs 1.5 to 3.6 times
-  faster. File and descriptor syscalls in the benchmark matrix run 1.2 to 7.8
-  times faster.
-- About 90% of a short command is now the sidecar's process launch and reap,
-  which Wasmtime pays equally. The engine itself takes about 1.6 ms for `true`.
-- Short guest sleeps are slower: a 1 ms sleep takes about 2.2 ms, because guest
-  sleeps wait on the shared millisecond timer. Both engines share this.
+The JavaScript and host-native lanes of the same matrix moved by a median
+1.0x, which is the noise floor. The only slower operations are short guest
+sleeps: a 1 ms sleep takes about 2.2 ms because it waits on the shared
+millisecond timer. Wasmtime behaves the same.
 
-Three optimizations keep the engine path short: each image is admitted once
-per process (profile check, import tiers, compiled module) under a digest the
-sidecar computes once at spawn; the sidecar hands the engine the image bytes it
-already read at spawn; and the warm pool above.
+### Where a warm `true` spends its time
+
+| Stage | Time |
+| --- | --- |
+| Whole command, measured by the TypeScript client | 16.3 ms |
+| TypeScript client waiting for trailing output after the exit event | 10.9 ms |
+| Sidecar handling the execute request | 1.5 ms |
+| Sidecar exit and event bookkeeping | 1.1 ms |
+| V8 engine: launch, admit the cached image, instantiate, run | 2.3 ms |
+
+The engine is a small part of a short command. Most of it is
+`SidecarKernelProxy` in `packages/core` polling twice for late output (a
+0 ms turn, then a 10 ms turn) after every process with output listeners
+exits. This affects every engine and every command, including JavaScript.
+
+### What was optimized
+
+- **Each image is admitted once per process.** Profile validation, import
+  tiers, launch checks, and the compiled module are cached under a SHA-256
+  digest the sidecar computes once at spawn. This cut large modules a further
+  20 to 33% warm.
+- **The sidecar hands the engine the bytes it already read.** The first
+  native cut re-read each image through 512 KiB host calls.
+- **A warm pool pre-creates isolates.** Four parked threads each hold one
+  fresh isolate, saving 2 to 3 ms per command. An isolate is never reused
+  across guests: reuse would let one guest's leftover state reach the next.
+- **Snapshots do not apply.** A V8 startup snapshot cannot hold WASM code, and
+  V8's WASM code cache needs `CompiledWasmModule::Serialize`, which agentOS's
+  V8 binding does not expose. A disk cache would only help the first run after
+  a sidecar restart.
 
 ## What would change it
 
@@ -144,7 +221,21 @@ already read at spawn; and the warm pool above.
 
 ## Follow-up
 
-The Wasmtime executor pins 48.0.3, which predates the fix for a critical
-Cranelift sandbox escape on AArch64
-([GHSA-mghf-wjfp-p5xm](https://github.com/bytecodealliance/wasmtime/security/advisories/GHSA-mghf-wjfp-p5xm),
-fixed in 48.0.7). Move the opt-in executor to the latest 48.x release.
+- V8 guests do not reserve linear memory against the process-wide
+  `runtime.resources.maxWasmMemoryBytes` limit, which Wasmtime guests do. Each
+  V8 guest is capped at the per-VM limit and admission is bounded by executor
+  slots, so the total is bounded, but not by the configured process limit.
+  The JavaScript runner had the same gap.
+- The fixed trailing-output wait in `SidecarKernelProxy` adds about 11 ms to
+  every command. The newer client path waits for the ordered output end
+  instead of polling.
+- Threaded WASM runs only on the opt-in `wasmtime-threads` executor, and
+  child processes inherit their parent's engine, so a threaded program started
+  from a V8 shell is rejected. No shipped command uses threads today. When the
+  first threaded package ships, route threaded modules to the threaded executor
+  automatically, then consider native V8 threads with each thread group in its
+  own process, since shared memory gives a guest a high-resolution timer.
+- The Wasmtime executor pins 48.0.3, which predates the fix for a critical
+  Cranelift sandbox escape on AArch64
+  ([GHSA-mghf-wjfp-p5xm](https://github.com/bytecodealliance/wasmtime/security/advisories/GHSA-mghf-wjfp-p5xm),
+  fixed in 48.0.7). Move the opt-in executor to the latest 48.x release.

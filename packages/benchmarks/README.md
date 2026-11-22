@@ -321,6 +321,11 @@ Current captured results:
 - `results/coldstart-resident-full-matrix-20260619.json`
 - `results/coldstart-resident-full-matrix-20260619.log`
 
+`results/v8-native-wasm-imports-20261122.json` holds the medians behind
+`docs/design/v8-native-wasm-imports.md`: every bench above run on V8 with the
+JavaScript WASM runner and with native host imports, plus Wasmtime as a
+reference. Its `about` field lists the runs and caveats.
+
 `coldstart-final.*` is the latest full run from June 19, 2026. It includes the three SDK scenarios above. It also contains an `isolate-only` reference row from a lower-level one-off V8 snapshot/restore benchmark; that row is captured for comparison but is not part of the normal SDK benchmark command.
 
 The focused `bench:wasm-backends` comparison samples the sidecar process tree,

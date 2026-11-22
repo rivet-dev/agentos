@@ -1,0 +1,1433 @@
+{
+ "about": {
+  "description": "Medians from the V8 native host-import change. Runs: before-runner = V8 on the JavaScript WASM runner; after-native = first native cut; after-native-v2 = final native path; after-native-nowarm = final path without the warm isolate pool; both-engines = native V8 and Wasmtime concurrency in one session.",
+  "date": "2026-11-22 (PST)",
+  "host": "AMD EPYC 7443P, 48 threads, 55 GB",
+  "sidecar": "release build, --features wasm-wasmtime",
+  "benches": "latency matrix (10 families, 10 iterations, permissions excluded), wasm-command-floor, wasi-ls-scaling, process-spawn, concurrent-processes, concurrency-vms, echo, ls, wasm-backend-comparison (3 fresh processes, 5 samples, vim excluded)",
+  "notes": [
+   "Concurrency rows count only successful commands; at 200 at once every engine hits the VM pipe limit (EAGAIN: maximum pipe count reached).",
+   "Wasmtime concurrency rows above 50 lose commands to the process-wide WASM memory reservation (runtime.resources.maxWasmMemoryBytes); V8 does not charge that reservation.",
+   "Failure strings are raw observations from a build that still used ERR_AGENTOS_WASMTIME_* names for shared outcomes."
+  ]
+ },
+ "backend": {
+  "before-runner|v8|trivial|first": {
+   "wall_p50": 73.44,
+   "engine_p50": null
+  },
+  "before-runner|v8|trivial|warm": {
+   "wall_p50": 50.48,
+   "engine_p50": null
+  },
+  "before-runner|v8|coreutils|first": {
+   "wall_p50": 201.11,
+   "engine_p50": null
+  },
+  "before-runner|v8|coreutils|warm": {
+   "wall_p50": 174.57,
+   "engine_p50": null
+  },
+  "before-runner|v8|shell|first": {
+   "wall_p50": 240.6,
+   "engine_p50": null
+  },
+  "before-runner|v8|shell|warm": {
+   "wall_p50": 172.96,
+   "engine_p50": null
+  },
+  "before-runner|v8|curl|first": {
+   "wall_p50": 289.81,
+   "engine_p50": null
+  },
+  "before-runner|v8|curl|warm": {
+   "wall_p50": 188.95,
+   "engine_p50": null
+  },
+  "before-runner|v8|sqlite|first": {
+   "wall_p50": 145.09,
+   "engine_p50": null
+  },
+  "before-runner|v8|sqlite|warm": {
+   "wall_p50": 103.8,
+   "engine_p50": null
+  },
+  "before-runner|v8|large-module|first": {
+   "wall_p50": 181.59,
+   "engine_p50": null
+  },
+  "before-runner|v8|large-module|warm": {
+   "wall_p50": 94.39,
+   "engine_p50": null
+  },
+  "before-runner|v8|compute-heavy|first": {
+   "wall_p50": 345.43,
+   "engine_p50": null
+  },
+  "before-runner|v8|compute-heavy|warm": {
+   "wall_p50": 205.51,
+   "engine_p50": null
+  },
+  "before-runner|wasmtime|trivial|first": {
+   "wall_p50": 122.54,
+   "engine_p50": 99.6
+  },
+  "before-runner|wasmtime|trivial|warm": {
+   "wall_p50": 23.03,
+   "engine_p50": 2.42
+  },
+  "before-runner|wasmtime|coreutils|first": {
+   "wall_p50": 1212.86,
+   "engine_p50": 1184.1
+  },
+  "before-runner|wasmtime|coreutils|warm": {
+   "wall_p50": 78.78,
+   "engine_p50": 56.9
+  },
+  "before-runner|wasmtime|shell|first": {
+   "wall_p50": 4879.44,
+   "engine_p50": 4844.24
+  },
+  "before-runner|wasmtime|shell|warm": {
+   "wall_p50": 153.38,
+   "engine_p50": 113.29
+  },
+  "before-runner|wasmtime|curl|first": {
+   "wall_p50": 6689.34,
+   "engine_p50": 6634.21
+  },
+  "before-runner|wasmtime|curl|warm": {
+   "wall_p50": 272.87,
+   "engine_p50": 218.4
+  },
+  "before-runner|wasmtime|sqlite|first": {
+   "wall_p50": 1322.48,
+   "engine_p50": 1285.89
+  },
+  "before-runner|wasmtime|sqlite|warm": {
+   "wall_p50": 63.75,
+   "engine_p50": 32.86
+  },
+  "before-runner|wasmtime|large-module|first": {
+   "wall_p50": 4000.33,
+   "engine_p50": 3941.01
+  },
+  "before-runner|wasmtime|large-module|warm": {
+   "wall_p50": 204.2,
+   "engine_p50": 154.24
+  },
+  "before-runner|wasmtime|compute-heavy|first": {
+   "wall_p50": 814.61,
+   "engine_p50": 778.69
+  },
+  "before-runner|wasmtime|compute-heavy|warm": {
+   "wall_p50": 152.01,
+   "engine_p50": 118.48
+  },
+  "after-native-v2|v8|trivial|first": {
+   "wall_p50": 20.28,
+   "engine_p50": 2.6
+  },
+  "after-native-v2|v8|trivial|warm": {
+   "wall_p50": 17.03,
+   "engine_p50": 1.85
+  },
+  "after-native-v2|v8|coreutils|first": {
+   "wall_p50": 103.0,
+   "engine_p50": 74.45
+  },
+  "after-native-v2|v8|coreutils|warm": {
+   "wall_p50": 56.59,
+   "engine_p50": 36.17
+  },
+  "after-native-v2|v8|shell|first": {
+   "wall_p50": 111.92,
+   "engine_p50": 65.58
+  },
+  "after-native-v2|v8|shell|warm": {
+   "wall_p50": 45.61,
+   "engine_p50": 16.78
+  },
+  "after-native-v2|v8|curl|first": {
+   "wall_p50": 133.3,
+   "engine_p50": 69.93
+  },
+  "after-native-v2|v8|curl|warm": {
+   "wall_p50": 60.08,
+   "engine_p50": 23.47
+  },
+  "after-native-v2|v8|sqlite|first": {
+   "wall_p50": 52.17,
+   "engine_p50": 25.73
+  },
+  "after-native-v2|v8|sqlite|warm": {
+   "wall_p50": 27.75,
+   "engine_p50": 7.51
+  },
+  "after-native-v2|v8|large-module|first": {
+   "wall_p50": 93.72,
+   "engine_p50": 30.67
+  },
+  "after-native-v2|v8|large-module|warm": {
+   "wall_p50": 39.61,
+   "engine_p50": 7.42
+  },
+  "after-native-v2|v8|compute-heavy|first": {
+   "wall_p50": 100.49,
+   "engine_p50": 75.35
+  },
+  "after-native-v2|v8|compute-heavy|warm": {
+   "wall_p50": 92.43,
+   "engine_p50": 65.53
+  },
+  "after-native-v2|wasmtime|trivial|first": {
+   "wall_p50": 76.66,
+   "engine_p50": 62.06
+  },
+  "after-native-v2|wasmtime|trivial|warm": {
+   "wall_p50": 17.1,
+   "engine_p50": 1.8
+  },
+  "after-native-v2|wasmtime|coreutils|first": {
+   "wall_p50": 1195.12,
+   "engine_p50": 1177.31
+  },
+  "after-native-v2|wasmtime|coreutils|warm": {
+   "wall_p50": 67.29,
+   "engine_p50": 49.4
+  },
+  "after-native-v2|wasmtime|shell|first": {
+   "wall_p50": 4452.34,
+   "engine_p50": 4415.22
+  },
+  "after-native-v2|wasmtime|shell|warm": {
+   "wall_p50": 120.8,
+   "engine_p50": 90.86
+  },
+  "after-native-v2|wasmtime|curl|first": {
+   "wall_p50": 6289.3,
+   "engine_p50": 6233.0
+  },
+  "after-native-v2|wasmtime|curl|warm": {
+   "wall_p50": 180.31,
+   "engine_p50": 136.32
+  },
+  "after-native-v2|wasmtime|sqlite|first": {
+   "wall_p50": 1339.71,
+   "engine_p50": 1305.11
+  },
+  "after-native-v2|wasmtime|sqlite|warm": {
+   "wall_p50": 54.72,
+   "engine_p50": 28.27
+  },
+  "after-native-v2|wasmtime|large-module|first": {
+   "wall_p50": 3938.35,
+   "engine_p50": 3902.75
+  },
+  "after-native-v2|wasmtime|large-module|warm": {
+   "wall_p50": 133.09,
+   "engine_p50": 96.61
+  },
+  "after-native-v2|wasmtime|compute-heavy|first": {
+   "wall_p50": 822.63,
+   "engine_p50": 793.85
+  },
+  "after-native-v2|wasmtime|compute-heavy|warm": {
+   "wall_p50": 126.8,
+   "engine_p50": 93.28
+  },
+  "after-native|v8|trivial|first": {
+   "wall_p50": 23.8,
+   "engine_p50": 2.69
+  },
+  "after-native|v8|trivial|warm": {
+   "wall_p50": 17.3,
+   "engine_p50": 1.58
+  },
+  "after-native|v8|coreutils|first": {
+   "wall_p50": 90.37,
+   "engine_p50": 59.02
+  },
+  "after-native|v8|coreutils|warm": {
+   "wall_p50": 63.8,
+   "engine_p50": 40.16
+  },
+  "after-native|v8|shell|first": {
+   "wall_p50": 112.69,
+   "engine_p50": 67.75
+  },
+  "after-native|v8|shell|warm": {
+   "wall_p50": 65.67,
+   "engine_p50": 33.85
+  },
+  "after-native|v8|curl|first": {
+   "wall_p50": 142.03,
+   "engine_p50": 73.08
+  },
+  "after-native|v8|curl|warm": {
+   "wall_p50": 78.03,
+   "engine_p50": 33.86
+  },
+  "after-native|v8|sqlite|first": {
+   "wall_p50": 72.09,
+   "engine_p50": 34.4
+  },
+  "after-native|v8|sqlite|warm": {
+   "wall_p50": 32.8,
+   "engine_p50": 8.83
+  },
+  "after-native|v8|large-module|first": {
+   "wall_p50": 82.66,
+   "engine_p50": 26.49
+  },
+  "after-native|v8|large-module|warm": {
+   "wall_p50": 59.13,
+   "engine_p50": 21.22
+  },
+  "after-native|v8|compute-heavy|first": {
+   "wall_p50": 106.34,
+   "engine_p50": 75.56
+  },
+  "after-native|v8|compute-heavy|warm": {
+   "wall_p50": 99.74,
+   "engine_p50": 74.9
+  },
+  "after-native|wasmtime|trivial|first": {
+   "wall_p50": 77.94,
+   "engine_p50": 60.18
+  },
+  "after-native|wasmtime|trivial|warm": {
+   "wall_p50": 19.97,
+   "engine_p50": 2.33
+  },
+  "after-native|wasmtime|coreutils|first": {
+   "wall_p50": 1242.54,
+   "engine_p50": 1222.22
+  },
+  "after-native|wasmtime|coreutils|warm": {
+   "wall_p50": 83.45,
+   "engine_p50": 62.81
+  },
+  "after-native|wasmtime|shell|first": {
+   "wall_p50": 4877.09,
+   "engine_p50": 4831.23
+  },
+  "after-native|wasmtime|shell|warm": {
+   "wall_p50": 147.7,
+   "engine_p50": 115.53
+  },
+  "after-native|wasmtime|curl|first": {
+   "wall_p50": 6295.54,
+   "engine_p50": 6256.42
+  },
+  "after-native|wasmtime|curl|warm": {
+   "wall_p50": 167.57,
+   "engine_p50": 129.9
+  },
+  "after-native|wasmtime|sqlite|first": {
+   "wall_p50": 1292.37,
+   "engine_p50": 1268.77
+  },
+  "after-native|wasmtime|sqlite|warm": {
+   "wall_p50": 57.52,
+   "engine_p50": 33.12
+  },
+  "after-native|wasmtime|large-module|first": {
+   "wall_p50": 3956.47,
+   "engine_p50": 3917.2
+  },
+  "after-native|wasmtime|large-module|warm": {
+   "wall_p50": 120.8,
+   "engine_p50": 89.86
+  },
+  "after-native|wasmtime|compute-heavy|first": {
+   "wall_p50": 802.47,
+   "engine_p50": 774.12
+  },
+  "after-native|wasmtime|compute-heavy|warm": {
+   "wall_p50": 135.48,
+   "engine_p50": 108.4
+  },
+  "after-native-nowarm|v8|trivial|first": {
+   "wall_p50": 21.19,
+   "engine_p50": 2.14
+  },
+  "after-native-nowarm|v8|trivial|warm": {
+   "wall_p50": 19.5,
+   "engine_p50": 1.41
+  },
+  "after-native-nowarm|v8|coreutils|first": {
+   "wall_p50": 87.4,
+   "engine_p50": 56.82
+  },
+  "after-native-nowarm|v8|coreutils|warm": {
+   "wall_p50": 57.3,
+   "engine_p50": 37.99
+  },
+  "after-native-nowarm|v8|shell|first": {
+   "wall_p50": 121.23,
+   "engine_p50": 70.32
+  },
+  "after-native-nowarm|v8|shell|warm": {
+   "wall_p50": 60.66,
+   "engine_p50": 30.67
+  },
+  "after-native-nowarm|v8|curl|first": {
+   "wall_p50": 137.53,
+   "engine_p50": 65.03
+  },
+  "after-native-nowarm|v8|curl|warm": {
+   "wall_p50": 69.42,
+   "engine_p50": 29.44
+  },
+  "after-native-nowarm|v8|sqlite|first": {
+   "wall_p50": 58.98,
+   "engine_p50": 26.75
+  },
+  "after-native-nowarm|v8|sqlite|warm": {
+   "wall_p50": 32.48,
+   "engine_p50": 8.09
+  },
+  "after-native-nowarm|v8|large-module|first": {
+   "wall_p50": 101.85,
+   "engine_p50": 30.36
+  },
+  "after-native-nowarm|v8|large-module|warm": {
+   "wall_p50": 59.18,
+   "engine_p50": 18.9
+  },
+  "after-native-nowarm|v8|compute-heavy|first": {
+   "wall_p50": 107.66,
+   "engine_p50": 74.38
+  },
+  "after-native-nowarm|v8|compute-heavy|warm": {
+   "wall_p50": 86.96,
+   "engine_p50": 61.09
+  },
+  "after-native-nowarm|wasmtime|trivial|first": {
+   "wall_p50": 86.23,
+   "engine_p50": 70.46
+  },
+  "after-native-nowarm|wasmtime|trivial|warm": {
+   "wall_p50": 16.8,
+   "engine_p50": 1.58
+  },
+  "after-native-nowarm|wasmtime|coreutils|first": {
+   "wall_p50": 1158.92,
+   "engine_p50": 1139.16
+  },
+  "after-native-nowarm|wasmtime|coreutils|warm": {
+   "wall_p50": 67.41,
+   "engine_p50": 47.57
+  },
+  "after-native-nowarm|wasmtime|shell|first": {
+   "wall_p50": 4461.09,
+   "engine_p50": 4428.44
+  },
+  "after-native-nowarm|wasmtime|shell|warm": {
+   "wall_p50": 129.62,
+   "engine_p50": 94.06
+  },
+  "after-native-nowarm|wasmtime|curl|first": {
+   "wall_p50": 6382.69,
+   "engine_p50": 6336.89
+  },
+  "after-native-nowarm|wasmtime|curl|warm": {
+   "wall_p50": 200.94,
+   "engine_p50": 154.72
+  },
+  "after-native-nowarm|wasmtime|sqlite|first": {
+   "wall_p50": 1291.45,
+   "engine_p50": 1257.64
+  },
+  "after-native-nowarm|wasmtime|sqlite|warm": {
+   "wall_p50": 60.94,
+   "engine_p50": 33.34
+  },
+  "after-native-nowarm|wasmtime|large-module|first": {
+   "wall_p50": 3938.37,
+   "engine_p50": 3894.29
+  },
+  "after-native-nowarm|wasmtime|large-module|warm": {
+   "wall_p50": 144.78,
+   "engine_p50": 98.19
+  },
+  "after-native-nowarm|wasmtime|compute-heavy|first": {
+   "wall_p50": 824.13,
+   "engine_p50": 796.74
+  },
+  "after-native-nowarm|wasmtime|compute-heavy|warm": {
+   "wall_p50": 129.81,
+   "engine_p50": 98.91
+  }
+ },
+ "command_floor": {
+  "before-runner|true": {
+   "first_p50": 27.2,
+   "warm_p50": 25.41
+  },
+  "before-runner|printf-0b": {
+   "first_p50": 37.4,
+   "warm_p50": 31.28
+  },
+  "before-runner|printf-1b": {
+   "first_p50": 33.92,
+   "warm_p50": 31.94
+  },
+  "before-runner|printf-64k": {
+   "first_p50": 95.02,
+   "warm_p50": 88.33
+  },
+  "before-runner|pwd": {
+   "first_p50": 39.86,
+   "warm_p50": 37.35
+  },
+  "before-runner|ls-empty": {
+   "first_p50": 58.65,
+   "warm_p50": 57.45
+  },
+  "before-runner|date-version": {
+   "first_p50": 54.97,
+   "warm_p50": 50.59
+  },
+  "after-native-v2|true": {
+   "first_p50": 14.38,
+   "warm_p50": 14.38
+  },
+  "after-native-v2|printf-0b": {
+   "first_p50": 16.11,
+   "warm_p50": 15.72
+  },
+  "after-native-v2|printf-1b": {
+   "first_p50": 15.79,
+   "warm_p50": 16.3
+  },
+  "after-native-v2|printf-64k": {
+   "first_p50": 28.47,
+   "warm_p50": 28.47
+  },
+  "after-native-v2|pwd": {
+   "first_p50": 16.69,
+   "warm_p50": 16.37
+  },
+  "after-native-v2|ls-empty": {
+   "first_p50": 20.35,
+   "warm_p50": 20.08
+  },
+  "after-native-v2|date-version": {
+   "first_p50": 23.78,
+   "warm_p50": 24.67
+  },
+  "after-native|true": {
+   "first_p50": 14.77,
+   "warm_p50": 14.12
+  },
+  "after-native|printf-0b": {
+   "first_p50": 17.27,
+   "warm_p50": 17.11
+  },
+  "after-native|printf-1b": {
+   "first_p50": 20.25,
+   "warm_p50": 17.0
+  },
+  "after-native|printf-64k": {
+   "first_p50": 28.89,
+   "warm_p50": 28.93
+  },
+  "after-native|pwd": {
+   "first_p50": 18.81,
+   "warm_p50": 17.35
+  },
+  "after-native|ls-empty": {
+   "first_p50": 23.2,
+   "warm_p50": 22.64
+  },
+  "after-native|date-version": {
+   "first_p50": 31.74,
+   "warm_p50": 30.91
+  },
+  "after-native-nowarm|true": {
+   "first_p50": 17.03,
+   "warm_p50": 17.28
+  },
+  "after-native-nowarm|printf-0b": {
+   "first_p50": 19.17,
+   "warm_p50": 19.36
+  },
+  "after-native-nowarm|printf-1b": {
+   "first_p50": 19.32,
+   "warm_p50": 18.49
+  },
+  "after-native-nowarm|printf-64k": {
+   "first_p50": 32.54,
+   "warm_p50": 28.97
+  },
+  "after-native-nowarm|pwd": {
+   "first_p50": 24.17,
+   "warm_p50": 23.79
+  },
+  "after-native-nowarm|ls-empty": {
+   "first_p50": 30.0,
+   "warm_p50": 32.46
+  },
+  "after-native-nowarm|date-version": {
+   "first_p50": 39.76,
+   "warm_p50": 42.25
+  }
+ },
+ "ls_scaling": {
+  "before-runner|one|0": 49.74,
+  "before-runner|one|1": 54.18,
+  "before-runner|one|32": 88.0,
+  "before-runner|one|100": 137.62,
+  "before-runner|one|1000": 742.21,
+  "after-native-v2|one|0": 20.01,
+  "after-native-v2|one|1": 21.26,
+  "after-native-v2|one|32": 37.86,
+  "after-native-v2|one|100": 60.13,
+  "after-native-v2|one|1000": 350.17,
+  "after-native|one|0": 23.3,
+  "after-native|one|1": 23.69,
+  "after-native|one|32": 35.05,
+  "after-native|one|100": 59.8,
+  "after-native|one|1000": 378.13
+ },
+ "echo": {
+  "before-runner|1|sequential": {
+   "cold_p50": 608.9,
+   "warm_p50": 66.25
+  },
+  "before-runner|1|concurrent": {
+   "cold_p50": 504.59,
+   "warm_p50": 71.69
+  },
+  "before-runner|10|sequential": {
+   "cold_p50": 553.34,
+   "warm_p50": 72.78
+  },
+  "before-runner|10|concurrent": {
+   "cold_p50": 1521.33,
+   "warm_p50": 133.72
+  },
+  "after-native-v2|1|sequential": {
+   "cold_p50": 409.46,
+   "warm_p50": 24.85
+  },
+  "after-native-v2|1|concurrent": {
+   "cold_p50": 386.86,
+   "warm_p50": 24.91
+  },
+  "after-native-v2|10|sequential": {
+   "cold_p50": 393.15,
+   "warm_p50": 24.97
+  },
+  "after-native-v2|10|concurrent": {
+   "cold_p50": 1500.91,
+   "warm_p50": 33.68
+  },
+  "after-native|1|sequential": {
+   "cold_p50": 432.64,
+   "warm_p50": 33.23
+  },
+  "after-native|1|concurrent": {
+   "cold_p50": 413.11,
+   "warm_p50": 32.58
+  },
+  "after-native|10|sequential": {
+   "cold_p50": 389.47,
+   "warm_p50": 33.36
+  },
+  "after-native|10|concurrent": {
+   "cold_p50": 1362.3,
+   "warm_p50": 39.14
+  },
+  "after-native-nowarm|1|sequential": {
+   "cold_p50": 514.31,
+   "warm_p50": 40.09
+  },
+  "after-native-nowarm|1|concurrent": {
+   "cold_p50": 564.87,
+   "warm_p50": 42.46
+  },
+  "after-native-nowarm|10|sequential": {
+   "cold_p50": 414.57,
+   "warm_p50": 38.25
+  },
+  "after-native-nowarm|10|concurrent": {
+   "cold_p50": 1340.53,
+   "warm_p50": 39.55
+  }
+ },
+ "ls": {
+  "before-runner|0": {
+   "vmNoopExec": 85.15,
+   "vmStdoutExec": 86.53,
+   "vmCreate": 348.68
+  },
+  "before-runner|100": {
+   "vmNoopExec": 90.74,
+   "vmStdoutExec": 88.6,
+   "vmCreate": 299.52
+  },
+  "after-native-v2|0": {
+   "vmNoopExec": 29.78,
+   "vmStdoutExec": 29.37,
+   "vmCreate": 346.43
+  },
+  "after-native-v2|100": {
+   "vmNoopExec": 32.08,
+   "vmStdoutExec": 31.99,
+   "vmCreate": 411.16
+  },
+  "after-native|0": {
+   "vmNoopExec": 36.57,
+   "vmStdoutExec": 38.26,
+   "vmCreate": 304.22
+  },
+  "after-native|100": {
+   "vmNoopExec": 35.73,
+   "vmStdoutExec": 35.58,
+   "vmCreate": 258.94
+  },
+  "after-native-nowarm|0": {
+   "vmNoopExec": 43.27,
+   "vmStdoutExec": 45,
+   "vmCreate": 341.17
+  },
+  "after-native-nowarm|100": {
+   "vmNoopExec": 40.64,
+   "vmStdoutExec": 43.07,
+   "vmCreate": 280.92
+  }
+ },
+ "matrix": {
+  "before-runner|process/node_exit|native": 34.84,
+  "before-runner|process/node_exit|node": 42.36,
+  "before-runner|process/node_exit|guest": 7.96,
+  "before-runner|process/node_stdout_discard_2b|native": 32.45,
+  "before-runner|process/node_stdout_discard_2b|node": 43.64,
+  "before-runner|process/node_stdout_discard_2b|guest": 11.93,
+  "before-runner|process/exec_capture|native": 36.32,
+  "before-runner|process/exec_capture|node": 45.3,
+  "before-runner|process/exec_capture|guest": 17.82,
+  "before-runner|process/node_stdout_listener_only_2b|native": 33.69,
+  "before-runner|process/node_stdout_listener_only_2b|node": 35.61,
+  "before-runner|process/node_stdout_listener_only_2b|guest": 22.36,
+  "before-runner|process/fanout_spawn_8|native": 30.14,
+  "before-runner|process/fanout_spawn_8|node": 87.5,
+  "before-runner|process/fanout_spawn_8|guest": 41.18,
+  "before-runner|process/wait_reap_storm_8|native": 29.45,
+  "before-runner|process/wait_reap_storm_8|node": 100.09,
+  "before-runner|process/wait_reap_storm_8|guest": 43.64,
+  "before-runner|process/pipe_chain_3|native": 2.61,
+  "before-runner|process/pipe_chain_3|node": 0.34,
+  "before-runner|process/pipe_chain_3|guest": 0.46,
+  "before-runner|process/spawn_stdout_capture_small|native": 35.25,
+  "before-runner|process/spawn_stdout_capture_small|node": 36.03,
+  "before-runner|process/spawn_stdout_capture_small|guest": 6.23,
+  "before-runner|process/spawn_stdout_capture_big|native": 35.28,
+  "before-runner|process/spawn_stdout_capture_big|node": 34.22,
+  "before-runner|process/spawn_stdout_capture_big|guest": 12.78,
+  "before-runner|process/spawn_stdin_roundtrip|native": 33.42,
+  "before-runner|process/spawn_stdin_roundtrip|node": 36.19,
+  "before-runner|process/spawn_stdin_roundtrip|guest": 13.54,
+  "before-runner|net/udp_echo_small|native": 0.17,
+  "before-runner|net/udp_echo_small|node": 0.22,
+  "before-runner|net/udp_echo_small|guest": 0.91,
+  "before-runner|net/udp_echo_big|native": 0.19,
+  "before-runner|net/udp_echo_big|node": 0.31,
+  "before-runner|net/udp_echo_big|guest": 1.89,
+  "before-runner|net/unix_echo_small|native": 0.17,
+  "before-runner|net/unix_echo_small|node": 0.68,
+  "before-runner|net/unix_echo_small|guest": 4.25,
+  "before-runner|net/unix_echo_big|native": 0.24,
+  "before-runner|net/unix_echo_big|node": 0.78,
+  "before-runner|net/unix_echo_big|guest": 6.56,
+  "before-runner|net/http_loopback_get|native": 0.31,
+  "before-runner|net/http_loopback_get|node": 1.01,
+  "before-runner|net/http_loopback_get|guest": 4.79,
+  "before-runner|net/http_external_get|node": 0.92,
+  "before-runner|net/http_external_get|guest": 2.52,
+  "before-runner|net/http2_loopback_get|node": 1.46,
+  "before-runner|net/http2_loopback_get|guest": 3.46,
+  "before-runner|net/fetch_loopback_get|node": 2.08,
+  "before-runner|net/fetch_loopback_get|guest": 5.5,
+  "before-runner|net/tls_loopback_get|node": 3.38,
+  "before-runner|net/tls_loopback_get|guest": 7.03,
+  "before-runner|net/tcp_connect_close|native": 0.23,
+  "before-runner|net/tcp_connect_close|node": 0.47,
+  "before-runner|net/tcp_connect_close|guest": 2.03,
+  "before-runner|net/tcp_echo_small|native": 0.25,
+  "before-runner|net/tcp_echo_small|node": 0.65,
+  "before-runner|net/tcp_echo_small|guest": 3.78,
+  "before-runner|net/tcp_external_echo|native": 0.25,
+  "before-runner|net/tcp_external_echo|node": 0.33,
+  "before-runner|net/tcp_external_echo|guest": 2.49,
+  "before-runner|net/tcp_concurrent_4|native": 0.45,
+  "before-runner|net/tcp_concurrent_4|node": 1.26,
+  "before-runner|net/tcp_concurrent_4|guest": 6.46,
+  "before-runner|net/tcp_echo_big|native": 0.29,
+  "before-runner|net/tcp_echo_big|node": 1.12,
+  "before-runner|net/tcp_echo_big|guest": 8.57,
+  "before-runner|net/tcp_tiny_writes_16|native": 0.33,
+  "before-runner|net/tcp_tiny_writes_16|node": 0.69,
+  "before-runner|net/tcp_tiny_writes_16|guest": 4.47,
+  "before-runner|fs/open_close_churn|native": 0.01,
+  "before-runner|fs/open_close_churn|node": 0.03,
+  "before-runner|fs/open_close_churn|guest": 0.57,
+  "before-runner|fs/open_close_churn|wasm": 4.96,
+  "before-runner|fs/stat_storm|native": 0.03,
+  "before-runner|fs/stat_storm|node": 0.03,
+  "before-runner|fs/stat_storm|guest": 0.37,
+  "before-runner|fs/stat_storm|wasm": 2.25,
+  "before-runner|fs/fs_write_small|native": 0.01,
+  "before-runner|fs/fs_write_small|node": 0.06,
+  "before-runner|fs/fs_write_small|guest": 0.25,
+  "before-runner|fs/fs_write_small|wasm": 2.76,
+  "before-runner|fs/fs_write_big|native": 0.78,
+  "before-runner|fs/fs_write_big|node": 1.4,
+  "before-runner|fs/fs_write_big|guest": 10.6,
+  "before-runner|fs/fs_write_big|wasm": 26.12,
+  "before-runner|fs/fs_read_small|native": 0.01,
+  "before-runner|fs/fs_read_small|node": 0.05,
+  "before-runner|fs/fs_read_small|guest": 0.82,
+  "before-runner|fs/fs_read_small|wasm": 2.33,
+  "before-runner|fs/fs_read_big|native": 0.17,
+  "before-runner|fs/fs_read_big|node": 0.96,
+  "before-runner|fs/fs_read_big|guest": 3.75,
+  "before-runner|fs/fs_read_big|wasm": 7.85,
+  "before-runner|fs/mkdir_rmdir|native": 0.01,
+  "before-runner|fs/mkdir_rmdir|node": 0.06,
+  "before-runner|fs/mkdir_rmdir|guest": 0.56,
+  "before-runner|fs/mkdir_rmdir|wasm": 0.8,
+  "before-runner|fs/rename_file|native": 0.02,
+  "before-runner|fs/rename_file|node": 0.07,
+  "before-runner|fs/rename_file|guest": 2.58,
+  "before-runner|fs/rename_file|wasm": 5.53,
+  "before-runner|fs/readdir_small|native": 0.19,
+  "before-runner|fs/readdir_small|node": 0.04,
+  "before-runner|fs/readdir_small|guest": 0.21,
+  "before-runner|fs/readdir_small|wasm": 2.49,
+  "before-runner|fs/readdir_big|native": 0.19,
+  "before-runner|fs/readdir_big|node": 0.39,
+  "before-runner|fs/readdir_big|guest": 2.74,
+  "before-runner|fs/readdir_big|wasm": 22.32,
+  "before-runner|fs/fsync_small|native": 0.02,
+  "before-runner|fs/fsync_small|node": 0.04,
+  "before-runner|fs/fsync_small|guest": 0.64,
+  "before-runner|fs/fsync_small|wasm": 1.79,
+  "before-runner|fs/fs_promises_stat_x32|native": 0.05,
+  "before-runner|fs/fs_promises_stat_x32|node": 1.11,
+  "before-runner|fs/fs_promises_stat_x32|guest": 4.39,
+  "before-runner|fs/fs_promises_stat_x32|wasm": 5.08,
+  "before-runner|fs/stream_copy_small|native": 0.07,
+  "before-runner|fs/stream_copy_small|node": 0.68,
+  "before-runner|fs/stream_copy_small|guest": 2.52,
+  "before-runner|fs/stream_copy_small|wasm": 11.44,
+  "before-runner|fs/stream_copy_big|native": 0.6,
+  "before-runner|fs/stream_copy_big|node": 2.32,
+  "before-runner|fs/stream_copy_big|guest": 19.4,
+  "before-runner|fs/stream_copy_big|wasm": 57.25,
+  "before-runner|modules/require_100_small|node": 9.26,
+  "before-runner|modules/require_100_small|guest": 36.57,
+  "before-runner|modules/import_100_small_esm|node": 18.01,
+  "before-runner|modules/import_100_small_esm|guest": 51.79,
+  "before-runner|modules/import_npm_package|node": 73.99,
+  "before-runner|modules/import_npm_package|guest": 145.39,
+  "before-runner|modules/import_fresh_file|node": 0.38,
+  "before-runner|modules/import_fresh_file|guest": 1.09,
+  "before-runner|dns/resolve_uncached_localhost|native": 0.09,
+  "before-runner|dns/resolve_uncached_localhost|node": 0.23,
+  "before-runner|dns/resolve_uncached_localhost|guest": 0.33,
+  "before-runner|dns/resolve_cached_localhost|native": 0.14,
+  "before-runner|dns/resolve_cached_localhost|node": 0.44,
+  "before-runner|dns/resolve_cached_localhost|guest": 0.62,
+  "before-runner|dns/resolve_concurrent_4|native": 0.48,
+  "before-runner|dns/resolve_concurrent_4|node": 0.42,
+  "before-runner|dns/resolve_concurrent_4|guest": 0.92,
+  "before-runner|ecosystem/ls_100|hostCmd": 10.85,
+  "before-runner|ecosystem/ls_100|vmCmd": 133.8,
+  "before-runner|ecosystem/sh_pipeline|hostCmd": 14.58,
+  "before-runner|ecosystem/sh_pipeline|vmCmd": 224.85,
+  "before-runner|ecosystem/cd_tmp_pwd|hostCmd": 9.2,
+  "before-runner|ecosystem/cd_tmp_pwd|vmCmd": 77.77,
+  "before-runner|ecosystem/echo_hello|hostCmd": 14.37,
+  "before-runner|ecosystem/echo_hello|vmCmd": 27.09,
+  "before-runner|ecosystem/cat_small|hostCmd": 12.52,
+  "before-runner|ecosystem/cat_small|vmCmd": 38.65,
+  "before-runner|ecosystem/cat_big|hostCmd": 12.81,
+  "before-runner|ecosystem/cat_big|vmCmd": 95.99,
+  "before-runner|ecosystem/grep_small|hostCmd": 13.16,
+  "before-runner|ecosystem/grep_small|vmCmd": 103.27,
+  "before-runner|ecosystem/grep_big|hostCmd": 22.14,
+  "before-runner|ecosystem/grep_big|vmCmd": 2014.21,
+  "before-runner|ecosystem/sed_substitution|hostCmd": 10.75,
+  "before-runner|ecosystem/sed_substitution|vmCmd": 65.75,
+  "before-runner|ecosystem/find_1000|hostCmd": 19.8,
+  "before-runner|ecosystem/find_1000|vmCmd": 344.76,
+  "before-runner|ecosystem/tar_small|hostCmd": 25.07,
+  "before-runner|ecosystem/tar_small|vmCmd": 484.63,
+  "before-runner|ecosystem/tar_big|hostCmd": 22.54,
+  "before-runner|ecosystem/tar_big|vmCmd": 1342.13,
+  "before-runner|ecosystem/gzip_small|hostCmd": 29.53,
+  "before-runner|ecosystem/gzip_small|vmCmd": 295.88,
+  "before-runner|ecosystem/gzip_big|hostCmd": 19.29,
+  "before-runner|ecosystem/gzip_big|vmCmd": 297.69,
+  "before-runner|ecosystem/jq_extract|hostCmd": 13.16,
+  "before-runner|ecosystem/jq_extract|vmCmd": 131.94,
+  "before-runner|ecosystem/git_init_commit|hostCmd": 47.78,
+  "before-runner|ecosystem/git_init_commit|vmCmd": 1067.97,
+  "before-runner|pipes/pass_through_small|native": 6.66,
+  "before-runner|pipes/pass_through_small|node": 0.13,
+  "before-runner|pipes/pass_through_small|guest": 0.15,
+  "before-runner|pipes/pass_through_big|native": 0.39,
+  "before-runner|pipes/pass_through_big|node": 0.31,
+  "before-runner|pipes/pass_through_big|guest": 0.45,
+  "before-runner|pipes/backpressure_chunks|native": 0.23,
+  "before-runner|pipes/backpressure_chunks|node": 0.29,
+  "before-runner|pipes/backpressure_chunks|guest": 0.67,
+  "before-runner|timers/settimeout_zero_x100|native": 0,
+  "before-runner|timers/settimeout_zero_x100|node": 108.78,
+  "before-runner|timers/settimeout_zero_x100|guest": 244.57,
+  "before-runner|timers/settimeout_zero_x100|wasm": 0.29,
+  "before-runner|timers/settimeout_1ms_x50|native": 54.08,
+  "before-runner|timers/settimeout_1ms_x50|node": 55.04,
+  "before-runner|timers/settimeout_1ms_x50|guest": 116.43,
+  "before-runner|timers/settimeout_1ms_x50|wasm": 60.03,
+  "before-runner|timers/setimmediate_x1000|native": 2.04,
+  "before-runner|timers/setimmediate_x1000|node": 1.34,
+  "before-runner|timers/setimmediate_x1000|guest": 6.82,
+  "before-runner|timers/setimmediate_x1000|wasm": 0.25,
+  "before-runner|control/cpu_loop|native": 2.97,
+  "before-runner|control/cpu_loop|node": 9.67,
+  "before-runner|control/cpu_loop|guest": 9.88,
+  "before-runner|control/cpu_loop|wasm": 2.06,
+  "before-runner|control/alloc_free|native": 3.38,
+  "before-runner|control/alloc_free|node": 6.5,
+  "before-runner|control/alloc_free|guest": 6.11,
+  "before-runner|control/alloc_free|wasm": 7.18,
+  "before-runner|perf-finding/stdio_writeSync_8x64k|native": 0.01,
+  "before-runner|perf-finding/stdio_writeSync_8x64k|node": 0.49,
+  "before-runner|perf-finding/stdio_writeSync_8x64k|guest": 3.67,
+  "before-runner|perf-finding/unix_accept_latency|native": 0.15,
+  "before-runner|perf-finding/unix_accept_latency|node": 0.33,
+  "before-runner|perf-finding/unix_accept_latency|guest": 2.56,
+  "after-native-v2|process/node_exit|native": 32.78,
+  "after-native-v2|process/node_exit|node": 39.44,
+  "after-native-v2|process/node_exit|guest": 8.4,
+  "after-native-v2|process/node_stdout_discard_2b|native": 37.53,
+  "after-native-v2|process/node_stdout_discard_2b|node": 50.08,
+  "after-native-v2|process/node_stdout_discard_2b|guest": 7.31,
+  "after-native-v2|process/exec_capture|native": 34.51,
+  "after-native-v2|process/exec_capture|node": 47.49,
+  "after-native-v2|process/exec_capture|guest": 19.59,
+  "after-native-v2|process/node_stdout_listener_only_2b|native": 36.96,
+  "after-native-v2|process/node_stdout_listener_only_2b|node": 44.95,
+  "after-native-v2|process/node_stdout_listener_only_2b|guest": 19.43,
+  "after-native-v2|process/fanout_spawn_8|native": 36.73,
+  "after-native-v2|process/fanout_spawn_8|node": 115.04,
+  "after-native-v2|process/fanout_spawn_8|guest": 61.62,
+  "after-native-v2|process/wait_reap_storm_8|native": 37.99,
+  "after-native-v2|process/wait_reap_storm_8|node": 71.89,
+  "after-native-v2|process/wait_reap_storm_8|guest": 60.96,
+  "after-native-v2|process/pipe_chain_3|native": 2.7,
+  "after-native-v2|process/pipe_chain_3|node": 0.38,
+  "after-native-v2|process/pipe_chain_3|guest": 0.4,
+  "after-native-v2|process/spawn_stdout_capture_small|native": 42.02,
+  "after-native-v2|process/spawn_stdout_capture_small|node": 42.56,
+  "after-native-v2|process/spawn_stdout_capture_small|guest": 9.07,
+  "after-native-v2|process/spawn_stdout_capture_big|native": 42.5,
+  "after-native-v2|process/spawn_stdout_capture_big|node": 51.42,
+  "after-native-v2|process/spawn_stdout_capture_big|guest": 16.62,
+  "after-native-v2|process/spawn_stdin_roundtrip|native": 37.55,
+  "after-native-v2|process/spawn_stdin_roundtrip|node": 43.48,
+  "after-native-v2|process/spawn_stdin_roundtrip|guest": 17.72,
+  "after-native-v2|net/udp_echo_small|native": 0.15,
+  "after-native-v2|net/udp_echo_small|node": 0.22,
+  "after-native-v2|net/udp_echo_small|guest": 0.72,
+  "after-native-v2|net/udp_echo_big|native": 0.29,
+  "after-native-v2|net/udp_echo_big|node": 0.3,
+  "after-native-v2|net/udp_echo_big|guest": 2.05,
+  "after-native-v2|net/unix_echo_small|native": 0.19,
+  "after-native-v2|net/unix_echo_small|node": 0.56,
+  "after-native-v2|net/unix_echo_small|guest": 4.59,
+  "after-native-v2|net/unix_echo_big|native": 0.36,
+  "after-native-v2|net/unix_echo_big|node": 0.78,
+  "after-native-v2|net/unix_echo_big|guest": 7.05,
+  "after-native-v2|net/http_loopback_get|native": 0.4,
+  "after-native-v2|net/http_loopback_get|node": 0.96,
+  "after-native-v2|net/http_loopback_get|guest": 4.59,
+  "after-native-v2|net/http_external_get|node": 1.15,
+  "after-native-v2|net/http_external_get|guest": 2.34,
+  "after-native-v2|net/http2_loopback_get|node": 1.34,
+  "after-native-v2|net/http2_loopback_get|guest": 3.63,
+  "after-native-v2|net/fetch_loopback_get|node": 1.96,
+  "after-native-v2|net/fetch_loopback_get|guest": 6.15,
+  "after-native-v2|net/tls_loopback_get|node": 3.05,
+  "after-native-v2|net/tls_loopback_get|guest": 8.81,
+  "after-native-v2|net/tcp_connect_close|native": 0.2,
+  "after-native-v2|net/tcp_connect_close|node": 0.47,
+  "after-native-v2|net/tcp_connect_close|guest": 2.18,
+  "after-native-v2|net/tcp_echo_small|native": 0.23,
+  "after-native-v2|net/tcp_echo_small|node": 0.61,
+  "after-native-v2|net/tcp_echo_small|guest": 3.47,
+  "after-native-v2|net/tcp_external_echo|native": 0.39,
+  "after-native-v2|net/tcp_external_echo|node": 0.41,
+  "after-native-v2|net/tcp_external_echo|guest": 2.41,
+  "after-native-v2|net/tcp_concurrent_4|native": 0.35,
+  "after-native-v2|net/tcp_concurrent_4|node": 1.18,
+  "after-native-v2|net/tcp_concurrent_4|guest": 6.88,
+  "after-native-v2|net/tcp_echo_big|native": 0.28,
+  "after-native-v2|net/tcp_echo_big|node": 0.86,
+  "after-native-v2|net/tcp_echo_big|guest": 6.53,
+  "after-native-v2|net/tcp_tiny_writes_16|native": 0.28,
+  "after-native-v2|net/tcp_tiny_writes_16|node": 0.68,
+  "after-native-v2|net/tcp_tiny_writes_16|guest": 3.25,
+  "after-native-v2|fs/open_close_churn|native": 0.02,
+  "after-native-v2|fs/open_close_churn|node": 0.03,
+  "after-native-v2|fs/open_close_churn|guest": 0.33,
+  "after-native-v2|fs/open_close_churn|wasm": 0.76,
+  "after-native-v2|fs/stat_storm|native": 0.01,
+  "after-native-v2|fs/stat_storm|node": 0.03,
+  "after-native-v2|fs/stat_storm|guest": 0.24,
+  "after-native-v2|fs/stat_storm|wasm": 0.58,
+  "after-native-v2|fs/fs_write_small|native": 0.01,
+  "after-native-v2|fs/fs_write_small|node": 0.06,
+  "after-native-v2|fs/fs_write_small|guest": 0.25,
+  "after-native-v2|fs/fs_write_small|wasm": 0.58,
+  "after-native-v2|fs/fs_write_big|native": 0.54,
+  "after-native-v2|fs/fs_write_big|node": 1.38,
+  "after-native-v2|fs/fs_write_big|guest": 8.48,
+  "after-native-v2|fs/fs_write_big|wasm": 3.34,
+  "after-native-v2|fs/fs_read_small|native": 0.01,
+  "after-native-v2|fs/fs_read_small|node": 0.05,
+  "after-native-v2|fs/fs_read_small|guest": 0.33,
+  "after-native-v2|fs/fs_read_small|wasm": 0.6,
+  "after-native-v2|fs/fs_read_big|native": 0.14,
+  "after-native-v2|fs/fs_read_big|node": 0.97,
+  "after-native-v2|fs/fs_read_big|guest": 3.37,
+  "after-native-v2|fs/fs_read_big|wasm": 4.97,
+  "after-native-v2|fs/mkdir_rmdir|native": 0.01,
+  "after-native-v2|fs/mkdir_rmdir|node": 0.06,
+  "after-native-v2|fs/mkdir_rmdir|guest": 0.95,
+  "after-native-v2|fs/mkdir_rmdir|wasm": 0.64,
+  "after-native-v2|fs/rename_file|native": 0.04,
+  "after-native-v2|fs/rename_file|node": 0.07,
+  "after-native-v2|fs/rename_file|guest": 2.63,
+  "after-native-v2|fs/rename_file|wasm": 2.76,
+  "after-native-v2|fs/readdir_small|native": 0.19,
+  "after-native-v2|fs/readdir_small|node": 0.04,
+  "after-native-v2|fs/readdir_small|guest": 0.18,
+  "after-native-v2|fs/readdir_small|wasm": 0.9,
+  "after-native-v2|fs/readdir_big|native": 0.24,
+  "after-native-v2|fs/readdir_big|node": 0.32,
+  "after-native-v2|fs/readdir_big|guest": 2.73,
+  "after-native-v2|fs/readdir_big|wasm": 12.97,
+  "after-native-v2|fs/fsync_small|native": 0.01,
+  "after-native-v2|fs/fsync_small|node": 0.04,
+  "after-native-v2|fs/fsync_small|guest": 0.56,
+  "after-native-v2|fs/fsync_small|wasm": 0.5,
+  "after-native-v2|fs/fs_promises_stat_x32|native": 0.06,
+  "after-native-v2|fs/fs_promises_stat_x32|node": 1.16,
+  "after-native-v2|fs/fs_promises_stat_x32|guest": 4.35,
+  "after-native-v2|fs/fs_promises_stat_x32|wasm": 1.76,
+  "after-native-v2|fs/stream_copy_small|native": 0.08,
+  "after-native-v2|fs/stream_copy_small|node": 0.7,
+  "after-native-v2|fs/stream_copy_small|guest": 2.02,
+  "after-native-v2|fs/stream_copy_small|wasm": 1.94,
+  "after-native-v2|fs/stream_copy_big|native": 0.63,
+  "after-native-v2|fs/stream_copy_big|node": 3.12,
+  "after-native-v2|fs/stream_copy_big|guest": 17.32,
+  "after-native-v2|fs/stream_copy_big|wasm": 16.22,
+  "after-native-v2|modules/require_100_small|node": 9.37,
+  "after-native-v2|modules/require_100_small|guest": 35.28,
+  "after-native-v2|modules/import_100_small_esm|node": 17.18,
+  "after-native-v2|modules/import_100_small_esm|guest": 54.2,
+  "after-native-v2|modules/import_npm_package|node": 80.05,
+  "after-native-v2|modules/import_npm_package|guest": 145.44,
+  "after-native-v2|modules/import_fresh_file|node": 0.38,
+  "after-native-v2|modules/import_fresh_file|guest": 1.12,
+  "after-native-v2|dns/resolve_uncached_localhost|native": 0.11,
+  "after-native-v2|dns/resolve_uncached_localhost|node": 0.25,
+  "after-native-v2|dns/resolve_uncached_localhost|guest": 0.54,
+  "after-native-v2|dns/resolve_cached_localhost|native": 0.18,
+  "after-native-v2|dns/resolve_cached_localhost|node": 0.38,
+  "after-native-v2|dns/resolve_cached_localhost|guest": 0.69,
+  "after-native-v2|dns/resolve_concurrent_4|native": 0.42,
+  "after-native-v2|dns/resolve_concurrent_4|node": 0.42,
+  "after-native-v2|dns/resolve_concurrent_4|guest": 0.36,
+  "after-native-v2|ecosystem/ls_100|hostCmd": 7.81,
+  "after-native-v2|ecosystem/ls_100|vmCmd": 65.94,
+  "after-native-v2|ecosystem/sh_pipeline|hostCmd": 12.01,
+  "after-native-v2|ecosystem/sh_pipeline|vmCmd": 87.77,
+  "after-native-v2|ecosystem/cd_tmp_pwd|hostCmd": 9.32,
+  "after-native-v2|ecosystem/cd_tmp_pwd|vmCmd": 27.31,
+  "after-native-v2|ecosystem/echo_hello|hostCmd": 8.07,
+  "after-native-v2|ecosystem/echo_hello|vmCmd": 15.14,
+  "after-native-v2|ecosystem/cat_small|hostCmd": 7.08,
+  "after-native-v2|ecosystem/cat_small|vmCmd": 19.55,
+  "after-native-v2|ecosystem/cat_big|hostCmd": 10.94,
+  "after-native-v2|ecosystem/cat_big|vmCmd": 27.4,
+  "after-native-v2|ecosystem/grep_small|hostCmd": 6.87,
+  "after-native-v2|ecosystem/grep_small|vmCmd": 43.74,
+  "after-native-v2|ecosystem/grep_big|hostCmd": 22.47,
+  "after-native-v2|ecosystem/grep_big|vmCmd": 724.11,
+  "after-native-v2|ecosystem/sed_substitution|hostCmd": 10.41,
+  "after-native-v2|ecosystem/sed_substitution|vmCmd": 21.87,
+  "after-native-v2|ecosystem/find_1000|hostCmd": 14.87,
+  "after-native-v2|ecosystem/find_1000|vmCmd": 157.57,
+  "after-native-v2|ecosystem/tar_small|hostCmd": 20.24,
+  "after-native-v2|ecosystem/tar_small|vmCmd": 142.82,
+  "after-native-v2|ecosystem/tar_big|hostCmd": 26.93,
+  "after-native-v2|ecosystem/tar_big|vmCmd": 442.4,
+  "after-native-v2|ecosystem/gzip_small|hostCmd": 16.97,
+  "after-native-v2|ecosystem/gzip_small|vmCmd": 84.9,
+  "after-native-v2|ecosystem/gzip_big|hostCmd": 23.29,
+  "after-native-v2|ecosystem/gzip_big|vmCmd": 87.97,
+  "after-native-v2|ecosystem/jq_extract|hostCmd": 14.41,
+  "after-native-v2|ecosystem/jq_extract|vmCmd": 35.75,
+  "after-native-v2|ecosystem/git_init_commit|hostCmd": 35.99,
+  "after-native-v2|ecosystem/git_init_commit|vmCmd": 355.59,
+  "after-native-v2|pipes/pass_through_small|native": 2.94,
+  "after-native-v2|pipes/pass_through_small|node": 0.12,
+  "after-native-v2|pipes/pass_through_small|guest": 0.1,
+  "after-native-v2|pipes/pass_through_big|native": 0.21,
+  "after-native-v2|pipes/pass_through_big|node": 0.26,
+  "after-native-v2|pipes/pass_through_big|guest": 0.43,
+  "after-native-v2|pipes/backpressure_chunks|native": 0.26,
+  "after-native-v2|pipes/backpressure_chunks|node": 0.24,
+  "after-native-v2|pipes/backpressure_chunks|guest": 0.42,
+  "after-native-v2|timers/settimeout_zero_x100|native": 0,
+  "after-native-v2|timers/settimeout_zero_x100|node": 108.84,
+  "after-native-v2|timers/settimeout_zero_x100|guest": 221.69,
+  "after-native-v2|timers/settimeout_zero_x100|wasm": 0.06,
+  "after-native-v2|timers/settimeout_1ms_x50|native": 53.23,
+  "after-native-v2|timers/settimeout_1ms_x50|node": 54.44,
+  "after-native-v2|timers/settimeout_1ms_x50|guest": 111.49,
+  "after-native-v2|timers/settimeout_1ms_x50|wasm": 108.34,
+  "after-native-v2|timers/setimmediate_x1000|native": 0.99,
+  "after-native-v2|timers/setimmediate_x1000|node": 1.43,
+  "after-native-v2|timers/setimmediate_x1000|guest": 5.21,
+  "after-native-v2|timers/setimmediate_x1000|wasm": 0.6,
+  "after-native-v2|control/cpu_loop|native": 1.93,
+  "after-native-v2|control/cpu_loop|node": 9.34,
+  "after-native-v2|control/cpu_loop|guest": 9.33,
+  "after-native-v2|control/cpu_loop|wasm": 1.63,
+  "after-native-v2|control/alloc_free|native": 3.34,
+  "after-native-v2|control/alloc_free|node": 6.83,
+  "after-native-v2|control/alloc_free|guest": 5.42,
+  "after-native-v2|control/alloc_free|wasm": 4.91,
+  "after-native-v2|perf-finding/stdio_writeSync_8x64k|native": 0.01,
+  "after-native-v2|perf-finding/stdio_writeSync_8x64k|node": 0.41,
+  "after-native-v2|perf-finding/stdio_writeSync_8x64k|guest": 2.87,
+  "after-native-v2|perf-finding/unix_accept_latency|native": 0.16,
+  "after-native-v2|perf-finding/unix_accept_latency|node": 0.33,
+  "after-native-v2|perf-finding/unix_accept_latency|guest": 2.49
+ },
+ "concurrency": {
+  "before-runner|v8|1|repeated": {
+   "throughput": 21.862289265018116,
+   "peak_rss_mib": 157.68359375,
+   "successful": 1,
+   "requested": 1,
+   "failure": null
+  },
+  "before-runner|v8|1|diverse": {
+   "throughput": 25.216054305300606,
+   "peak_rss_mib": 160.77734375,
+   "successful": 1,
+   "requested": 1,
+   "failure": null
+  },
+  "before-runner|v8|10|repeated": {
+   "throughput": 58.65678163812673,
+   "peak_rss_mib": 215.421875,
+   "successful": 10,
+   "requested": 10,
+   "failure": null
+  },
+  "before-runner|v8|10|diverse": {
+   "throughput": 44.29223584920854,
+   "peak_rss_mib": 240.953125,
+   "successful": 10,
+   "requested": 10,
+   "failure": null
+  },
+  "before-runner|v8|50|repeated": {
+   "throughput": 99.06784430092577,
+   "peak_rss_mib": 664.16796875,
+   "successful": 50,
+   "requested": 50,
+   "failure": null
+  },
+  "before-runner|v8|50|diverse": {
+   "throughput": 69.066809290181,
+   "peak_rss_mib": 815.13671875,
+   "successful": 50,
+   "requested": 50,
+   "failure": null
+  },
+  "before-runner|v8|100|repeated": {
+   "throughput": 119.35098310311824,
+   "peak_rss_mib": 1334.21875,
+   "successful": 100,
+   "requested": 100,
+   "failure": null
+  },
+  "before-runner|v8|100|diverse": {
+   "throughput": 84.77046381927012,
+   "peak_rss_mib": 1541.9296875,
+   "successful": 100,
+   "requested": 100,
+   "failure": null
+  },
+  "before-runner|v8|200|repeated": {
+   "throughput": 95.38449546383436,
+   "peak_rss_mib": 1810.31640625,
+   "successful": 128,
+   "requested": 200,
+   "failure": "sidecar rejected request 1986: EAGAIN: EAGAIN: EAGAIN: maximum pipe count reached"
+  },
+  "before-runner|v8|200|diverse": {
+   "throughput": 71.44452345173028,
+   "peak_rss_mib": 2067.2265625,
+   "successful": 128,
+   "requested": 200,
+   "failure": "sidecar rejected request 2447: EAGAIN: EAGAIN: EAGAIN: maximum pipe count reached"
+  },
+  "after-native-v2|v8|1|repeated": {
+   "throughput": 45.063236789545314,
+   "peak_rss_mib": 80.9609375,
+   "successful": 1,
+   "requested": 1,
+   "failure": null
+  },
+  "after-native-v2|v8|1|diverse": {
+   "throughput": 50.488996024306736,
+   "peak_rss_mib": 80.96875,
+   "successful": 1,
+   "requested": 1,
+   "failure": null
+  },
+  "after-native-v2|v8|10|repeated": {
+   "throughput": 268.35540216598594,
+   "peak_rss_mib": 91.53515625,
+   "successful": 10,
+   "requested": 10,
+   "failure": null
+  },
+  "after-native-v2|v8|10|diverse": {
+   "throughput": 156.41878809257452,
+   "peak_rss_mib": 97.51953125,
+   "successful": 10,
+   "requested": 10,
+   "failure": null
+  },
+  "after-native-v2|v8|50|repeated": {
+   "throughput": 365.8039315070166,
+   "peak_rss_mib": 152.42578125,
+   "successful": 50,
+   "requested": 50,
+   "failure": null
+  },
+  "after-native-v2|v8|50|diverse": {
+   "throughput": 206.39136175208012,
+   "peak_rss_mib": 179.76171875,
+   "successful": 50,
+   "requested": 50,
+   "failure": null
+  },
+  "after-native-v2|v8|100|repeated": {
+   "throughput": 345.2754417918387,
+   "peak_rss_mib": 212.33984375,
+   "successful": 100,
+   "requested": 100,
+   "failure": null
+  },
+  "after-native-v2|v8|100|diverse": {
+   "throughput": 160.67926348816175,
+   "peak_rss_mib": 318.9296875,
+   "successful": 100,
+   "requested": 100,
+   "failure": null
+  },
+  "after-native-v2|v8|200|repeated": {
+   "throughput": 345.65847945495085,
+   "peak_rss_mib": 306.796875,
+   "successful": 134,
+   "requested": 200,
+   "failure": "sidecar rejected request 2052: EAGAIN: EAGAIN: EAGAIN: maximum pipe count reached"
+  },
+  "after-native-v2|v8|200|diverse": {
+   "throughput": 147.20715080080043,
+   "peak_rss_mib": 426.0,
+   "successful": 128,
+   "requested": 200,
+   "failure": "sidecar rejected request 2523: EAGAIN: EAGAIN: EAGAIN: maximum pipe count reached"
+  },
+  "both-engines|v8|1|repeated": {
+   "throughput": 47.1225132095005,
+   "peak_rss_mib": 81.44140625,
+   "successful": 1,
+   "requested": 1,
+   "failure": null
+  },
+  "both-engines|v8|1|diverse": {
+   "throughput": 47.21258547779586,
+   "peak_rss_mib": 81.44921875,
+   "successful": 1,
+   "requested": 1,
+   "failure": null
+  },
+  "both-engines|v8|10|repeated": {
+   "throughput": 232.44390146582165,
+   "peak_rss_mib": 92.22265625,
+   "successful": 10,
+   "requested": 10,
+   "failure": null
+  },
+  "both-engines|v8|10|diverse": {
+   "throughput": 151.5852895692858,
+   "peak_rss_mib": 100.21875,
+   "successful": 10,
+   "requested": 10,
+   "failure": null
+  },
+  "both-engines|v8|50|repeated": {
+   "throughput": 379.6271683098531,
+   "peak_rss_mib": 143.390625,
+   "successful": 50,
+   "requested": 50,
+   "failure": null
+  },
+  "both-engines|v8|50|diverse": {
+   "throughput": 166.3163340598885,
+   "peak_rss_mib": 183.7265625,
+   "successful": 50,
+   "requested": 50,
+   "failure": null
+  },
+  "both-engines|v8|100|repeated": {
+   "throughput": 347.846101113755,
+   "peak_rss_mib": 219.6015625,
+   "successful": 100,
+   "requested": 100,
+   "failure": null
+  },
+  "both-engines|v8|100|diverse": {
+   "throughput": 113.95626048533632,
+   "peak_rss_mib": 338.15234375,
+   "successful": 100,
+   "requested": 100,
+   "failure": null
+  },
+  "both-engines|v8|200|repeated": {
+   "throughput": 312.1150536564064,
+   "peak_rss_mib": 325.31640625,
+   "successful": 139,
+   "requested": 200,
+   "failure": "sidecar rejected request 2070: EAGAIN: EAGAIN: EAGAIN: maximum pipe count reached"
+  },
+  "both-engines|v8|200|diverse": {
+   "throughput": 139.45075880428894,
+   "peak_rss_mib": 421.63671875,
+   "successful": 134,
+   "requested": 200,
+   "failure": "sidecar rejected request 2550: EAGAIN: EAGAIN: EAGAIN: maximum pipe count reached"
+  },
+  "both-engines|wasmtime|1|repeated": {
+   "throughput": 44.43216339448066,
+   "peak_rss_mib": 135.234375,
+   "successful": 1,
+   "requested": 1,
+   "failure": null
+  },
+  "both-engines|wasmtime|1|diverse": {
+   "throughput": 37.90846417534665,
+   "peak_rss_mib": 135.234375,
+   "successful": 1,
+   "requested": 1,
+   "failure": null
+  },
+  "both-engines|wasmtime|10|repeated": {
+   "throughput": 184.1956181041331,
+   "peak_rss_mib": 139.56640625,
+   "successful": 10,
+   "requested": 10,
+   "failure": null
+  },
+  "both-engines|wasmtime|10|diverse": {
+   "throughput": 83.63937048694011,
+   "peak_rss_mib": 153.42578125,
+   "successful": 10,
+   "requested": 10,
+   "failure": null
+  },
+  "both-engines|wasmtime|50|repeated": {
+   "throughput": 267.58355778242225,
+   "peak_rss_mib": 150.5546875,
+   "successful": 50,
+   "requested": 50,
+   "failure": null
+  },
+  "both-engines|wasmtime|50|diverse": {
+   "throughput": 141.9164310966923,
+   "peak_rss_mib": 232.55859375,
+   "successful": 45,
+   "requested": 50,
+   "failure": "ERR_AGENTOS_WASMTIME_AGGREGATE_MEMORY_LIMIT: ERR_AGENTOS_RESOURCE_LIMIT: scope=sidecar-process resource=wasmMemoryBytes used=8358075392 requested=276435456 limit=8589934592; raise runtime.resources.maxWasmMemoryBytes"
+  },
+  "both-engines|wasmtime|100|repeated": {
+   "throughput": 265.92713280134797,
+   "peak_rss_mib": 188.53125,
+   "successful": 99,
+   "requested": 100,
+   "failure": "ERR_AGENTOS_WASMTIME_AGGREGATE_MEMORY_LIMIT: ERR_AGENTOS_RESOURCE_LIMIT: scope=sidecar-process resource=wasmMemoryBytes used=8358075392 requested=276435456 limit=8589934592; raise runtime.resources.maxWasmMemoryBytes"
+  },
+  "both-engines|wasmtime|100|diverse": {
+   "throughput": 56.1402656019693,
+   "peak_rss_mib": 320.46484375,
+   "successful": 53,
+   "requested": 100,
+   "failure": "ERR_AGENTOS_WASMTIME_AGGREGATE_MEMORY_LIMIT: ERR_AGENTOS_RESOURCE_LIMIT: scope=sidecar-process resource=wasmMemoryBytes used=8358075392 requested=276435456 limit=8589934592; raise runtime.resources.maxWasmMemoryBytes"
+  },
+  "both-engines|wasmtime|200|repeated": {
+   "throughput": 157.456622194216,
+   "peak_rss_mib": 217.50390625,
+   "successful": 107,
+   "requested": 200,
+   "failure": "ERR_AGENTOS_WASMTIME_AGGREGATE_MEMORY_LIMIT: ERR_AGENTOS_RESOURCE_LIMIT: scope=sidecar-process resource=wasmMemoryBytes used=8358075392 requested=276435456 limit=8589934592; raise runtime.resources.maxWasmMemoryBytes"
+  },
+  "both-engines|wasmtime|200|diverse": {
+   "throughput": 37.87233896543241,
+   "peak_rss_mib": 338.8515625,
+   "successful": 50,
+   "requested": 200,
+   "failure": "ERR_AGENTOS_WASMTIME_AGGREGATE_MEMORY_LIMIT: ERR_AGENTOS_RESOURCE_LIMIT: scope=sidecar-process resource=wasmMemoryBytes used=8358075392 requested=276435456 limit=8589934592; raise runtime.resources.maxWasmMemoryBytes"
+  }
+ },
+ "true_breakdown": {
+  "v8": {
+   "wall_p50_ms": 16.26,
+   "client_output_drain_ms": 10.9,
+   "sidecar_execute_ms": 1.5,
+   "sidecar_resolve_ms": 0.92,
+   "response_to_exit_ms": 3.4,
+   "engine_total_ms": 2.31,
+   "engine_phases_ms": {
+    "launch": 0.07,
+    "canonicalPreopens": 0.27,
+    "moduleCompile(cached admission + isolate module)": 0.81,
+    "Instance": 0.78,
+    "signalMaskInit": 0.11,
+    "wasi.start": 0.08
+   }
+  },
+  "wasmtime": {
+   "wall_p50_ms": 16.85,
+   "sidecar_execute_ms": 1.2,
+   "response_to_exit_ms": 5.85,
+   "engine_total_ms": 2.36
+  }
+ }
+}
