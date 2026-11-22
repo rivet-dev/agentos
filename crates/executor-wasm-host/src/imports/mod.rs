@@ -218,7 +218,7 @@ pub async fn dispatch<C: WasmGuest>(
 ) -> crate::Result<()> {
     if caller.data().canceled() {
         return Err(crate::format_err!(
-            "ERR_AGENTOS_WASMTIME_CANCELED: execution canceled"
+            "ERR_AGENTOS_WASM_CANCELED: execution canceled"
         ));
     }
     drain_signal_checkpoints(caller, false).await?;
@@ -374,7 +374,7 @@ async fn drain_signal_checkpoints<C: WasmGuest>(
         }
         force_probe = false;
         let thread_id = u32::try_from(caller.data().thread_id).map_err(|_| {
-            crate::format_err!("ERR_AGENTOS_WASMTIME_SIGNAL_THREAD_ID: invalid thread id")
+            crate::format_err!("ERR_AGENTOS_WASM_SIGNAL_THREAD_ID: invalid thread id")
         })?;
         let take = if caller.data().thread_group.is_some() {
             SignalOperation::TakePublishedDeliveryForThread { thread_id }
@@ -424,7 +424,7 @@ async fn drain_signal_checkpoints<C: WasmGuest>(
         if let Err(error) = handler_result {
             if let Err(end_error) = end_result {
                 eprintln!(
-                    "ERR_AGENTOS_WASMTIME_SIGNAL_SETTLEMENT: handler failed with {error}; token settlement also failed with {end_error}"
+                    "ERR_AGENTOS_WASM_SIGNAL_SETTLEMENT: handler failed with {error}; token settlement also failed with {end_error}"
                 );
             }
             return Err(error);
@@ -432,7 +432,7 @@ async fn drain_signal_checkpoints<C: WasmGuest>(
         end_result.map_err(wasmtime_host_error)?;
     }
     Err(crate::format_err!(
-        "ERR_AGENTOS_WASMTIME_SIGNAL_DRAIN_LIMIT: more than {MAX_SIGNALS_PER_SAFE_POINT} signals were delivered at one safe point"
+        "ERR_AGENTOS_WASM_SIGNAL_DRAIN_LIMIT: more than {MAX_SIGNALS_PER_SAFE_POINT} signals were delivered at one safe point"
     ))
 }
 
@@ -446,8 +446,8 @@ pub async fn inherited_signal_mask(
 ) -> Result<Option<(i32, i32)>, HostServiceError> {
     let thread_id = u32::try_from(thread_id).map_err(|_| {
         HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_SIGNAL_THREAD_ID",
-            "invalid Wasmtime signal thread id",
+            "ERR_AGENTOS_WASM_SIGNAL_THREAD_ID",
+            "invalid WebAssembly signal thread id",
         )
     })?;
     let update = if in_thread_group {
@@ -574,7 +574,7 @@ async fn check_fixed_request_limit<C: WasmGuest>(
         let host = caller.data().host.clone();
         if let Err(error) = host.publish_stderr(warning.into_bytes()).await {
             eprintln!(
-                "ERR_AGENTOS_WASMTIME_LIMIT_WARNING: failed to publish {limit_name} warning: {error}"
+                "ERR_AGENTOS_WASM_LIMIT_WARNING: failed to publish {limit_name} warning: {error}"
             );
         }
     }

@@ -89,9 +89,17 @@ bounded Engine-profile and module-cache limits and typed errors at the limit:
   per-VM and process-wide threaded-WASM admission
 
 Limit errors include `limitName`, `limit`, and `observed` details where those
-values apply. Guest traps use `ERR_AGENTOS_WASM_TRAP` plus a stable `trapKind`;
-memory, table, stack, active-CPU, fuel, wall-clock, cancellation, invalid-module,
-and instantiation outcomes have stable AgentOS codes. Raw Wasmtime validation
+values apply. Guest traps use `ERR_AGENTOS_WASM_TRAP` plus a stable `trapKind`
+(`unreachable`, `memory-out-of-bounds`, `table-out-of-bounds`,
+`array-out-of-bounds`, `misaligned-atomic`, `null-indirect-call`,
+`indirect-call-type-mismatch`, `integer-overflow`, `integer-division-by-zero`,
+`invalid-float-to-integer`, `null-reference`, `cast-failure`,
+`allocation-too-large`, or `other`). Memory, table, stack, active-CPU, fuel,
+wall-clock, cancellation, invalid-module, and instantiation outcomes have their
+own `ERR_AGENTOS_WASM_*` codes. Both engines report a shared outcome with the
+same code. A code with an engine prefix (`ERR_AGENTOS_WASMTIME_*` or
+`ERR_AGENTOS_V8_*`) names a failure in that engine's own machinery, such as
+Wasmtime's thread worker processes or V8's isolate heap. Raw engine validation
 or trap strings are private diagnostics and are not an API contract.
 
 ## Compilation, cold start, and memory

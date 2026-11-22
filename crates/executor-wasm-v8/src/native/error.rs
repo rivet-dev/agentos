@@ -9,12 +9,12 @@ use agentos_executor_contract::backend::HostServiceError;
 /// Classify an exception thrown out of `_start` or a signal handler.
 pub(super) fn classify_trap(diagnostic: &str) -> HostServiceError {
     // Ordered most specific first: V8 prefixes every trap with its class.
+    // Stack exhaustion is a resource outcome, not a guest bug; both engines
+    // report it with its own code.
+    if diagnostic.contains("Maximum call stack size exceeded") {
+        return stack_exhausted_error();
+    }
     const TRAPS: &[(&str, &str, &str)] = &[
-        (
-            "Maximum call stack size exceeded",
-            "stack-overflow",
-            "WebAssembly exhausted its call stack",
-        ),
         (
             "unreachable",
             "unreachable",
@@ -71,6 +71,26 @@ pub(super) fn classify_trap(diagnostic: &str) -> HostServiceError {
             "WebAssembly dereferenced a null reference",
         ),
         (
+            "array element access out of bounds",
+            "array-out-of-bounds",
+            "WebAssembly accessed an array element outside its bounds",
+        ),
+        (
+            "data segment out of bounds",
+            "memory-out-of-bounds",
+            "WebAssembly accessed memory outside its current bounds",
+        ),
+        (
+            "element segment out of bounds",
+            "table-out-of-bounds",
+            "WebAssembly accessed a table outside its current bounds",
+        ),
+        (
+            "illegal cast",
+            "cast-failure",
+            "WebAssembly failed a reference cast",
+        ),
+        (
             "requested new array is too large",
             "allocation-too-large",
             "WebAssembly attempted an allocation that is too large",
@@ -84,6 +104,14 @@ pub(super) fn classify_trap(diagnostic: &str) -> HostServiceError {
         });
     HostServiceError::new("ERR_AGENTOS_WASM_TRAP", message)
         .with_details(serde_json::json!({ "trapKind": kind }))
+}
+
+/// The same outcome Wasmtime reports for `Trap::StackOverflow`.
+pub(super) fn stack_exhausted_error() -> HostServiceError {
+    HostServiceError::new(
+        "ERR_AGENTOS_WASM_STACK_EXHAUSTED",
+        "WebAssembly execution exhausted its stack",
+    )
 }
 
 /// Instantiation failures (start function or data/element segment traps).
@@ -104,7 +132,7 @@ pub(super) fn heap_limit_error() -> HostServiceError {
 
 pub(super) fn wall_clock_error(limit_ms: u64) -> HostServiceError {
     HostServiceError::new(
-        "ERR_AGENTOS_WASMTIME_WALL_CLOCK_LIMIT",
+        "ERR_AGENTOS_WASM_WALL_CLOCK_LIMIT",
         "WebAssembly execution exceeded its wall-clock budget",
     )
     .with_details(serde_json::json!({
@@ -130,9 +158,10 @@ mod tests {
                 "RuntimeError: divide result unrepresentable",
                 "integer-overflow",
             ),
+            ("RuntimeError: illegal cast", "cast-failure"),
             (
-                "RangeError: Maximum call stack size exceeded",
-                "stack-overflow",
+                "RuntimeError: array element access out of bounds",
+                "array-out-of-bounds",
             ),
             ("Error: something else", "other"),
         ] {
@@ -140,5 +169,7 @@ mod tests {
             assert_eq!(error.code, "ERR_AGENTOS_WASM_TRAP");
             assert_eq!(error.details.expect("details")["trapKind"], kind);
         }
+        let error = classify_trap("RangeError: Maximum call stack size exceeded");
+        assert_eq!(error.code, "ERR_AGENTOS_WASM_STACK_EXHAUSTED");
     }
 }

@@ -92,9 +92,7 @@ impl WasmtimeModuleCache {
         }
         let started = Instant::now();
         let module = Arc::new(Module::new(engine, bytes).map_err(|error| {
-            eprintln!(
-                "ERR_AGENTOS_WASMTIME_MODULE_COMPILE: private compiler diagnostic: {error:#}"
-            );
+            eprintln!("ERR_AGENTOS_WASM_MODULE_COMPILE: private compiler diagnostic: {error:#}");
             HostServiceError::new(
                 "ERR_AGENTOS_WASM_INVALID_MODULE",
                 "WebAssembly module could not be compiled for the configured feature profile",

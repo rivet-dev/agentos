@@ -211,7 +211,9 @@ pub(crate) fn run_with_limits(
                     }
                     "process.exec" | "process.exec_fd_image_commit" => {
                         exec_commits += 1;
-                        reply.succeed_json(Value::Null).unwrap();
+                        reply
+                            .succeed_json(json!({ "committed": true, "permissionTier": "full" }))
+                            .unwrap();
                     }
                     "process.getppid" => {
                         parent_reads += 1;

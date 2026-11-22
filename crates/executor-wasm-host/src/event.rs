@@ -26,7 +26,7 @@ impl QueuedWasmEvent {
                     .reserve(ResourceClass::AsyncCompletionBytes, retained_bytes)
                     .map_err(|error| {
                         HostServiceError::new(
-                            "ERR_AGENTOS_WASMTIME_EVENT_BYTES_LIMIT",
+                            "ERR_AGENTOS_WASM_EVENT_BYTES_LIMIT",
                             error.to_string(),
                         )
                         .with_details(serde_json::json!({

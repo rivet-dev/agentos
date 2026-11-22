@@ -691,7 +691,7 @@ async fn exec<C: WasmGuest>(caller: &mut C, params: &[Val], by_fd: bool) -> i32 
                     .await
                 {
                     eprintln!(
-                        "ERR_AGENTOS_WASMTIME_IMAGE_CLOSE: exec preflight failed ({error}); close failed: {close}"
+                        "ERR_AGENTOS_WASM_IMAGE_CLOSE: exec preflight failed ({error}); close failed: {close}"
                     );
                     return errno(&close);
                 }
@@ -784,7 +784,7 @@ async fn exec<C: WasmGuest>(caller: &mut C, params: &[Val], by_fd: bool) -> i32 
         }
         Err(error) => {
             eprintln!(
-                "ERR_AGENTOS_WASMTIME_EXEC_COMMIT: method={method} command={command:?} code={} message={}",
+                "ERR_AGENTOS_WASM_EXEC_COMMIT: method={method} command={command:?} code={} message={}",
                 error.code, error.message
             );
             return errno(&error);
@@ -1516,7 +1516,7 @@ async fn cancel_record_lock_wait<C: WasmGuest>(caller: &mut C) {
     let status = simple_call(caller, "process.fd_record_lock_cancel", Vec::new()).await;
     if status != SUCCESS && status != ERRNO_INTR {
         eprintln!(
-            "ERR_AGENTOS_WASMTIME_RECORD_LOCK_CANCEL: failed to cancel a blocking record-lock wait: errno={status}"
+            "ERR_AGENTOS_WASM_RECORD_LOCK_CANCEL: failed to cancel a blocking record-lock wait: errno={status}"
         );
     }
 }
@@ -1779,7 +1779,7 @@ async fn rollback_fds<C: WasmGuest>(caller: &mut C, fds: &[u32]) {
 async fn log_fd_rollback<C: WasmGuest>(caller: &mut C, fd: u32, context: &'static str) {
     let error = simple_call(caller, "process.fd_close", vec![json!(fd)]).await;
     if error != SUCCESS {
-        eprintln!("ERR_AGENTOS_WASMTIME_FD_ROLLBACK: context={context} fd={fd} errno={error}");
+        eprintln!("ERR_AGENTOS_WASM_FD_ROLLBACK: context={context} fd={fd} errno={error}");
     }
 }
 
@@ -2063,7 +2063,7 @@ mod cross_runtime_cpu_tests {
         assert_eq!(commits, 0, "exhausted cross-runtime exec must not commit");
         assert_eq!(
             result.unwrap_err().code,
-            "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT"
+            "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT"
         );
     }
 }

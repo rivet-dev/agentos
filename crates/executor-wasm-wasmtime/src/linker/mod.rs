@@ -219,13 +219,13 @@ impl WasmGuest for WasmtimeGuest<'_, '_> {
                 .and_then(|export| export.into_func())
                 .ok_or_else(|| {
                     agentos_executor_wasm_host::format_err!(
-                        "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: caught signal has no trampoline"
+                        "ERR_AGENTOS_WASM_SIGNAL_TRAMPOLINE: caught signal has no trampoline"
                     )
                 })?
                 .typed::<i32, ()>(&mut *self.caller)
                 .map_err(|error| {
                     agentos_executor_wasm_host::format_err!(
-                        "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: invalid trampoline type: {error}"
+                        "ERR_AGENTOS_WASM_SIGNAL_TRAMPOLINE: invalid trampoline type: {error}"
                     )
                 })?;
             trampoline
@@ -284,11 +284,9 @@ pub async fn initialize_inherited_signal_mask(
     let setter = instance
         .get_typed_func::<(i32, i32), i32>(&mut *store, "__agentos_set_initial_sigmask")
         .map_err(|error| {
-            eprintln!(
-                "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK: private export diagnostic: {error:#}"
-            );
+            eprintln!("ERR_AGENTOS_WASM_INITIAL_SIGNAL_MASK: private export diagnostic: {error:#}");
             HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK",
+                "ERR_AGENTOS_WASM_INITIAL_SIGNAL_MASK",
                 "WebAssembly module cannot initialize its inherited signal mask",
             )
         })?;
@@ -299,7 +297,7 @@ pub async fn initialize_inherited_signal_mask(
     store.data().check_active_cpu_budget()?;
     if status != 0 {
         return Err(HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK",
+            "ERR_AGENTOS_WASM_INITIAL_SIGNAL_MASK",
             format!("inherited signal-mask initialization failed with errno {status}"),
         ));
     }
@@ -310,16 +308,14 @@ fn initial_signal_mask_error(error: wasmtime::Error) -> HostServiceError {
     if let Some(host_error) = error.downcast_ref::<HostServiceError>() {
         if matches!(
             host_error.code.as_str(),
-            "ERR_AGENTOS_WASMTIME_CPU_CLOCK" | "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT"
+            "ERR_AGENTOS_WASM_CPU_CLOCK" | "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT"
         ) {
             return host_error.clone();
         }
     }
-    eprintln!(
-        "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK: private initialization diagnostic: {error:#}"
-    );
+    eprintln!("ERR_AGENTOS_WASM_INITIAL_SIGNAL_MASK: private initialization diagnostic: {error:#}");
     HostServiceError::new(
-        "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK",
+        "ERR_AGENTOS_WASM_INITIAL_SIGNAL_MASK",
         "inherited signal-mask initialization trapped",
     )
 }
@@ -397,13 +393,10 @@ mod tests {
     #[test]
     fn process_exit_preserves_cpu_error_metadata() {
         for code in [
-            "ERR_AGENTOS_WASMTIME_CPU_CLOCK",
-            "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT",
+            "ERR_AGENTOS_WASM_CPU_CLOCK",
+            "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT",
         ] {
-            for default in [
-                "ERR_AGENTOS_WASMTIME_INSTANTIATE",
-                "ERR_AGENTOS_WASMTIME_TRAP",
-            ] {
+            for default in ["ERR_AGENTOS_WASM_INSTANTIATE", "ERR_AGENTOS_WASM_TRAP"] {
                 let original = HostServiceError::new(code, "stable CPU error")
                     .with_details(serde_json::json!({"limitName": "limits.wasm.activeCpuTimeLimitMs", "limit": 10, "observed": 12}));
                 let wrapped =
@@ -430,8 +423,8 @@ mod tests {
     #[test]
     fn initial_signal_mask_preserves_cpu_error_metadata() {
         for code in [
-            "ERR_AGENTOS_WASMTIME_CPU_CLOCK",
-            "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT",
+            "ERR_AGENTOS_WASM_CPU_CLOCK",
+            "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT",
         ] {
             let original = HostServiceError::new(code, "stable CPU error")
                 .with_details(serde_json::json!({"limitName": "limits.wasm.activeCpuTimeLimitMs"}));

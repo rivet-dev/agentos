@@ -82,12 +82,12 @@ impl Control {
         let mut checkpoints = self.signal_checkpoints.lock().map_err(|_| {
             HostServiceError::new(
                 "EIO",
-                "ERR_AGENTOS_WASMTIME_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
+                "ERR_AGENTOS_WASM_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
             )
         })?;
         if checkpoints.len() >= self.max_signal_checkpoints {
             return Err(HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_SIGNAL_CHECKPOINT_LIMIT",
+                "ERR_AGENTOS_WASM_SIGNAL_CHECKPOINT_LIMIT",
                 "Wasmtime signal checkpoint inbox is full",
             )
             .with_details(serde_json::json!({
@@ -97,7 +97,7 @@ impl Control {
         }
         if checkpoints.len().saturating_add(1) * 5 >= self.max_signal_checkpoints * 4 {
             eprintln!(
-                "WARN_AGENTOS_WASMTIME_SIGNAL_CHECKPOINT_LIMIT: signal checkpoint inbox is at {}/{} entries",
+                "WARN_AGENTOS_WASM_SIGNAL_CHECKPOINT_LIMIT: signal checkpoint inbox is at {}/{} entries",
                 checkpoints.len().saturating_add(1),
                 self.max_signal_checkpoints
             );
@@ -128,7 +128,7 @@ impl Control {
         let mut checkpoints = self.signal_checkpoints.lock().map_err(|_| {
             HostServiceError::new(
                 "EIO",
-                "ERR_AGENTOS_WASMTIME_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
+                "ERR_AGENTOS_WASM_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
             )
         })?;
         let Some(position) = checkpoints.iter().position(|(pending_identity, delivery)| {
@@ -147,7 +147,7 @@ impl Control {
         let mut checkpoints = self.signal_checkpoints.lock().map_err(|_| {
             HostServiceError::new(
                 "EIO",
-                "ERR_AGENTOS_WASMTIME_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
+                "ERR_AGENTOS_WASM_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
             )
         })?;
         checkpoints.retain(|(pending_identity, _)| *pending_identity != identity);
@@ -351,7 +351,7 @@ impl WasmtimeExecution {
                 );
                 if done_sender.send(()).is_err() {
                     eprintln!(
-                        "ERR_AGENTOS_WASMTIME_TEARDOWN_CHANNEL: worker completion receiver was dropped"
+                        "ERR_AGENTOS_WASM_TEARDOWN_CHANNEL: worker completion receiver was dropped"
                     );
                 }
             })
@@ -384,11 +384,11 @@ impl WasmtimeExecution {
                 self.host.notify.notify_waiters();
             }
             Ok(_) => eprintln!(
-                "ERR_AGENTOS_WASMTIME_HOST_ALREADY_BOUND: ignored duplicate host capability binding"
+                "ERR_AGENTOS_WASM_HOST_ALREADY_BOUND: ignored duplicate host capability binding"
             ),
-            Err(_) => eprintln!(
-                "ERR_AGENTOS_WASMTIME_HOST_LATCH_POISONED: failed to bind host capabilities"
-            ),
+            Err(_) => {
+                eprintln!("ERR_AGENTOS_WASM_HOST_LATCH_POISONED: failed to bind host capabilities")
+            }
         }
     }
 
@@ -540,7 +540,7 @@ impl WasmtimeExecution {
                 }
             }
             Err(error) => eprintln!(
-                "ERR_AGENTOS_WASMTIME_TEARDOWN_TIMEOUT: guest executor did not stop within {} ms: {error}",
+                "ERR_AGENTOS_WASM_TEARDOWN_TIMEOUT: guest executor did not stop within {} ms: {error}",
                 self.teardown_timeout.as_millis()
             ),
         }
@@ -621,7 +621,7 @@ async fn run_execution(
         .lock()
         .map_err(|_| {
             HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_CONTROL_POISONED",
+                "ERR_AGENTOS_WASM_CONTROL_POISONED",
                 "Wasmtime Engine control slot is poisoned",
             )
         })?
@@ -644,7 +644,7 @@ async fn run_execution(
             Err(_) => {
                 control.interrupt();
                 Err(HostServiceError::new(
-                    "ERR_AGENTOS_WASMTIME_WALL_CLOCK_LIMIT",
+                    "ERR_AGENTOS_WASM_WALL_CLOCK_LIMIT",
                     "Wasmtime execution exceeded its wall-clock budget",
                 )
                 .with_details(serde_json::json!({
@@ -665,7 +665,7 @@ async fn run_execution(
         if let Some(line) = diagnostics.line(reason, &module_path) {
             if let Err(error) = host.publish_stderr(line).await {
                 eprintln!(
-                    "ERR_AGENTOS_WASMTIME_DIAGNOSTICS_PUBLISH: failed to publish phase diagnostics: {}: {}",
+                    "ERR_AGENTOS_WASM_DIAGNOSTICS_PUBLISH: failed to publish phase diagnostics: {}: {}",
                     error.code, error.message
                 );
             }
@@ -819,7 +819,7 @@ async fn run_loaded_module_bytes(
             .instantiate_async(&mut store, &module)
             .await
             .map_err(|error| {
-                super::error::normalize("ERR_AGENTOS_WASMTIME_INSTANTIATE", &error, false)
+                super::error::normalize("ERR_AGENTOS_WASM_INSTANTIATE", &error, false)
             })?;
         store.data().check_active_cpu_budget()?;
         diagnostics.phase("Instance", instantiate_started.elapsed());
@@ -831,11 +831,9 @@ async fn run_loaded_module_bytes(
         let start = instance
             .get_typed_func::<(), ()>(&mut store, "_start")
             .map_err(|error| {
-                eprintln!(
-                    "ERR_AGENTOS_WASMTIME_ENTRYPOINT: private entrypoint diagnostic: {error:#}"
-                );
+                eprintln!("ERR_AGENTOS_WASM_ENTRYPOINT: private entrypoint diagnostic: {error:#}");
                 HostServiceError::new(
-                    "ERR_AGENTOS_WASMTIME_ENTRYPOINT",
+                    "ERR_AGENTOS_WASM_ENTRYPOINT",
                     "WebAssembly module does not export a valid _start function",
                 )
             })?;
@@ -940,7 +938,7 @@ async fn run_loaded_module_bytes(
                     ));
                 }
                 let normalized = super::error::normalize(
-                    "ERR_AGENTOS_WASMTIME_TRAP",
+                    "ERR_AGENTOS_WASM_TRAP",
                     &error,
                     store.data().canceled(),
                 );
@@ -1046,7 +1044,7 @@ async fn wait_for_host(
             .lock()
             .map_err(|_| {
                 HostServiceError::new(
-                    "ERR_AGENTOS_WASMTIME_HOST_LATCH_POISONED",
+                    "ERR_AGENTOS_WASM_HOST_LATCH_POISONED",
                     "Wasmtime host capability latch is poisoned",
                 )
             })?
@@ -1126,7 +1124,7 @@ fn publish_worker_event(
         }
     };
     if sender.send(event).is_err() {
-        eprintln!("ERR_AGENTOS_WASMTIME_EVENT_CHANNEL: execution event receiver was dropped");
+        eprintln!("ERR_AGENTOS_WASM_EVENT_CHANNEL: execution event receiver was dropped");
     } else if let Some(notify) = notify {
         notify.notify_one();
     }
@@ -1188,7 +1186,7 @@ mod tests {
             QueuedWasmtimeEvent::new(&resources, Ok(WasmExecutionEvent::Stderr(vec![0])), 1)
                 .err()
                 .expect("over-bound event must fail");
-        assert_eq!(error.code, "ERR_AGENTOS_WASMTIME_EVENT_BYTES_LIMIT");
+        assert_eq!(error.code, "ERR_AGENTOS_WASM_EVENT_BYTES_LIMIT");
         drop(event);
         assert_eq!(resources.usage(ResourceClass::AsyncCompletionBytes).used, 0);
     }

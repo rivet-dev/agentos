@@ -210,7 +210,7 @@ fn record(state: *mut GuestState, error: agentos_executor_wasm_host::Error) {
             eprintln!("ERR_AGENTOS_WASM_HOST_IMPORT: private import diagnostic: {message}");
             Unwind::Failed(
                 HostServiceError::new(
-                    "ERR_AGENTOS_WASMTIME_TRAP",
+                    "ERR_AGENTOS_WASM_TRAP",
                     "WebAssembly validation or execution failed",
                 )
                 .with_details(serde_json::json!({ "engine": "v8" })),
@@ -219,7 +219,7 @@ fn record(state: *mut GuestState, error: agentos_executor_wasm_host::Error) {
         Error::Engine(error) => match error.downcast::<HostServiceError>() {
             Ok(error) => Unwind::Failed(*error),
             Err(_) => Unwind::Failed(HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_TRAP",
+                "ERR_AGENTOS_WASM_TRAP",
                 "WebAssembly validation or execution failed",
             )),
         },
@@ -309,7 +309,7 @@ impl WasmGuest for V8Guest<'_, '_, '_> {
         let Some(trampoline) = trampoline else {
             return Box::pin(std::future::ready(Err(
                 agentos_executor_wasm_host::format_err!(
-                    "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: caught signal has no trampoline"
+                    "ERR_AGENTOS_WASM_SIGNAL_TRAMPOLINE: caught signal has no trampoline"
                 ),
             )));
         };

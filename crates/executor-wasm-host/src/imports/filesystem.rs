@@ -892,7 +892,7 @@ async fn resource_u32<C: WasmGuest>(
     if memory::validate_range(caller, output, 4).is_err() {
         if let Err(error) = call(caller, rollback_method, vec![json!(fd)], HashMap::new()).await {
             eprintln!(
-                "ERR_AGENTOS_WASMTIME_RESOURCE_ROLLBACK: method={rollback_method} resource={fd} code={}",
+                "ERR_AGENTOS_WASM_RESOURCE_ROLLBACK: method={rollback_method} resource={fd} code={}",
                 error.code
             );
         }

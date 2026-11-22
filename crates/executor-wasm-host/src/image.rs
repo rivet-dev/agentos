@@ -154,7 +154,7 @@ pub async fn read_open_executable_image_for_exec(
         (Ok(_), Err(error)) => Err(error),
         (Err(error), Err(close_error)) => {
             eprintln!(
-                "ERR_AGENTOS_WASMTIME_IMAGE_CLOSE: primary module-load error {}; image-close error {}",
+                "ERR_AGENTOS_WASM_IMAGE_CLOSE: primary module-load error {}; image-close error {}",
                 error, close_error
             );
             Err(error)
@@ -167,7 +167,7 @@ fn decode_open_image(
 ) -> Result<(u64, usize, Option<Vec<String>>), HostServiceError> {
     let HostCallReply::Json(value) = reply else {
         return Err(HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_IMAGE_REPLY",
+            "ERR_AGENTOS_WASM_IMAGE_REPLY",
             "executable-image open returned a non-JSON reply",
         ));
     };
@@ -202,7 +202,7 @@ async fn read_module_image(
 ) -> Result<Vec<u8>, HostServiceError> {
     if size > maximum {
         return Err(HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_MODULE_FILE_LIMIT",
+            "ERR_AGENTOS_WASM_MODULE_FILE_LIMIT",
             "WebAssembly module exceeds the configured executable-image limit",
         )
         .with_details(serde_json::json!({

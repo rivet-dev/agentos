@@ -73,7 +73,7 @@ pub fn threaded_group_memory_bytes(
 
 fn limit_overflow(name: &'static str) -> HostServiceError {
     HostServiceError::new(
-        "ERR_AGENTOS_WASMTIME_LIMIT_CONFIG",
+        "ERR_AGENTOS_WASM_LIMIT_CONFIG",
         format!("{name} does not fit this platform"),
     )
     .with_details(serde_json::json!({ "limitName": name }))

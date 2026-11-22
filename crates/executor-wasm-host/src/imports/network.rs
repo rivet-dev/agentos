@@ -660,7 +660,7 @@ async fn wait_for_fd_ready<C: WasmGuest>(
 async fn log_fd_rollback<C: WasmGuest>(caller: &mut C, fd: u32, context: &'static str) {
     let error = simple_call(caller, "process.fd_close", vec![json!(fd)]).await;
     if error != SUCCESS {
-        eprintln!("ERR_AGENTOS_WASMTIME_FD_ROLLBACK: context={context} fd={fd} errno={error}");
+        eprintln!("ERR_AGENTOS_WASM_FD_ROLLBACK: context={context} fd={fd} errno={error}");
     }
 }
 

@@ -205,7 +205,7 @@ fn cache_poisoned<T>(_: T) -> HostServiceError {
 }
 
 fn memory_limit_error(message: String) -> HostServiceError {
-    HostServiceError::new("ERR_AGENTOS_WASMTIME_MEMORY_LIMIT", message)
+    HostServiceError::new("ERR_AGENTOS_WASM_MEMORY_LIMIT", message)
         .with_details(serde_json::json!({ "limitName": "limits.resources.maxWasmMemoryBytes" }))
 }
 
@@ -369,6 +369,6 @@ mod tests {
     fn initial_memory_over_the_limit_fails() {
         let bytes = wat::parse_str("(module (memory 8))").unwrap();
         let error = rewrite_memory_section(&bytes, 4).unwrap_err();
-        assert_eq!(error.code, "ERR_AGENTOS_WASMTIME_MEMORY_LIMIT");
+        assert_eq!(error.code, "ERR_AGENTOS_WASM_MEMORY_LIMIT");
     }
 }

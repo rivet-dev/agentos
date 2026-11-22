@@ -112,9 +112,7 @@ impl ExecutionDiagnostics {
             return None;
         }
         let state = self.state.lock().unwrap_or_else(|poisoned| {
-            eprintln!(
-                "ERR_AGENTOS_WASMTIME_DIAGNOSTICS_POISONED: recovering phase diagnostic state"
-            );
+            eprintln!("ERR_AGENTOS_WASM_DIAGNOSTICS_POISONED: recovering phase diagnostic state");
             poisoned.into_inner()
         });
         let phases = state
@@ -151,9 +149,7 @@ impl ExecutionDiagnostics {
 
     fn with_state<T>(&self, update: impl FnOnce(&mut DiagnosticState) -> T) -> T {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| {
-            eprintln!(
-                "ERR_AGENTOS_WASMTIME_DIAGNOSTICS_POISONED: recovering phase diagnostic state"
-            );
+            eprintln!("ERR_AGENTOS_WASM_DIAGNOSTICS_POISONED: recovering phase diagnostic state");
             poisoned.into_inner()
         });
         update(&mut state)

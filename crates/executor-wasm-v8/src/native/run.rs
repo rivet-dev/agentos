@@ -185,7 +185,7 @@ fn run_images(
         )?;
         if !admitted.has_valid_start {
             return Err(HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_ENTRYPOINT",
+                "ERR_AGENTOS_WASM_ENTRYPOINT",
                 "WebAssembly module does not export a valid _start function",
             ));
         }
@@ -320,7 +320,7 @@ fn run_image(
         if diagnostic.contains("Out of memory") || diagnostic.contains("could not allocate memory")
         {
             return Err(HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_MEMORY_LIMIT",
+                "ERR_AGENTOS_WASM_MEMORY_LIMIT",
                 "WebAssembly initial memory exceeds the configured linear-memory limit",
             )
             .with_details(serde_json::json!({
@@ -386,7 +386,7 @@ fn initialize_inherited_signal_mask(
     };
     let setter_error = || {
         HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK",
+            "ERR_AGENTOS_WASM_INITIAL_SIGNAL_MASK",
             "WebAssembly module cannot initialize its inherited signal mask",
         )
     };
@@ -406,11 +406,11 @@ fn initialize_inherited_signal_mask(
     match status {
         Some(0) => Ok(()),
         Some(errno) => Err(HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK",
+            "ERR_AGENTOS_WASM_INITIAL_SIGNAL_MASK",
             format!("inherited signal-mask initialization failed with errno {errno}"),
         )),
         None => Err(HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK",
+            "ERR_AGENTOS_WASM_INITIAL_SIGNAL_MASK",
             "inherited signal-mask initialization trapped",
         )),
     }
@@ -445,7 +445,7 @@ fn export_function<'s>(
         .and_then(|export| v8::Local::<v8::Function>::try_from(export).ok())
         .ok_or_else(|| {
             HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_ENTRYPOINT",
+                "ERR_AGENTOS_WASM_ENTRYPOINT",
                 "WebAssembly module does not export a valid _start function",
             )
         })
@@ -521,7 +521,7 @@ impl Watchdog {
                 limit,
                 current_thread_cpu_clock().ok_or_else(|| {
                     HostServiceError::new(
-                        "ERR_AGENTOS_WASMTIME_CPU_CLOCK",
+                        "ERR_AGENTOS_WASM_CPU_CLOCK",
                         "this platform exposes no per-thread CPU clock to enforce limits.wasm.activeCpuTimeLimitMs",
                     )
                 })?,

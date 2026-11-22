@@ -12,3 +12,7 @@ This crate implements every agentOS WASM host import (Preview1 plus the
   host operations and adapter calls; they own no descriptor, process, or
   filesystem state.
 - Shared ABI/profile/error types belong in `agentos-executor-wasm-abi`.
+- Errors for outcomes both engines share use `ERR_AGENTOS_WASM_*` codes and
+  engine-neutral messages. Reserve `ERR_AGENTOS_WASMTIME_*` and
+  `ERR_AGENTOS_V8_*` for failures in that engine's own machinery. Map every
+  trap either engine can raise to a shared `trapKind`.

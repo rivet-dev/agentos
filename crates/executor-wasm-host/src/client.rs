@@ -149,7 +149,7 @@ impl WasmHostClient {
         if self.canceled() {
             return Err(HostServiceError::new(
                 "ECANCELED",
-                "Wasmtime execution was canceled before host-call admission",
+                "WebAssembly execution was canceled before host-call admission",
             ));
         }
         if let Some(worker) = self.worker.as_ref() {
@@ -163,7 +163,7 @@ impl WasmHostClient {
             .map_err(|_| {
                 HostServiceError::new(
                     "EOVERFLOW",
-                    "Wasmtime host-call identity space is exhausted",
+                    "WebAssembly host-call identity space is exhausted",
                 )
             })?;
         let process = self.process;
@@ -173,7 +173,7 @@ impl WasmHostClient {
             call_id,
         };
         let host = self.host.as_ref().ok_or_else(|| {
-            HostServiceError::new("EIO", "direct Wasmtime host capability is unavailable")
+            HostServiceError::new("EIO", "direct WebAssembly host capability is unavailable")
         })?;
         let admission = host.admit_request(retained_request_bytes)?;
         let (reply, receiver) = direct_host_reply_channel(identity, self.max_host_reply_bytes)?;
@@ -182,7 +182,7 @@ impl WasmHostClient {
             reply = receiver => reply,
             () = self.cancel_notify.notified() => Err(HostServiceError::new(
                 "ECANCELED",
-                "Wasmtime execution was canceled while awaiting a host operation",
+                "WebAssembly execution was canceled while awaiting a host operation",
             )),
         }
     }
@@ -212,7 +212,7 @@ impl WasmHostClient {
         if self.canceled() {
             return Err(HostServiceError::new(
                 "ECANCELED",
-                "Wasmtime execution was canceled before adapter-call admission",
+                "WebAssembly execution was canceled before adapter-call admission",
             ));
         }
         if let Some(worker) = self.worker.as_ref() {
@@ -228,7 +228,7 @@ impl WasmHostClient {
             .map_err(|_| {
                 HostServiceError::new(
                     "EOVERFLOW",
-                    "Wasmtime host-call identity space is exhausted",
+                    "WebAssembly host-call identity space is exhausted",
                 )
             })?;
         let process = self.process;
@@ -251,7 +251,7 @@ impl WasmHostClient {
                 serde_json::to_vec(&request.args)
                     .map_err(|error| {
                         HostServiceError::new(
-                            "ERR_AGENTOS_WASMTIME_HOST_CALL_ENCODING",
+                            "ERR_AGENTOS_WASM_HOST_CALL_ENCODING",
                             error.to_string(),
                         )
                     })?
@@ -266,7 +266,7 @@ impl WasmHostClient {
             .ok_or_else(|| {
                 HostServiceError::new(
                     "EOVERFLOW",
-                    "Wasmtime host-call retained byte accounting overflowed",
+                    "WebAssembly host-call retained byte accounting overflowed",
                 )
             })?;
         let event = QueuedWasmEvent::new(
@@ -277,11 +277,11 @@ impl WasmHostClient {
         tokio::select! {
             result = self.events.send_async(event) => result.map_err(|_| HostServiceError::new(
                 "EPIPE",
-                "Wasmtime host-call event receiver was dropped",
+                "WebAssembly host-call event receiver was dropped",
             ))?,
             () = self.cancel_notify.notified() => return Err(HostServiceError::new(
                 "ECANCELED",
-                "Wasmtime execution was canceled while admitting an adapter call",
+                "WebAssembly execution was canceled while admitting an adapter call",
             )),
         }
         if let Some(notify) = self.event_notify.as_ref() {
@@ -291,7 +291,7 @@ impl WasmHostClient {
             reply = receiver => reply,
             () = self.cancel_notify.notified() => Err(HostServiceError::new(
                 "ECANCELED",
-                "Wasmtime execution was canceled while awaiting an adapter call",
+                "WebAssembly execution was canceled while awaiting an adapter call",
             )),
         }
     }
@@ -310,12 +310,12 @@ impl WasmHostClient {
             result = self.events.send_async(event) => {
                 result.map_err(|_| HostServiceError::new(
                     "EPIPE",
-                    "Wasmtime stderr event receiver was dropped",
+                    "WebAssembly stderr event receiver was dropped",
                 ))?;
             }
             () = self.cancel_notify.notified() => return Err(HostServiceError::new(
                 "ECANCELED",
-                "Wasmtime execution was canceled while publishing stderr",
+                "WebAssembly execution was canceled while publishing stderr",
             )),
         }
         if let Some(notify) = self.event_notify.as_ref() {
@@ -357,7 +357,7 @@ pub fn max_host_reply_bytes(
         .transpose()
         .map_err(|_| {
             HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_LIMIT_CONFIG",
+                "ERR_AGENTOS_WASM_LIMIT_CONFIG",
                 "limits.reactor.maxBridgeResponseBytes does not fit this platform",
             )
         })
@@ -366,8 +366,8 @@ pub fn max_host_reply_bytes(
 
 pub fn active_cpu_limit_error(limit_ns: u64, observed_ns: u64) -> HostServiceError {
     HostServiceError::new(
-        "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT",
-        "Wasmtime execution exhausted its aggregate active CPU budget; raise limits.wasm.activeCpuTimeLimitMs",
+        "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT",
+        "WebAssembly execution exhausted its aggregate active CPU budget; raise limits.wasm.activeCpuTimeLimitMs",
     )
     .with_details(serde_json::json!({ "limitName": "limits.wasm.activeCpuTimeLimitMs", "limit": limit_ns / 1_000_000, "observed": observed_ns / 1_000_000 }))
 }
@@ -380,9 +380,9 @@ pub fn cpu_time_ns(process_wide: bool) -> Result<u64, HostServiceError> {
         nix::time::ClockId::CLOCK_THREAD_CPUTIME_ID
     };
     let value = nix::time::clock_gettime(clock).map_err(|error| {
-        eprintln!("ERR_AGENTOS_WASMTIME_CPU_CLOCK: private clock diagnostic: {error}");
+        eprintln!("ERR_AGENTOS_WASM_CPU_CLOCK: private clock diagnostic: {error}");
         HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_CPU_CLOCK",
+            "ERR_AGENTOS_WASM_CPU_CLOCK",
             "failed to read execution CPU clock for limits.wasm.activeCpuTimeLimitMs",
         )
         .with_details(serde_json::json!({ "limitName": "limits.wasm.activeCpuTimeLimitMs" }))
@@ -397,7 +397,7 @@ pub fn cpu_time_ns(process_wide: bool) -> Result<u64, HostServiceError> {
         })
         .ok_or_else(|| {
             HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_CPU_CLOCK",
+                "ERR_AGENTOS_WASM_CPU_CLOCK",
                 "execution CPU clock for limits.wasm.activeCpuTimeLimitMs is outside its supported range",
             ).with_details(serde_json::json!({ "limitName": "limits.wasm.activeCpuTimeLimitMs" }))
         })
@@ -406,7 +406,7 @@ pub fn cpu_time_ns(process_wide: bool) -> Result<u64, HostServiceError> {
 #[cfg(not(unix))]
 pub fn cpu_time_ns(_process_wide: bool) -> Result<u64, HostServiceError> {
     Err(HostServiceError::new(
-        "ERR_AGENTOS_WASMTIME_CPU_CLOCK",
+        "ERR_AGENTOS_WASM_CPU_CLOCK",
         "execution CPU clock for limits.wasm.activeCpuTimeLimitMs is unsupported on this platform",
     )
     .with_details(serde_json::json!({ "limitName": "limits.wasm.activeCpuTimeLimitMs" })))

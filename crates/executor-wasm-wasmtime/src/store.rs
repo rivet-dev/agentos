@@ -106,7 +106,7 @@ impl WasmtimeStoreState {
                     .reserve(ResourceClass::WasmMemoryBytes, aggregate_memory_bytes)
                     .map_err(|error| {
                         HostServiceError::new(
-                            "ERR_AGENTOS_WASMTIME_AGGREGATE_MEMORY_LIMIT",
+                            "ERR_AGENTOS_WASM_AGGREGATE_MEMORY_LIMIT",
                             error.to_string(),
                         )
                         .with_details(serde_json::json!({
@@ -211,7 +211,7 @@ pub fn create_store(
     store.epoch_deadline_callback(|context| {
         if context.data().canceled() {
             return Err(wasmtime::format_err!(
-                "ERR_AGENTOS_WASMTIME_CANCELED: execution canceled"
+                "ERR_AGENTOS_WASM_CANCELED: execution canceled"
             ));
         }
         context
@@ -422,12 +422,12 @@ mod tests {
         let exhausted = replacement_main
             .check_active_cpu_budget_at(origin)
             .unwrap_err();
-        assert_eq!(exhausted.code, "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT");
+        assert_eq!(exhausted.code, "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT");
         assert_eq!(exhausted.details.unwrap()["limit"], 0);
         // The exec syscall queries this before sending CommitExec to the host.
         assert_eq!(
             replacement_main.remaining_active_cpu_ms().unwrap_err().code,
-            "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT"
+            "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT"
         );
     }
 

@@ -112,7 +112,7 @@ impl Control {
         let mut checkpoints = self.checkpoints()?;
         if checkpoints.len() >= self.max_signal_checkpoints {
             return Err(HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_SIGNAL_CHECKPOINT_LIMIT",
+                "ERR_AGENTOS_WASM_SIGNAL_CHECKPOINT_LIMIT",
                 "WebAssembly signal checkpoint inbox is full",
             )
             .with_details(serde_json::json!({
@@ -122,7 +122,7 @@ impl Control {
         }
         if checkpoints.len().saturating_add(1) * 5 >= self.max_signal_checkpoints * 4 {
             eprintln!(
-                "WARN_AGENTOS_WASMTIME_SIGNAL_CHECKPOINT_LIMIT: signal checkpoint inbox is at {}/{} entries",
+                "WARN_AGENTOS_WASM_SIGNAL_CHECKPOINT_LIMIT: signal checkpoint inbox is at {}/{} entries",
                 checkpoints.len().saturating_add(1),
                 self.max_signal_checkpoints
             );

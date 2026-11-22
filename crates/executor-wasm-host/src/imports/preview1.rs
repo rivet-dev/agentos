@@ -1154,7 +1154,7 @@ async fn path_open<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
                 .await
                 {
                     eprintln!(
-                        "ERR_AGENTOS_WASMTIME_FD_ROLLBACK: context=path_open output commit fd={opened} code={}",
+                        "ERR_AGENTOS_WASM_FD_ROLLBACK: context=path_open output commit fd={opened} code={}",
                         error.code
                     );
                 }
