@@ -49,14 +49,14 @@ jobs:
           # changes or the `ci: native-all` label, which is read on the next push.
           NATIVE_ALL: >-
             [
-            {"platform":"linux-x64-gnu","target":"x86_64-unknown-linux-gnu","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"linux-gnu","clang":"","tier":"linux"},
-            {"platform":"linux-arm64-gnu","target":"aarch64-unknown-linux-gnu","runner":"ubuntu-24.04-arm","dockerfile":"linux-gnu","clang":"","tier":"all"},
-            {"platform":"darwin-x64","target":"x86_64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"x86_64-apple-darwin20.4","tier":"all"},
-            {"platform":"darwin-arm64","target":"aarch64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"aarch64-apple-darwin20.4","tier":"all"}
+            {"platform":"linux-x64-gnu","target":"x86_64-unknown-linux-gnu","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"linux-gnu","clang":"","tier":"linux","smoke_runner":"ubuntu-24.04"},
+            {"platform":"linux-arm64-gnu","target":"aarch64-unknown-linux-gnu","runner":"ubuntu-24.04-arm","dockerfile":"linux-gnu","clang":"","tier":"all","smoke_runner":"ubuntu-24.04-arm"},
+            {"platform":"darwin-x64","target":"x86_64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"x86_64-apple-darwin20.4","tier":"all","smoke_runner":"macos-15"},
+            {"platform":"darwin-arm64","target":"aarch64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"aarch64-apple-darwin20.4","tier":"all","smoke_runner":"macos-15"}
             ]
         run: |
-          RUST='(\.rs$|(^|/)Cargo\.(toml|lock)$|^deny\.toml$|^rust-toolchain\.toml$|^docker/build/|^scripts/ci/v8/(archives\.json|source\.json|engine\.py|.*\.patch)$|^scripts/pipboy/|^\.github/workflows/pipboy\.yml$)'
-          PLATFORM_SENSITIVE='((^|/)Cargo\.(toml|lock)$|(^|/)build\.rs$|^docker/build/|^scripts/ci/v8/(archives\.json|source\.json|engine\.py|.*\.patch)$|^rust-toolchain\.toml$)'
+          RUST='(\.(rs|cc|h)$|(^|/)Cargo\.(toml|lock)$|^deny\.toml$|^rust-toolchain\.toml$|^docker/build/|^scripts/ci/v8/(archives\.json|source\.json|engine\.py|.*\.patch)$|^scripts/pipboy/|^\.github/workflows/pipboy\.yml$)'
+          PLATFORM_SENSITIVE='((^|/)Cargo\.(toml|lock)$|(^|/)build\.rs$|\.(cc|h)$|^docker/build/|^scripts/ci/v8/(archives\.json|source\.json|engine\.py|.*\.patch)$|^rust-toolchain\.toml$)'
           matrix() { jq -c --arg tier "$1" 'map(select($tier == "all" or .tier == $tier))' <<< "$NATIVE_ALL"; }
 
           if [ "$EVENT" != "pull_request" ]; then
@@ -318,6 +318,13 @@ jobs:
           cid="$(docker create pipboy-native)"
           docker cp "$cid:/artifacts/agentos-sidecar" "$RUNNER_TEMP/agentos-native-sidecar"
           docker rm "$cid"
+      # Transfer only the release binary, never Cargo or package caches.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-sidecar-${{ matrix.platform }}
+          path: ${{ runner.temp }}/agentos-native-sidecar
+          retention-days: 1
+          if-no-files-found: error
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       # No pnpm cache: this job runs fork code and doesn't need one.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -337,9 +344,44 @@ jobs:
           path: ${{ runner.temp }}/reports/native-agentos-native-sidecar-${{ matrix.platform }}.json
           retention-days: 90
 
+  native-smoke:
+    name: execute · ${{ matrix.platform }}
+    needs: [changes, native]
+    if: needs.changes.outputs.native != 'none'
+    runs-on: ${{ matrix.smoke_runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.native_matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: smoke-sidecar-${{ matrix.platform }}
+          path: ${{ runner.temp }}/native-smoke
+      - name: Enable x64 execution on the macOS arm64 host
+        if: matrix.platform == 'darwin-x64'
+        run: softwareupdate --install-rosetta --agree-to-license
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter '@rivet-dev/agentos...'
+      - name: Execute the release sidecar through its matching public client
+        env:
+          AGENTOS_SIDECAR_BIN: ${{ runner.temp }}/native-smoke/agentos-native-sidecar
+        run: |
+          chmod +x "$AGENTOS_SIDECAR_BIN"
+          pnpm --dir packages/core exec vitest run tests/native-platform-smoke.test.ts --reporter=verbose
+
   report:
     name: report
-    needs: [changes, footprint, hygiene, native]
+    needs: [changes, footprint, hygiene, native, native-smoke]
     # Not `always()`: a run cancelled by a newer push must not post its partial results.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest

@@ -58,7 +58,7 @@ pub(crate) fn plan_native_terminal_stack() -> Result<NativeTerminalStackPlan, St
     let error = unsafe { agentos_v8_plan_terminal_stack(&mut plan) };
     if error != 0 {
         return Err(format!(
-            "ERR_AGENTOS_NATIVE_STACK_RESERVE: cannot reserve terminal stack on this thread: {}; requires supported Linux x86-64 non-ASan stack with room for the guest budget, terminal reserve and OS guard",
+            "ERR_AGENTOS_NATIVE_STACK_RESERVE: cannot reserve terminal stack on this thread: {}; requires a supported Linux/macOS x86-64/ARM64 non-ASan stack with room for the guest budget, terminal reserve and OS guard",
             std::io::Error::from_raw_os_error(error)
         ));
     }
@@ -1379,5 +1379,40 @@ mod memory_budget_tests {
             budget_free(&budget, allocation, 16);
             assert_eq!(budget.used.load(Ordering::Acquire), 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod native_stack_tests {
+    use super::*;
+
+    #[test]
+    fn native_stack_plan_preserves_reserves_and_rejects_small_stacks() {
+        thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let plan = plan_native_terminal_stack().expect("supported worker stack");
+                assert!(plan.stack_low < plan.setup_sp && plan.setup_sp < plan.stack_high);
+                assert_eq!(plan.setup_sp - plan.ordinary_limit, 984 * 1024);
+                assert_eq!(plan.ordinary_limit - plan.terminal_limit, 128 * 1024);
+                assert!(plan.terminal_limit >= plan.stack_low + plan.guard_bytes + 64 * 1024);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let error = plan_native_terminal_stack()
+                    .err()
+                    .expect("undersized stack rejected");
+                assert!(
+                    error.contains("ERR_AGENTOS_NATIVE_STACK_RESERVE"),
+                    "{error}"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
