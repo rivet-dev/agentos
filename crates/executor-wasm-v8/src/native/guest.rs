@@ -119,7 +119,7 @@ pub(super) fn v8_string<'s>(
 fn import_callback<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     args: v8::FunctionCallbackArguments<'s>,
-    mut rv: v8::ReturnValue,
+    rv: v8::ReturnValue,
 ) {
     let Ok(external) = v8::Local::<v8::External>::try_from(args.data()) else {
         eprintln!("ERR_AGENTOS_WASM_LINK: host import is missing its binding data");
@@ -136,6 +136,32 @@ fn import_callback<'s>(
         scope.terminate_execution();
         return;
     }
+    // V8 calls this through an `extern "C"` boundary, where a panic would
+    // abort the whole sidecar. Contain it to this guest, as Wasmtime does.
+    // Each nested import call has its own guard, so a panic never unwinds
+    // through V8 frames.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_import(scope, args, rv, binding, state)
+    }));
+    if outcome.is_err() {
+        record(
+            state,
+            agentos_executor_wasm_host::Error::Host(HostServiceError::new(
+                "ERR_AGENTOS_WASM_HOST_PANIC",
+                "a WebAssembly host import failed unexpectedly; the guest was stopped",
+            )),
+        );
+        scope.terminate_execution();
+    }
+}
+
+fn run_import<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+    binding: &BindingData,
+    state: *mut GuestState,
+) {
     let signature = core_signature(binding.abi.signature);
     let mut params = Vec::with_capacity(signature.params.len());
     for (index, ty) in signature.params.iter().enumerate() {
