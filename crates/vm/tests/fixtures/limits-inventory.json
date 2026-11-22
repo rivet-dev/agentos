@@ -2702,6 +2702,12 @@
 		"rationale": "Linux IOV_MAX-compatible vectored-I/O ceiling kept identical to the V8-WASM adapter."
 	},
 	{
+		"name": "MAX_SOCKET_MESSAGE_BYTES",
+		"path": "crates/executor-wasm-host/src/imports/network.rs",
+		"class": "invariant",
+		"rationale": "Per-call recvmsg payload ceiling; the guest receives one datagram at a time and larger requests fail with EMSGSIZE and a typed limit warning."
+	},
+	{
 		"name": "MAX_POLL_SUBSCRIPTIONS",
 		"path": "crates/executor-wasm-host/src/imports/preview1.rs",
 		"class": "invariant",

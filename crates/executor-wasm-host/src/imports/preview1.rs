@@ -73,6 +73,11 @@ const ERRNO_XDEV: i32 = 75;
 pub(super) const ERRNO_NODATA: i32 = 78;
 
 const MAX_IOVECS: usize = 1024;
+
+/// The vectored-I/O ceiling, shared with the socket message handlers.
+pub(super) fn max_iovecs() -> usize {
+    MAX_IOVECS
+}
 const MAX_POLL_SUBSCRIPTIONS: usize = 1024;
 
 pub async fn dispatch<C: WasmGuest>(
@@ -618,36 +623,119 @@ async fn fd_write<C: WasmGuest>(caller: &mut C, params: &[Val], positioned: bool
     if memory::validate_range(caller, result_ptr, 4).is_err() {
         return ERRNO_FAULT;
     }
-    // A write may likewise complete short. Keeping each owned request within
-    // the configured payload cap lets libc retry without retaining an
-    // attacker-sized duplicate of guest memory across the async host wait.
+    // Each host request carries at most one bounded chunk so no
+    // attacker-sized duplicate of guest memory is retained across the async
+    // host wait. A blocking write keeps going until every offered byte is
+    // written, as Linux does for ttys, pipes and files; a nonblocking one
+    // returns the first short count.
     let maximum = caller.data().host.max_host_reply_bytes();
-    let bytes = match collect_iovecs(caller, &iovecs, maximum) {
+    let offered = match iovec_total(&iovecs) {
         Ok(value) => value,
         Err(error) => return error,
     };
-    if iovec_total(&iovecs).is_ok_and(|offered| offered != 0) && bytes.is_empty() {
-        return ERRNO_2BIG;
-    }
-    let mut args = vec![json!(fd), Value::Null];
-    let method = if positioned {
-        let Ok(offset) = i64_arg(params, 3) else {
-            return ERRNO_INVAL;
+    let offset = if positioned {
+        match i64_arg(params, 3) {
+            Ok(offset) => Some(offset),
+            Err(_) => return ERRNO_INVAL,
+        }
+    } else {
+        None
+    };
+    let mut total = 0usize;
+    let mut cached_nonblocking = None;
+    loop {
+        let remaining = skip_iovecs(&iovecs, total);
+        let bytes = match collect_iovecs(caller, &remaining, maximum) {
+            Ok(value) => value,
+            Err(error) if total > 0 => {
+                let _ = error;
+                break;
+            }
+            Err(error) => return error,
         };
+        if offered != 0 && bytes.is_empty() {
+            if total > 0 {
+                break;
+            }
+            return ERRNO_2BIG;
+        }
+        let chunk_offset = offset.map(|offset| offset.saturating_add(total as u64));
+        let written =
+            match write_chunk(caller, fd, chunk_offset, bytes, &mut cached_nonblocking).await {
+                Ok(written) => written,
+                Err(_) if total > 0 => break,
+                Err(error) => return error,
+            };
+        total += written;
+        if written == 0 || total >= offered || offered == 0 {
+            break;
+        }
+        let nonblocking = match cached_nonblocking {
+            Some(nonblocking) => nonblocking,
+            None => match super::network::fd_is_nonblocking(caller, fd).await {
+                Ok(nonblocking) => {
+                    cached_nonblocking = Some(nonblocking);
+                    nonblocking
+                }
+                Err(_) => break,
+            },
+        };
+        if nonblocking {
+            break;
+        }
+    }
+    let Ok(total) = u32::try_from(total) else {
+        return ERRNO_IO;
+    };
+    if memory::validate_range(caller, result_ptr, 4).is_err() {
+        return ERRNO_FAULT;
+    }
+    memory::write_u32(caller, result_ptr, total).map_or(ERRNO_FAULT, |_| SUCCESS)
+}
+
+/// The iovecs that remain after the first `skip` bytes.
+fn skip_iovecs(iovecs: &[Iovec], mut skip: usize) -> Vec<Iovec> {
+    let mut remaining = Vec::with_capacity(iovecs.len());
+    for iov in iovecs {
+        if skip >= iov.length {
+            skip -= iov.length;
+            continue;
+        }
+        remaining.push(Iovec {
+            pointer: iov.pointer + skip as u32,
+            length: iov.length - skip,
+        });
+        skip = 0;
+    }
+    remaining
+}
+
+/// One bounded write request. Waits for writability while a blocking
+/// descriptor reports `EAGAIN`, and returns the count the kernel accepted.
+async fn write_chunk<C: WasmGuest>(
+    caller: &mut C,
+    fd: u32,
+    offset: Option<u64>,
+    bytes: Vec<u8>,
+    cached_nonblocking: &mut Option<bool>,
+) -> Result<usize, i32> {
+    let positioned = offset.is_some();
+    let mut args = vec![json!(fd), Value::Null];
+    let method = if let Some(offset) = offset {
         args.push(json!(offset.to_string()));
         "process.fd_pwrite"
     } else {
         "process.fd_write"
     };
+    let length = bytes.len();
     let mut raw = HashMap::new();
-    raw.insert(1, bytes.clone());
+    raw.insert(1, bytes);
     // Stdio aliases must use the shared ordered-output operation so host
     // capture, PTY cooking, and 1>&2/2>&1 routing match the V8 adapter. The
     // typed operation rejects ordinary descriptors with EINVAL without a
     // write side effect; those continue through the regular fd path.
     let started = Instant::now();
     let mut warned_near_limit = false;
-    let mut cached_nonblocking = None;
     let reply = loop {
         let reply = if positioned {
             call(caller, method, args.clone(), raw.clone()).await
@@ -661,15 +749,13 @@ async fn fd_write<C: WasmGuest>(caller: &mut C, params: &[Val], positioned: bool
         };
         match reply {
             Err(error) if !positioned && errno(&error) == ERRNO_AGAIN => {
-                let is_nonblocking = match cached_nonblocking {
+                let is_nonblocking = match *cached_nonblocking {
                     Some(nonblocking) => nonblocking,
-                    None => match super::network::fd_is_nonblocking(caller, fd).await {
-                        Ok(nonblocking) => {
-                            cached_nonblocking = Some(nonblocking);
-                            nonblocking
-                        }
-                        Err(error) => return error,
-                    },
+                    None => {
+                        let nonblocking = super::network::fd_is_nonblocking(caller, fd).await?;
+                        *cached_nonblocking = Some(nonblocking);
+                        nonblocking
+                    }
                 };
                 if is_nonblocking {
                     break Err(error);
@@ -683,7 +769,7 @@ async fn fd_write<C: WasmGuest>(caller: &mut C, params: &[Val], positioned: bool
                 )
                 .await;
                 if wait != SUCCESS {
-                    return wait;
+                    return Err(wait);
                 }
             }
             reply => break reply,
@@ -691,22 +777,16 @@ async fn fd_write<C: WasmGuest>(caller: &mut C, params: &[Val], positioned: bool
     };
     match reply {
         Ok(reply) => {
-            let Ok(value) = json_reply(reply) else {
-                return ERRNO_IO;
-            };
-            let Some(written) = value_u64(&value).and_then(|value| u32::try_from(value).ok())
-            else {
-                return ERRNO_IO;
-            };
-            if written as usize > bytes.len() {
-                return ERRNO_IO;
+            let value = json_reply(reply).map_err(|_| ERRNO_IO)?;
+            let written = value_u64(&value)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or(ERRNO_IO)?;
+            if written > length {
+                return Err(ERRNO_IO);
             }
-            if memory::validate_range(caller, result_ptr, 4).is_err() {
-                return ERRNO_FAULT;
-            }
-            memory::write_u32(caller, result_ptr, written).map_or(ERRNO_FAULT, |_| SUCCESS)
+            Ok(written)
         }
-        Err(error) => errno(&error),
+        Err(error) => Err(errno(&error)),
     }
 }
 
@@ -1398,6 +1478,24 @@ pub(super) fn commit<C: WasmGuest>(caller: &mut C, output: u32, bytes: &[u8]) ->
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skip_iovecs_resumes_a_short_write_mid_buffer() {
+        let iovecs = [
+            super::Iovec {
+                pointer: 100,
+                length: 4,
+            },
+            super::Iovec {
+                pointer: 200,
+                length: 6,
+            },
+        ];
+        let remaining = super::skip_iovecs(&iovecs, 5);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!((remaining[0].pointer, remaining[0].length), (201, 5));
+        assert!(super::skip_iovecs(&iovecs, 10).is_empty());
+    }
+
     use super::*;
 
     fn encoded_bytes_reply_size(byte_length: usize) -> usize {

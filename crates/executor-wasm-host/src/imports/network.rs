@@ -23,6 +23,21 @@ const ERRNO_BADF: i32 = 8;
 const ERRNO_NOBUFS: i32 = 42;
 const ERRNO_NOTSOCK: i32 = 57;
 const ERRNO_NOTSUP: i32 = 58;
+const ERRNO_MSGSIZE: i32 = 35;
+const ERRNO_NOPROTOOPT: i32 = 50;
+const MSG_PEEK: u32 = 0x2;
+const MSG_CTRUNC: u32 = 0x8;
+const MSG_WAITALL: u32 = 0x100;
+const MSG_CMSG_CLOEXEC: u32 = 0x4000_0000;
+const MAX_SOCKET_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+/// Linux socket domains as the kernel reports them.
+const LINUX_AF_UNIX: i64 = 1;
+const LINUX_AF_INET: i64 = 2;
+const LINUX_AF_INET6: i64 = 10;
+const LINUX_SOCK_DGRAM: i64 = 2;
+/// Address families in the owned wasm32 libc ABI.
+const WASI_AF_INET: u16 = 1;
+const WASI_AF_INET6: u16 = 2;
 const ERRNO_TIMEDOUT: i32 = 73;
 const MAX_POLL_FDS: usize = 1024;
 const MAX_DNS_RECORDS: usize = 4096;
@@ -64,9 +79,7 @@ pub async fn dispatch<C: WasmGuest>(
         HostNetNetSendto => send(caller, params, true).await,
         HostNetNetRecv => receive(caller, params, false).await,
         HostNetNetRecvfrom => receive(caller, params, true).await,
-        // Select the owned libc legacy recvmsg path until this backend supports
-        // the direct ancillary import; do not consume data or claim metadata.
-        HostNetNetRecvmsg => ERRNO_NOTSOCK,
+        HostNetNetRecvmsg => receive_message(caller, params).await,
         HostNetNetSetsockopt => set_option(caller, params).await,
         HostNetNetGetsockopt => get_option(caller, params).await,
         HostNetNetClose => close(caller, params).await,
@@ -714,11 +727,8 @@ fn encode_address(value: &Value, peer_fields: bool) -> String {
         field("port", "remotePort").and_then(value_u64),
     ) {
         let _ = prefix;
-        return if address.contains(':') {
-            format!("[{address}]:{port}")
-        } else {
-            format!("{address}:{port}")
-        };
+        // The owned libc splits at the last colon, so IPv6 stays unbracketed.
+        return format!("{address}:{port}");
     }
     if let Some(hex) = field("abstractPathHex", "remoteAbstractPathHex").and_then(Value::as_str) {
         return format!("unix-abstract:{hex}");
@@ -1001,17 +1011,28 @@ fn timeval_ms(bytes: &[u8]) -> Result<Option<u64>, ()> {
 
 fn option_kind(level: u32, name: u32, length: u32) -> Option<&'static str> {
     let socket_level = matches!(level, 1 | 0x7fff_ffff);
+    // Receive-ancillary selectors and IP traffic classes are owned by the
+    // kernel socket description. Other Linux receive selectors have no
+    // metadata path yet and are rejected rather than acknowledged as no-ops.
+    match (level, name) {
+        (0, 8) => return Some("receive-pktinfo-v4"),
+        (0, 13) => return Some("receive-tos-v4"),
+        (41, 49) => return Some("receive-pktinfo-v6"),
+        (41, 66) => return Some("receive-tclass-v6"),
+        (0, 6 | 7 | 11 | 12 | 20 | 26) | (41, 25 | 51 | 53 | 56 | 58 | 60 | 74) => {
+            return Some("unsupported-receive")
+        }
+        (0, 1) => return Some("ip-tos"),
+        (41, 67) => return Some("ipv6-traffic-class"),
+        _ => {}
+    }
     if socket_level && name == 2 && length == 4 {
         Some("reuse-address")
     } else if socket_level && name == 13 && length == 8 {
         Some("linger")
     } else if socket_level && matches!(name, 20 | 66) && length == 16 {
         Some("receive-timeout")
-    } else if (socket_level && name == 9)
-        || (level == 6 && name == 1)
-        || (level == 0 && name == 1)
-        || (level == 41 && name == 67)
-    {
+    } else if (socket_level && name == 9) || (level == 6 && name == 1) {
         Some("ignore")
     } else {
         None
@@ -1031,6 +1052,12 @@ async fn set_option<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Some(kind) = option_kind(level, name, length) else {
         return ERRNO_INVAL;
     };
+    if kind == "unsupported-receive" {
+        return ERRNO_NOPROTOOPT;
+    }
+    if is_owned_integer_option(kind) {
+        return set_integer_option(caller, fd, kind, pointer, length).await;
+    }
     if kind == "ignore" {
         return SUCCESS;
     }
@@ -1097,6 +1124,13 @@ async fn get_option<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(capacity) = memory::read_u32(caller, length_output) else {
         return ERRNO_FAULT;
     };
+    match option_kind(level, name, capacity) {
+        Some("unsupported-receive") => return ERRNO_NOPROTOOPT,
+        Some(kind) if is_owned_integer_option(kind) => {
+            return get_integer_option(caller, fd, kind, output, length_output, capacity).await;
+        }
+        _ => {}
+    }
     if memory::validate_range(caller, output, capacity as usize).is_err()
         || memory::validate_range(caller, length_output, 4).is_err()
     {
@@ -1128,6 +1162,492 @@ async fn get_option<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
         }
         Err(error) => errno(&error),
     }
+}
+
+fn is_owned_integer_option(kind: &str) -> bool {
+    kind.starts_with("receive-") || kind == "ip-tos" || kind == "ipv6-traffic-class"
+}
+
+/// Read one integer fact from the kernel socket description.
+async fn socket_fact<C: WasmGuest>(caller: &mut C, fd: u32, kind: &str) -> Result<i64, i32> {
+    match call(
+        caller,
+        "process.hostnet_get_option",
+        vec![json!(fd), json!(kind)],
+        HashMap::new(),
+    )
+    .await
+    {
+        Ok(reply) => json_reply(reply)
+            .ok()
+            .and_then(|value| value.as_i64().or_else(|| value.as_bool().map(i64::from)))
+            .ok_or(ERRNO_IO),
+        Err(error) => Err(errno(&error)),
+    }
+}
+
+/// Linux `setsockopt` for the receive-ancillary selectors and IP traffic
+/// classes. Values are plain ints; a short buffer supplies one byte.
+async fn set_integer_option<C: WasmGuest>(
+    caller: &mut C,
+    fd: u32,
+    kind: &'static str,
+    pointer: u32,
+    length: u32,
+) -> i32 {
+    if length > 0x7fff_ffff {
+        return ERRNO_INVAL;
+    }
+    let receive = kind.starts_with("receive-");
+    let ipv6 = kind.ends_with("-v6") || kind == "ipv6-traffic-class";
+    let domain = match socket_fact(caller, fd, "domain").await {
+        Ok(domain) => domain,
+        Err(error) => return error,
+    };
+    if domain == LINUX_AF_UNIX {
+        return if receive {
+            ERRNO_NOPROTOOPT
+        } else {
+            ERRNO_NOTSUP
+        };
+    }
+    if ipv6 && domain != LINUX_AF_INET6 {
+        return ERRNO_NOPROTOOPT;
+    }
+    if ipv6 && length < 4 {
+        return ERRNO_INVAL;
+    }
+    let count = match length {
+        0 => 0,
+        1..=3 => 1,
+        _ => 4,
+    };
+    let mut value = 0i32;
+    // Linux IPv6 receive selectors read NULL as zero once the length checks
+    // pass; IPv4 selectors copy their value and fault on NULL.
+    if count != 0 && !(receive && ipv6 && pointer == 0) {
+        if receive && pointer == 0 {
+            return ERRNO_FAULT;
+        }
+        let Ok(bytes) = memory::read_bytes(caller, pointer, count) else {
+            return ERRNO_FAULT;
+        };
+        value = match <[u8; 4]>::try_from(bytes.as_slice()) {
+            Ok(word) => i32::from_le_bytes(word),
+            Err(_) => i32::from(bytes[0]),
+        };
+    }
+    if !receive && ipv6 && !(-1..=255).contains(&value) {
+        return ERRNO_INVAL;
+    }
+    let argument = if receive {
+        json!(value != 0)
+    } else {
+        json!(value)
+    };
+    simple_call(
+        caller,
+        "process.hostnet_set_option",
+        vec![json!(fd), json!(kind), argument],
+    )
+    .await
+}
+
+/// Linux `getsockopt` for the same options: up to four bytes, one byte for a
+/// short IPv4 buffer, and the copied length written back.
+async fn get_integer_option<C: WasmGuest>(
+    caller: &mut C,
+    fd: u32,
+    kind: &'static str,
+    output: u32,
+    length_output: u32,
+    capacity: u32,
+) -> i32 {
+    if capacity > 0x7fff_ffff {
+        return ERRNO_INVAL;
+    }
+    let observed = match socket_fact(caller, fd, kind).await {
+        Ok(value) => value as i32,
+        Err(error) => return error,
+    };
+    let ipv4 = kind.ends_with("-v4") || kind == "ip-tos";
+    let count = if ipv4 && (1..4).contains(&capacity) {
+        1
+    } else {
+        capacity.min(4) as usize
+    };
+    if count == 0 {
+        return commit(caller, length_output, &0u32.to_le_bytes());
+    }
+    if kind.starts_with("receive-") && output == 0 {
+        return ERRNO_FAULT;
+    }
+    if commit(caller, output, &observed.to_le_bytes()[..count]) != SUCCESS {
+        return ERRNO_FAULT;
+    }
+    commit(caller, length_output, &(count as u32).to_le_bytes())
+}
+
+/// A validated wasm32 `msghdr`, captured before any wait so a guest cannot
+/// redirect the writes by mutating it while the receive blocks.
+struct MessageHeader {
+    base: u32,
+    name: u32,
+    name_capacity: u32,
+    iovecs: Vec<(u32, u32)>,
+    total: usize,
+    control: u32,
+    control_capacity: u32,
+}
+
+async fn snapshot_message<C: WasmGuest>(caller: &mut C, base: u32) -> Result<MessageHeader, i32> {
+    if base == 0 || memory::validate_range(caller, base, 28).is_err() {
+        return Err(ERRNO_FAULT);
+    }
+    let field = |caller: &mut C, offset: u32| {
+        memory::read_u32(caller, base + offset).map_err(|_| ERRNO_FAULT)
+    };
+    let name = field(caller, 0)?;
+    let name_capacity = field(caller, 4)?;
+    let iov = field(caller, 8)?;
+    let count = field(caller, 12)?;
+    let control = field(caller, 16)?;
+    let control_capacity = if control == 0 { 0 } else { field(caller, 20)? };
+    // Linux rejects a negative name length before importing the iovecs.
+    if name != 0 && name_capacity > 0x7fff_ffff {
+        return Err(ERRNO_INVAL);
+    }
+    let limit = super::check_fixed_request_limit(
+        caller,
+        "wasm.abi.maxIovecs",
+        count as usize,
+        super::preview1::max_iovecs(),
+        ERRNO_MSGSIZE,
+    )
+    .await;
+    if limit != SUCCESS {
+        return Err(limit);
+    }
+    if count > 0 && iov == 0 {
+        return Err(ERRNO_FAULT);
+    }
+    if memory::validate_range(caller, iov, count as usize * 8).is_err() {
+        return Err(ERRNO_FAULT);
+    }
+    let mut iovecs = Vec::with_capacity(count as usize);
+    let mut total = 0usize;
+    for index in 0..count {
+        let slot = iov + index * 8;
+        let pointer = memory::read_u32(caller, slot).map_err(|_| ERRNO_FAULT)?;
+        let length = memory::read_u32(caller, slot + 4).map_err(|_| ERRNO_FAULT)?;
+        if memory::validate_range(caller, pointer, length as usize).is_err() {
+            return Err(ERRNO_FAULT);
+        }
+        total = total.checked_add(length as usize).ok_or(ERRNO_INVAL)?;
+        if total > u32::MAX as usize {
+            return Err(ERRNO_INVAL);
+        }
+        iovecs.push((pointer, length));
+    }
+    if iovecs
+        .iter()
+        .any(|(pointer, length)| *length > 0 && *pointer == 0)
+    {
+        return Err(ERRNO_FAULT);
+    }
+    let limit = super::check_fixed_request_limit(
+        caller,
+        "wasm.abi.maxSocketMessageBytes",
+        total,
+        MAX_SOCKET_MESSAGE_BYTES,
+        ERRNO_MSGSIZE,
+    )
+    .await;
+    if limit != SUCCESS {
+        return Err(limit);
+    }
+    if (name != 0 && memory::validate_range(caller, name, name_capacity as usize).is_err())
+        || memory::validate_range(caller, control, control_capacity as usize).is_err()
+    {
+        return Err(ERRNO_FAULT);
+    }
+    Ok(MessageHeader {
+        base,
+        name,
+        name_capacity,
+        iovecs,
+        total,
+        control,
+        control_capacity,
+    })
+}
+
+/// The datagram source as the owned libc's 16-byte-aligned `sockaddr_in` or
+/// `sockaddr_in6`, with IPv4 sources mapped on IPv6 sockets.
+fn datagram_source(event: &Value, domain: i64) -> Result<Vec<u8>, i32> {
+    let source = byte_array(event.get("remoteBytes")).ok_or(ERRNO_IO)?;
+    let port = event
+        .get("remotePort")
+        .and_then(value_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .ok_or(ERRNO_IO)?;
+    let ipv6 = domain == LINUX_AF_INET6;
+    let mut bytes = vec![0u8; if ipv6 { 32 } else { 16 }];
+    let family = if ipv6 { WASI_AF_INET6 } else { WASI_AF_INET };
+    bytes[0..2].copy_from_slice(&family.to_le_bytes());
+    bytes[2..4].copy_from_slice(&port.to_be_bytes());
+    match (ipv6, source.len()) {
+        (false, 4) => bytes[4..8].copy_from_slice(&source),
+        (true, 16) => bytes[8..24].copy_from_slice(&source),
+        (true, 4) => {
+            bytes[18] = 255;
+            bytes[19] = 255;
+            bytes[20..24].copy_from_slice(&source);
+        }
+        _ => return Err(ERRNO_IO),
+    }
+    Ok(bytes)
+}
+
+fn byte_array(value: Option<&Value>) -> Option<Vec<u8>> {
+    value?
+        .as_array()?
+        .iter()
+        .map(|byte| byte.as_u64().and_then(|byte| u8::try_from(byte).ok()))
+        .collect()
+}
+
+/// Linux control messages for the receive-ancillary selectors, in the owned
+/// wasm32 layout: 12-byte `cmsghdr`, four-byte alignment.
+fn datagram_controls(event: &Value, domain: i64) -> Result<Vec<(i32, i32, Vec<u8>)>, i32> {
+    let mut controls = Vec::new();
+    let Some(metadata) = event.get("ancillary").filter(|value| !value.is_null()) else {
+        return Ok(controls);
+    };
+    let destination = byte_array(metadata.get("destination")).ok_or(ERRNO_IO)?;
+    let ipv4 = metadata.get("family").and_then(value_u64) == Some(4);
+    let options = metadata.get("options").and_then(value_u64).unwrap_or(0);
+    let index = metadata
+        .get("interfaceIndex")
+        .and_then(value_u64)
+        .and_then(|index| u32::try_from(index).ok())
+        .ok_or(ERRNO_IO)?;
+    let traffic_class = metadata
+        .get("trafficClass")
+        .and_then(Value::as_i64)
+        .unwrap_or(0) as i32;
+    let local = metadata
+        .get("ipv4LocalAddress")
+        .filter(|value| !value.is_null());
+    if (ipv4 && destination.len() != 4)
+        || (!ipv4 && destination.len() != 16)
+        || !(1..=2).contains(&index)
+    {
+        eprintln!("ERR_AGENTOS_UDP_METADATA: invalid projected packet facts");
+        return Err(ERRNO_IO);
+    }
+    if domain == LINUX_AF_INET6 && options & 4 != 0 {
+        let mut bytes = vec![0u8; 20];
+        if ipv4 {
+            bytes[10] = 255;
+            bytes[11] = 255;
+            bytes[12..16].copy_from_slice(&destination);
+        } else {
+            bytes[..16].copy_from_slice(&destination);
+        }
+        let reported = if ipv4 && local.is_none() { 0 } else { index };
+        bytes[16..20].copy_from_slice(&reported.to_le_bytes());
+        controls.push((41, 50, bytes));
+    }
+    if ipv4 && options & 1 != 0 {
+        let local_bytes = match local {
+            Some(value) => byte_array(Some(value))
+                .filter(|bytes| bytes.len() == 4)
+                .ok_or(ERRNO_IO)?,
+            None => vec![0; 4],
+        };
+        let mut bytes = vec![0u8; 12];
+        let reported = if local.is_none() { 0 } else { index };
+        bytes[0..4].copy_from_slice(&reported.to_le_bytes());
+        bytes[4..8].copy_from_slice(&local_bytes);
+        bytes[8..12].copy_from_slice(&destination);
+        controls.push((0, 8, bytes));
+    }
+    if ipv4 && options & 2 != 0 {
+        controls.push((0, 1, vec![(traffic_class & 0xff) as u8]));
+    }
+    if !ipv4 && options & 8 != 0 {
+        controls.push((41, 67, traffic_class.to_le_bytes().to_vec()));
+    }
+    Ok(controls)
+}
+
+/// `recvmsg` on a UDP socket: payload into the iovecs, the source address,
+/// and receive-ancillary control messages. Other sockets return `ENOTSOCK` so
+/// the owned libc takes its descriptor-rights path.
+async fn receive_message<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
+    let (Ok(fd), Ok(message), Ok(flags), Ok(received_output)) = (
+        i32_arg(params, 0),
+        i32_arg(params, 1),
+        i32_arg(params, 2),
+        i32_arg(params, 3),
+    ) else {
+        return ERRNO_FAULT;
+    };
+    let socket_type = match socket_fact(caller, fd, "type").await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let domain = match socket_fact(caller, fd, "domain").await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    if socket_type != LINUX_SOCK_DGRAM || !matches!(domain, LINUX_AF_INET | LINUX_AF_INET6) {
+        return ERRNO_NOTSOCK;
+    }
+    if memory::validate_range(caller, received_output, 4).is_err() {
+        return ERRNO_FAULT;
+    }
+    let header = match snapshot_message(caller, message).await {
+        Ok(header) => header,
+        Err(error) => return error,
+    };
+    let ignored = MSG_WAITALL | MSG_CMSG_CLOEXEC;
+    if flags & !(MSG_PEEK | MSG_DONTWAIT | MSG_TRUNC | ignored) != 0 {
+        return ERRNO_INVAL;
+    }
+    let flags = flags & !ignored;
+    let nonblocking = match fd_is_nonblocking(caller, fd).await {
+        Ok(nonblocking) => nonblocking || flags & MSG_DONTWAIT != 0,
+        Err(error) => return error,
+    };
+    let started = Instant::now();
+    let mut warned_near_limit = false;
+    let event = loop {
+        let reply = call(
+            caller,
+            "process.hostnet_recv",
+            vec![json!(fd), json!(header.total), json!(flags), Value::Null],
+            HashMap::new(),
+        )
+        .await;
+        let value = match reply.map(json_reply) {
+            Ok(Ok(value)) => value,
+            Ok(Err(_)) => return ERRNO_IO,
+            Err(error) => return errno(&error),
+        };
+        if value.get("kind").and_then(Value::as_str) == Some("wouldBlock") || value.is_null() {
+            if nonblocking {
+                return ERRNO_AGAIN;
+            }
+            let wait = wait_for_socket_readable(
+                caller,
+                fd,
+                "blocking socket receive",
+                started,
+                &mut warned_near_limit,
+            )
+            .await;
+            if wait != SUCCESS {
+                return wait;
+            }
+            continue;
+        }
+        if value.get("type").and_then(Value::as_str) != Some("message") {
+            return ERRNO_IO;
+        }
+        break value;
+    };
+    let Some(data) = event
+        .get("data")
+        .cloned()
+        .map(HostCallReply::Json)
+        .and_then(|value| reply_bytes(value).ok())
+    else {
+        return ERRNO_IO;
+    };
+    let full_length = event
+        .get("fullLength")
+        .and_then(value_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(data.len());
+    let source = match datagram_source(&event, domain) {
+        Ok(source) => source,
+        Err(error) => return error,
+    };
+    let controls = match datagram_controls(&event, domain) {
+        Ok(controls) => controls,
+        Err(error) => return error,
+    };
+    let mut copied = 0usize;
+    for (pointer, length) in &header.iovecs {
+        if copied >= data.len() {
+            break;
+        }
+        let chunk = (*length as usize).min(data.len() - copied);
+        if commit(caller, *pointer, &data[copied..copied + chunk]) != SUCCESS {
+            return ERRNO_FAULT;
+        }
+        copied += chunk;
+    }
+    if header.name != 0 {
+        let written = source.len().min(header.name_capacity as usize);
+        if commit(caller, header.name, &source[..written]) != SUCCESS {
+            return ERRNO_FAULT;
+        }
+    }
+    let name_length = if header.name == 0 {
+        0
+    } else {
+        source.len() as u32
+    };
+    if commit(caller, header.base + 4, &name_length.to_le_bytes()) != SUCCESS {
+        return ERRNO_FAULT;
+    }
+    let mut used = 0usize;
+    let mut truncated = false;
+    let capacity = header.control_capacity as usize;
+    for (level, kind, bytes) in controls {
+        let available = capacity - used;
+        if available < 12 {
+            truncated = true;
+            break;
+        }
+        let copied_bytes = bytes.len().min(available - 12);
+        let mut record = Vec::with_capacity(12 + copied_bytes);
+        record.extend_from_slice(&((12 + copied_bytes) as u32).to_le_bytes());
+        record.extend_from_slice(&level.to_le_bytes());
+        record.extend_from_slice(&kind.to_le_bytes());
+        record.extend_from_slice(&bytes[..copied_bytes]);
+        if commit(caller, header.control + used as u32, &record) != SUCCESS {
+            return ERRNO_FAULT;
+        }
+        used += available.min((12 + bytes.len() + 3) & !3);
+        if copied_bytes < bytes.len() {
+            truncated = true;
+            break;
+        }
+    }
+    let message_flags = if truncated { MSG_CTRUNC } else { 0 }
+        | if full_length > header.total {
+            MSG_TRUNC
+        } else {
+            0
+        };
+    if commit(caller, header.base + 20, &(used as u32).to_le_bytes()) != SUCCESS
+        || commit(caller, header.base + 24, &message_flags.to_le_bytes()) != SUCCESS
+    {
+        return ERRNO_FAULT;
+    }
+    let reported = if flags & MSG_TRUNC != 0 {
+        full_length
+    } else {
+        copied
+    };
+    let Ok(reported) = u32::try_from(reported) else {
+        return ERRNO_2BIG;
+    };
+    commit(caller, received_output, &reported.to_le_bytes())
 }
 
 async fn close<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
@@ -1352,5 +1872,39 @@ fn publish_bytes<C: WasmGuest>(
         ERRNO_FAULT
     } else {
         SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receive_ancillary_selectors_are_owned_options() {
+        assert_eq!(option_kind(0, 8, 4), Some("receive-pktinfo-v4"));
+        assert_eq!(option_kind(41, 66, 4), Some("receive-tclass-v6"));
+        assert_eq!(option_kind(0, 7, 4), Some("unsupported-receive"));
+        assert_eq!(option_kind(0, 1, 1), Some("ip-tos"));
+        assert_eq!(option_kind(41, 67, 4), Some("ipv6-traffic-class"));
+        assert_eq!(option_kind(6, 1, 4), Some("ignore"));
+    }
+
+    #[test]
+    fn datagram_source_matches_the_owned_libc_layout() {
+        let event = json!({ "remoteBytes": [127, 0, 0, 1], "remotePort": 5353 });
+        let v4 = datagram_source(&event, LINUX_AF_INET).unwrap();
+        assert_eq!(v4.len(), 16);
+        assert_eq!(&v4[0..4], &[1, 0, 0x14, 0xe9]);
+        assert_eq!(&v4[4..8], &[127, 0, 0, 1]);
+        let mapped = datagram_source(&event, LINUX_AF_INET6).unwrap();
+        assert_eq!(mapped.len(), 32);
+        assert_eq!(&mapped[0..2], &[2, 0]);
+        assert_eq!(&mapped[18..24], &[255, 255, 127, 0, 0, 1]);
+    }
+
+    #[test]
+    fn addresses_are_unbracketed_for_the_owned_libc_parser() {
+        let value = json!({ "address": "::", "port": 0 });
+        assert_eq!(encode_address(&value, false), ":::0");
     }
 }
