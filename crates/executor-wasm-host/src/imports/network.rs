@@ -11,12 +11,12 @@ use super::preview1::{
 use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
 use crate::backend::HostCallReply;
-use crate::{memory, store::WasmtimeStoreState};
+use crate::memory;
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Instant;
-use wasmtime::{Caller, Val};
+use crate::{Val, WasmGuest};
 
 const ERRNO_AGAIN: i32 = 6;
 const ERRNO_BADF: i32 = 8;
@@ -40,12 +40,12 @@ const POLLOUT: u32 = 0x004;
 const POLLRDNORM: u32 = 0x040;
 const POLLWRNORM: u32 = 0x100;
 
-pub async fn dispatch(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub async fn dispatch<C: WasmGuest>(
+    caller: &mut C,
     abi: AbiBinding,
     params: &[Val],
     results: &mut [Val],
-) -> wasmtime::Result<bool> {
+) -> crate::Result<bool> {
     use ImportId::*;
     let status = match abi.id {
         HostNetNetSocket => socket(caller, params).await,
@@ -78,7 +78,7 @@ pub async fn dispatch(
     Ok(true)
 }
 
-async fn socket(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn socket<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(domain), Ok(socket_type), Ok(_protocol), Ok(output)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -132,7 +132,7 @@ async fn socket(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> 
     }
 }
 
-async fn set_nonblock(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn set_nonblock<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(enable)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_INVAL;
     };
@@ -160,8 +160,8 @@ async fn set_nonblock(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val
     .await
 }
 
-async fn address_call(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn address_call<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     method: &str,
 ) -> i32 {
@@ -236,7 +236,7 @@ fn decode_hex(text: &str) -> Result<Vec<u8>, ()> {
         .collect()
 }
 
-async fn getaddrinfo(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn getaddrinfo<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(host_pointer), Ok(host_length), Ok(family), Ok(output), Ok(length_output)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -304,7 +304,7 @@ async fn getaddrinfo(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     }
 }
 
-async fn dns_query(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn dns_query<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (
         Ok(name_pointer),
         Ok(name_length),
@@ -427,7 +427,7 @@ async fn dns_query(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     }
 }
 
-async fn listen(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn listen<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(backlog)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_INVAL;
     };
@@ -439,8 +439,8 @@ async fn listen(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> 
     .await
 }
 
-async fn validate(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn validate<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     listening: bool,
 ) -> i32 {
@@ -455,7 +455,7 @@ async fn validate(
     .await
 }
 
-async fn accept(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn accept<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(fd_output), Ok(address_output), Ok(length_output)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -543,8 +543,8 @@ async fn accept(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> 
     }
 }
 
-pub(super) async fn fd_is_nonblocking(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub(super) async fn fd_is_nonblocking<C: WasmGuest>(
+    caller: &mut C,
     fd: u32,
 ) -> Result<bool, i32> {
     match call(caller, "process.fd_stat", vec![json!(fd)], HashMap::new()).await {
@@ -557,8 +557,8 @@ pub(super) async fn fd_is_nonblocking(
     }
 }
 
-pub(super) async fn wait_for_socket_readable(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub(super) async fn wait_for_socket_readable<C: WasmGuest>(
+    caller: &mut C,
     fd: u32,
     operation: &str,
     started: Instant,
@@ -575,8 +575,8 @@ pub(super) async fn wait_for_socket_readable(
     .await
 }
 
-pub(super) async fn wait_for_fd_writable(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub(super) async fn wait_for_fd_writable<C: WasmGuest>(
+    caller: &mut C,
     fd: u32,
     operation: &str,
     started: Instant,
@@ -593,8 +593,8 @@ pub(super) async fn wait_for_fd_writable(
     .await
 }
 
-async fn wait_for_fd_ready(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn wait_for_fd_ready<C: WasmGuest>(
+    caller: &mut C,
     fd: u32,
     events: u32,
     operation: &str,
@@ -668,8 +668,8 @@ async fn wait_for_fd_ready(
     }
 }
 
-async fn log_fd_rollback(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn log_fd_rollback<C: WasmGuest>(
+    caller: &mut C,
     fd: u32,
     context: &'static str,
 ) {
@@ -679,8 +679,8 @@ async fn log_fd_rollback(
     }
 }
 
-async fn address_output(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn address_output<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     peer: bool,
 ) -> i32 {
@@ -748,7 +748,7 @@ fn encode_address(value: &Value, peer_fields: bool) -> String {
     "unix-unnamed".to_owned()
 }
 
-async fn send(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], to: bool) -> i32 {
+async fn send<C: WasmGuest>(caller: &mut C, params: &[Val], to: bool) -> i32 {
     let (Ok(fd), Ok(pointer), Ok(length), Ok(flags)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -830,7 +830,7 @@ async fn send(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], to: b
     }
 }
 
-async fn receive(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], from: bool) -> i32 {
+async fn receive<C: WasmGuest>(caller: &mut C, params: &[Val], from: bool) -> i32 {
     let (Ok(fd), Ok(output), Ok(capacity), Ok(flags)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1037,7 +1037,7 @@ fn option_kind(level: u32, name: u32, length: u32) -> Option<&'static str> {
     }
 }
 
-async fn set_option(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn set_option<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(level), Ok(name), Ok(pointer), Ok(length)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1103,7 +1103,7 @@ async fn set_option(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val])
     .await
 }
 
-async fn get_option(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn get_option<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(level), Ok(name), Ok(output), Ok(length_output)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1149,14 +1149,14 @@ async fn get_option(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val])
     }
 }
 
-async fn close(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn close<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_BADF;
     };
     simple_call(caller, "process.fd_close", vec![json!(fd)]).await
 }
 
-async fn tls_connect(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn tls_connect<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(pointer), Ok(length)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -1182,7 +1182,7 @@ async fn tls_connect(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     .await
 }
 
-async fn poll(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn poll<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(pointer), Ok(count), Ok(timeout), Ok(ready_output)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1351,8 +1351,8 @@ async fn poll(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i3
     }
 }
 
-fn publish_bytes(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+fn publish_bytes<C: WasmGuest>(
+    caller: &mut C,
     output: u32,
     capacity: u32,
     length_output: u32,

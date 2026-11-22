@@ -1,30 +1,23 @@
-//! Generated AgentOS Preview1 and custom host-import linker.
+//! Wasmtime binding of the engine-neutral agentOS host imports.
+//!
+//! The import handlers live in `agentos-executor-wasm-host` and are shared
+//! with the V8 executor. This module links them into a Wasmtime `Linker` and
+//! supplies what they need from Wasmtime: guest memory, the signal
+//! trampoline, fuel, and exec preflight compilation.
 
 use super::memory;
-use super::store::WasmtimeStoreState;
-use crate::abi::{
-    binding, core_signature, AbiBinding, CoreValueType, ImportId, PermissionTier, Restartability,
-    ABI_BINDINGS, ALIAS_BINDINGS,
-};
-use crate::backend::{HostCallReply, HostServiceError};
-use crate::host::{HostOperation, SignalMaskHow, SignalOperation, SignalSetValue};
+use super::module;
+use super::store::{HostState, WasmtimeStoreState};
+use crate::backend::HostServiceError;
+use crate::host::ExecImportTiers;
 use agentos_executor_wasm_abi::WasmPermissionTier;
-use serde_json::Value;
-use wasmtime::{Caller, Engine, FuncType, Linker, Module, Val, ValType};
-
-mod filesystem;
-mod network;
-mod preview1;
-mod process;
-mod terminal;
-mod user;
-
-const WASI_ERRNO_SUCCESS: i32 = 0;
-const WASI_ERRNO_FAULT: i32 = 21;
-const WASI_ERRNO_NOSYS: i32 = 52;
-const WASI_ERRNO_INTR: i32 = 27;
-const SA_RESTART: u32 = 0x1000_0000;
-const MAX_SIGNALS_PER_SAFE_POINT: usize = 64;
+use agentos_executor_wasm_host::abi::{core_signature, AbiBinding, CoreValueType};
+use agentos_executor_wasm_host::imports::{self, ImportDesc, ImportKind};
+use agentos_executor_wasm_host::memory::GuestMemoryError;
+use agentos_executor_wasm_host::{BoxFuture, Val, WasmGuest};
+use std::ops::Range;
+use std::sync::Arc;
+use wasmtime::{Caller, Engine, Extern, FuncType, Linker, Module, ValType};
 
 pub fn build_linker(
     engine: &Engine,
@@ -32,16 +25,8 @@ pub fn build_linker(
     threaded: bool,
 ) -> wasmtime::Result<Linker<WasmtimeStoreState>> {
     let mut linker = Linker::new(engine);
-    for abi in ABI_BINDINGS {
-        if permitted(*abi, tier) {
-            link_binding(&mut linker, engine, *abi, abi.module)?;
-        }
-    }
-    for alias in ALIAS_BINDINGS {
-        let abi = *binding(alias.import);
-        if permitted(abi, tier) && alias.permission_tiers.contains(permission_tier(tier)) {
-            link_binding(&mut linker, engine, abi, alias.alias_module)?;
-        }
+    for (module, abi) in imports::permitted_bindings(tier) {
+        link_binding(&mut linker, engine, abi, module)?;
     }
     if threaded {
         linker.func_wrap(
@@ -60,125 +45,58 @@ pub fn build_linker(
 }
 
 /// Reject unsupported or permission-filtered imports before Wasmtime linker
-/// diagnostics are involved. This keeps the public outcome independent of an
-/// engine's error-string format while the generated ABI registry remains the
-/// sole import allowlist.
+/// diagnostics are involved, using the shared generated-registry check.
 pub fn validate_module_imports(
     module: &Module,
     tier: WasmPermissionTier,
     threaded: bool,
 ) -> Result<(), HostServiceError> {
-    for import in module.imports() {
-        if import_permitted(import.module(), import.name(), tier)
-            || (threaded && is_thread_runtime_import(import.module(), import.name()))
-        {
-            if import_type_supported(import.module(), import.name(), import.ty()) {
-                continue;
-            }
-            return Err(HostServiceError::new(
-                "ERR_AGENTOS_WASM_IMPORT_TYPE",
-                format!(
-                    "incompatible WebAssembly host import type {}.{}",
-                    import.module(),
-                    import.name()
-                ),
-            ));
-        }
-        return Err(HostServiceError::new(
-            "ERR_AGENTOS_WASM_UNSUPPORTED_IMPORT",
-            format!(
-                "unsupported WebAssembly host import {}.{}",
-                import.module(),
-                import.name()
-            ),
-        )
-        .with_details(serde_json::json!({
-            "module": import.module(),
-            "name": import.name(),
-        })));
-    }
-    Ok(())
+    imports::validate_imports(import_descs(module), tier, threaded)
 }
 
-/// Compile-time compatibility of one replacement image at each ABI tier. Exec
-/// may narrow authority, and the sidecar chooses the tier at the commit point.
-fn exec_import_tiers(
-    module: &Module,
-    threaded: bool,
-) -> Result<crate::host::ExecImportTiers, HostServiceError> {
-    let valid = |tier| validate_module_imports(module, tier, threaded).is_ok();
-    let tiers = crate::host::ExecImportTiers {
-        isolated: valid(WasmPermissionTier::Isolated),
-        read_only: valid(WasmPermissionTier::ReadOnly),
-        read_write: valid(WasmPermissionTier::ReadWrite),
-        full: valid(WasmPermissionTier::Full),
-    };
-    if !(tiers.isolated || tiers.read_only || tiers.read_write || tiers.full) {
-        return Err(HostServiceError::new(
-            "ENOEXEC",
-            "replacement has unsupported imports",
-        ));
-    }
-    Ok(tiers)
+/// Compile-time compatibility of one replacement image at each ABI tier.
+fn exec_import_tiers(module: &Module, threaded: bool) -> Result<ExecImportTiers, HostServiceError> {
+    imports::exec_import_tiers(&import_descs(module), threaded)
 }
 
-// Name allowlisting does not establish linkability. Validate the exact ABI
-// signature before exec can commit destructive changes to the old image.
-fn import_type_supported(module: &str, name: &str, ty: wasmtime::ExternType) -> bool {
-    if (module, name) == ("env", "memory") {
-        return matches!(ty, wasmtime::ExternType::Memory(memory) if memory.is_shared() && !memory.is_64());
-    }
-    let wasmtime::ExternType::Func(ty) = ty else {
-        return false;
-    };
-    let abi = ABI_BINDINGS
-        .iter()
-        .copied()
-        .find(|abi| abi.module == module && abi.name == name)
-        .or_else(|| {
-            ALIAS_BINDINGS.iter().find_map(|alias| {
-                let abi = *binding(alias.import);
-                (alias.alias_module == module && abi.name == name).then_some(abi)
-            })
-        });
-    let (params, results): (&[CoreValueType], &[CoreValueType]) = if let Some(abi) = abi {
-        let signature = core_signature(abi.signature);
-        (signature.params, signature.results)
-    } else if (module, name) == ("wasi", "thread-spawn") {
-        (&[CoreValueType::I32], &[CoreValueType::I32])
-    } else {
-        return false;
-    };
-    fn matches_types(
-        actual: impl ExactSizeIterator<Item = ValType>,
-        expected: &[CoreValueType],
-    ) -> bool {
-        actual.len() == expected.len()
-            && actual.zip(expected).all(|(actual, expected)| {
-                matches!(
-                    (actual, expected),
-                    (ValType::I32, CoreValueType::I32) | (ValType::I64, CoreValueType::I64)
-                )
-            })
-    }
-    matches_types(ty.params(), params) && matches_types(ty.results(), results)
-}
-
-fn is_thread_runtime_import(module: &str, name: &str) -> bool {
-    matches!((module, name), ("env", "memory") | ("wasi", "thread-spawn"))
-}
-
-fn import_permitted(module: &str, name: &str, tier: WasmPermissionTier) -> bool {
-    ABI_BINDINGS
-        .iter()
-        .any(|abi| abi.module == module && abi.name == name && permitted(*abi, tier))
-        || ALIAS_BINDINGS.iter().any(|alias| {
-            let abi = *binding(alias.import);
-            alias.alias_module == module
-                && abi.name == name
-                && permitted(abi, tier)
-                && alias.permission_tiers.contains(permission_tier(tier))
+fn import_descs(module: &Module) -> Vec<ImportDesc<'_>> {
+    module
+        .imports()
+        .map(|import| ImportDesc {
+            module: import.module(),
+            name: import.name(),
+            kind: match import.ty() {
+                wasmtime::ExternType::Func(ty) => {
+                    let params = ty.params().map(core_type).collect::<Option<Vec<_>>>();
+                    let results = ty.results().map(core_type).collect::<Option<Vec<_>>>();
+                    match (params, results) {
+                        (Some(params), Some(results)) => ImportKind::Func { params, results },
+                        _ => ImportKind::Other,
+                    }
+                }
+                wasmtime::ExternType::Memory(memory) => ImportKind::Memory {
+                    shared: memory.is_shared(),
+                    memory64: memory.is_64(),
+                },
+                _ => ImportKind::Other,
+            },
         })
+        .collect()
+}
+
+fn core_type(value: ValType) -> Option<CoreValueType> {
+    match value {
+        ValType::I32 => Some(CoreValueType::I32),
+        ValType::I64 => Some(CoreValueType::I64),
+        _ => None,
+    }
+}
+
+fn value_type(value: CoreValueType) -> ValType {
+    match value {
+        CoreValueType::I32 => ValType::I32,
+        CoreValueType::I64 => ValType::I64,
+    }
 }
 
 fn link_binding(
@@ -194,334 +112,173 @@ fn link_binding(
         signature.results.iter().copied().map(value_type),
     );
     linker.func_new_async(module, abi.name, ty, move |mut caller, params, results| {
-        Box::new(async move { dispatch(&mut caller, abi, params, results).await })
+        Box::new(async move {
+            let params = params
+                .iter()
+                .enumerate()
+                .map(|(index, value)| match value {
+                    wasmtime::Val::I32(value) => Ok(Val::I32(*value)),
+                    wasmtime::Val::I64(value) => Ok(Val::I64(*value)),
+                    _ => Err(wasmtime::format_err!(
+                        "invalid AgentOS ABI argument at index {index}"
+                    )),
+                })
+                .collect::<wasmtime::Result<Vec<_>>>()?;
+            let mut host_results = imports::result_slots(abi);
+            let mut guest = WasmtimeGuest {
+                caller: &mut caller,
+            };
+            imports::dispatch(&mut guest, abi, &params, &mut host_results)
+                .await
+                .map_err(into_wasmtime_error)?;
+            if host_results.len() != results.len() {
+                return Err(wasmtime::format_err!("unsupported AgentOS ABI result shape"));
+            }
+            for (slot, value) in results.iter_mut().zip(host_results) {
+                *slot = match value {
+                    Val::I32(value) => wasmtime::Val::I32(value),
+                    Val::I64(value) => wasmtime::Val::I64(value),
+                };
+            }
+            Ok(())
+        })
     })?;
     Ok(())
 }
 
-fn value_type(value: CoreValueType) -> ValType {
-    match value {
-        CoreValueType::I32 => ValType::I32,
-        CoreValueType::I64 => ValType::I64,
+/// Map a shared-handler error back to the Wasmtime error the lifecycle and
+/// `error::normalize` expect. Unwinding sentinels keep their exact text.
+fn into_wasmtime_error(error: agentos_executor_wasm_host::Error) -> wasmtime::Error {
+    use agentos_executor_wasm_host::Error;
+    match error {
+        Error::Exit(code) => wasmtime::format_err!("agentos:wasi-exit:{code}"),
+        Error::ExecReplaced => wasmtime::format_err!("agentos:exec-replaced"),
+        Error::Host(error) => wasmtime::Error::new(error),
+        Error::Message(message) => wasmtime::format_err!("{message}"),
+        Error::Engine(error) => match error.downcast::<wasmtime::Error>() {
+            Ok(error) => *error,
+            Err(_) => wasmtime::format_err!("guest call failed"),
+        },
     }
 }
 
-fn permitted(abi: AbiBinding, tier: WasmPermissionTier) -> bool {
-    abi.permission_tiers.contains(permission_tier(tier))
+/// The calling Wasmtime guest, as the shared handlers see it.
+struct WasmtimeGuest<'a, 'b> {
+    caller: &'a mut Caller<'b, WasmtimeStoreState>,
 }
 
-fn permission_tier(tier: WasmPermissionTier) -> PermissionTier {
-    match tier {
-        WasmPermissionTier::Isolated => PermissionTier::Isolated,
-        WasmPermissionTier::ReadOnly => PermissionTier::ReadOnly,
-        WasmPermissionTier::ReadWrite => PermissionTier::ReadWrite,
-        WasmPermissionTier::Full => PermissionTier::Full,
-    }
-}
+impl WasmGuest for WasmtimeGuest<'_, '_> {
+    type Module = Arc<Module>;
 
-async fn dispatch(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
-    abi: AbiBinding,
-    params: &[Val],
-    results: &mut [Val],
-) -> wasmtime::Result<()> {
-    if caller.data().canceled() {
-        return Err(wasmtime::format_err!(
-            "ERR_AGENTOS_WASMTIME_CANCELED: execution canceled"
-        ));
+    fn data(&self) -> &HostState {
+        self.caller.data()
     }
-    drain_signal_checkpoints(caller, false).await?;
-    loop {
-        dispatch_once(caller, abi, params, results).await?;
-        let interrupted = matches!(results, [Val::I32(value)] if *value == WASI_ERRNO_INTR);
-        // EINTR is itself an authoritative signal wake. In the threaded worker
-        // topology its reply can become runnable just before the coalesced
-        // SignalWake frame updates the local fast-path counter, so probe the
-        // parent-owned checkpoint once unconditionally.
-        let signals = drain_signal_checkpoints(caller, interrupted).await?;
-        if interrupted
-            && abi.restartability == Restartability::SignalRestartable
-            && signals.delivered
-            && signals.all_restart
+
+    fn data_mut(&mut self) -> &mut HostState {
+        self.caller.data_mut()
+    }
+
+    fn memory_size(&mut self) -> Result<usize, GuestMemoryError> {
+        let memory = memory::exported_memory(self.caller)?;
+        Ok(memory.data_size(self.caller))
+    }
+
+    fn memory_read(&mut self, range: Range<usize>) -> Result<Vec<u8>, GuestMemoryError> {
+        let memory = memory::exported_memory(self.caller)?;
+        Ok(memory.read(self.caller, range))
+    }
+
+    fn memory_write(&mut self, range: Range<usize>, bytes: &[u8]) -> Result<(), GuestMemoryError> {
+        let memory = memory::exported_memory(self.caller)?;
+        memory.write(self.caller, range, bytes);
+        Ok(())
+    }
+
+    fn has_signal_trampoline(&mut self) -> bool {
+        let Some(Extern::Func(function)) = self.caller.get_export("__wasi_signal_trampoline")
+        else {
+            return false;
+        };
+        let ty = function.ty(&mut *self.caller);
+        let mut params = ty.params();
+        matches!(params.next(), Some(ValType::I32))
+            && params.next().is_none()
+            && ty.results().next().is_none()
+    }
+
+    fn call_signal_trampoline(
+        &mut self,
+        signal: i32,
+    ) -> BoxFuture<'_, agentos_executor_wasm_host::Result<()>> {
+        Box::pin(async move {
+            let trampoline = self
+                .caller
+                .get_export("__wasi_signal_trampoline")
+                .and_then(|export| export.into_func())
+                .ok_or_else(|| {
+                    agentos_executor_wasm_host::format_err!(
+                        "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: caught signal has no trampoline"
+                    )
+                })?
+                .typed::<i32, ()>(&mut *self.caller)
+                .map_err(|error| {
+                    agentos_executor_wasm_host::format_err!(
+                        "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: invalid trampoline type: {error}"
+                    )
+                })?;
+            trampoline
+                .call_async(&mut *self.caller, signal)
+                .await
+                .map_err(|error| agentos_executor_wasm_host::Error::Engine(Box::new(error)))
+        })
+    }
+
+    fn fuel(&mut self) -> Result<u64, HostServiceError> {
+        self.caller.get_fuel().map_err(|error| {
+            eprintln!("ERR_AGENTOS_WASMTIME_FUEL_CONFIG: private Store diagnostic: {error:#}");
+            HostServiceError::new(
+                "ERR_AGENTOS_WASMTIME_FUEL_CONFIG",
+                "failed to preserve limits.wasm.deterministicFuel",
+            )
+        })
+    }
+
+    fn prepare_exec_replacement(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(Self::Module, ExecImportTiers), HostServiceError> {
+        let engine = self.caller.data().engine.clone();
+        let compiled = module::compile_module(&engine, bytes)?.module;
+        let threaded = matches!(
+            engine.profile().feature_profile,
+            crate::WasmtimeFeatureProfile::AgentOsOwnedWasiV1Threads
+        );
+        let import_tiers = exec_import_tiers(&compiled, threaded)?;
+        if !matches!(compiled.get_export("_start"), Some(wasmtime::ExternType::Func(ty))
+            if ty.params().next().is_none() && ty.results().next().is_none())
         {
-            continue;
+            return Err(HostServiceError::new(
+                "ENOEXEC",
+                "replacement has no valid _start",
+            ));
         }
-        return Ok(());
+        Ok((compiled, import_tiers))
     }
-}
-
-async fn dispatch_once(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
-    abi: AbiBinding,
-    params: &[Val],
-    results: &mut [Val],
-) -> wasmtime::Result<()> {
-    if preview1::dispatch(caller, abi, params, results).await? {
-        return Ok(());
-    }
-    if user::dispatch(caller, abi, params, results).await? {
-        return Ok(());
-    }
-    if terminal::dispatch(caller, abi, params, results).await? {
-        return Ok(());
-    }
-    if filesystem::dispatch(caller, abi, params, results).await? {
-        return Ok(());
-    }
-    if network::dispatch(caller, abi, params, results).await? {
-        return Ok(());
-    }
-    if process::dispatch(caller, abi, params, results).await? {
-        return Ok(());
-    }
-    match abi.id {
-        ImportId::WasiSnapshotPreview1ArgsSizesGet => {
-            let count = caller.data().argv.len();
-            let bytes = table_bytes(&caller.data().argv)?;
-            let count =
-                u32::try_from(count).map_err(|_| wasmtime::format_err!("argv count overflow"))?;
-            let bytes =
-                u32::try_from(bytes).map_err(|_| wasmtime::format_err!("argv bytes overflow"))?;
-            let status = if memory::validate_range(caller, i32_arg(params, 0)?, 4).is_err()
-                || memory::validate_range(caller, i32_arg(params, 1)?, 4).is_err()
-            {
-                WASI_ERRNO_FAULT
-            } else {
-                memory::write_u32(caller, i32_arg(params, 0)?, count).expect("prevalidated argc");
-                memory::write_u32(caller, i32_arg(params, 1)?, bytes)
-                    .expect("prevalidated argv bytes");
-                WASI_ERRNO_SUCCESS
-            };
-            set_i32_result(results, status)?;
-        }
-        ImportId::WasiSnapshotPreview1ArgsGet => {
-            let values = caller.data().argv.clone();
-            let status = if memory::write_string_table(
-                caller,
-                i32_arg(params, 0)?,
-                i32_arg(params, 1)?,
-                &values,
-            )
-            .is_ok()
-            {
-                WASI_ERRNO_SUCCESS
-            } else {
-                WASI_ERRNO_FAULT
-            };
-            set_i32_result(results, status)?;
-        }
-        ImportId::WasiSnapshotPreview1EnvironSizesGet => {
-            let count = caller.data().env.len();
-            let bytes = table_bytes(&caller.data().env)?;
-            let count =
-                u32::try_from(count).map_err(|_| wasmtime::format_err!("env count overflow"))?;
-            let bytes =
-                u32::try_from(bytes).map_err(|_| wasmtime::format_err!("env bytes overflow"))?;
-            let status = if memory::validate_range(caller, i32_arg(params, 0)?, 4).is_err()
-                || memory::validate_range(caller, i32_arg(params, 1)?, 4).is_err()
-            {
-                WASI_ERRNO_FAULT
-            } else {
-                memory::write_u32(caller, i32_arg(params, 0)?, count)
-                    .expect("prevalidated env count");
-                memory::write_u32(caller, i32_arg(params, 1)?, bytes)
-                    .expect("prevalidated env bytes");
-                WASI_ERRNO_SUCCESS
-            };
-            set_i32_result(results, status)?;
-        }
-        ImportId::WasiSnapshotPreview1EnvironGet => {
-            let values = caller.data().env.clone();
-            let status = if memory::write_string_table(
-                caller,
-                i32_arg(params, 0)?,
-                i32_arg(params, 1)?,
-                &values,
-            )
-            .is_ok()
-            {
-                WASI_ERRNO_SUCCESS
-            } else {
-                WASI_ERRNO_FAULT
-            };
-            set_i32_result(results, status)?;
-        }
-        ImportId::WasiSnapshotPreview1SchedYield => set_i32_result(results, WASI_ERRNO_SUCCESS)?,
-        ImportId::WasiSnapshotPreview1ProcExit => {
-            let code = i32_arg(params, 0)? as i32;
-            if let Some(group) = caller.data().thread_group.as_ref() {
-                group
-                    .request_process_exit(code)
-                    .map_err(wasmtime_host_error)?;
-            }
-            caller.data_mut().exit_code = Some(code);
-            return Err(wasmtime::format_err!("agentos:wasi-exit:{code}"));
-        }
-        _ => set_default_result(results)?,
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct SignalDispatch {
-    delivered: bool,
-    all_restart: bool,
-}
-
-async fn drain_signal_checkpoints(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
-    mut force_probe: bool,
-) -> wasmtime::Result<SignalDispatch> {
-    let mut outcome = SignalDispatch {
-        delivered: false,
-        all_restart: true,
-    };
-    for _ in 0..MAX_SIGNALS_PER_SAFE_POINT {
-        let host = caller.data().host.clone();
-        if !force_probe && !host.signal_pending() {
-            return Ok(outcome);
-        }
-        force_probe = false;
-        let thread_id = u32::try_from(caller.data().thread_id).map_err(|_| {
-            wasmtime::format_err!("ERR_AGENTOS_WASMTIME_SIGNAL_THREAD_ID: invalid thread id")
-        })?;
-        let take = if caller.data().thread_group.is_some() {
-            SignalOperation::TakePublishedDeliveryForThread { thread_id }
-        } else {
-            SignalOperation::TakePublishedDelivery
-        };
-        let reply = host
-            .submit(HostOperation::Signal(take), std::mem::size_of::<u32>())
-            .await
-            .map_err(wasmtime_host_error)?;
-        let value = host_json(reply, "process.take_signal")?;
-        if value.is_null() {
-            return Ok(outcome);
-        }
-        let signal = value
-            .get("signal")
-            .and_then(Value::as_i64)
-            .and_then(|value| i32::try_from(value).ok())
-            .ok_or_else(|| wasmtime::format_err!("process.take_signal omitted a valid signal"))?;
-        let token = value
-            .get("token")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| wasmtime::format_err!("process.take_signal omitted a delivery token"))?;
-        let flags = value
-            .get("flags")
-            .and_then(Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| wasmtime::format_err!("process.take_signal omitted valid flags"))?;
-        outcome.delivered = true;
-        outcome.all_restart &= flags & SA_RESTART != 0;
-
-        let trampoline = caller
-            .get_export("__wasi_signal_trampoline")
-            .and_then(|export| export.into_func())
-            .ok_or_else(|| {
-                wasmtime::format_err!(
-                    "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: caught signal has no trampoline"
-                )
-            })?
-            .typed::<i32, ()>(&mut *caller)
-            .map_err(|error| {
-                wasmtime::format_err!(
-                    "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: invalid trampoline type: {error}"
-                )
-            })?;
-        let handler_result = trampoline.call_async(&mut *caller, signal).await;
-        let end = if caller.data().thread_group.is_some() {
-            SignalOperation::EndDeliveryForThread { thread_id, token }
-        } else {
-            SignalOperation::EndDelivery { token }
-        };
-        let end_result = caller
-            .data()
-            .host
-            .clone()
-            .submit(
-                HostOperation::Signal(end),
-                std::mem::size_of::<u64>() + std::mem::size_of::<u32>(),
-            )
-            .await;
-        if let Err(error) = handler_result {
-            if let Err(end_error) = end_result {
-                eprintln!(
-                    "ERR_AGENTOS_WASMTIME_SIGNAL_SETTLEMENT: handler failed with {error}; token settlement also failed with {end_error}"
-                );
-            }
-            return Err(error);
-        }
-        end_result.map_err(wasmtime_host_error)?;
-    }
-    Err(wasmtime::format_err!(
-        "ERR_AGENTOS_WASMTIME_SIGNAL_DRAIN_LIMIT: more than {MAX_SIGNALS_PER_SAFE_POINT} signals were delivered at one safe point"
-    ))
 }
 
 pub async fn initialize_inherited_signal_mask(
     store: &mut wasmtime::Store<WasmtimeStoreState>,
     instance: &wasmtime::Instance,
 ) -> Result<(), HostServiceError> {
-    let thread_id = u32::try_from(store.data().thread_id).map_err(|_| {
-        HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_SIGNAL_THREAD_ID",
-            "invalid Wasmtime signal thread id",
-        )
-    })?;
-    let update = if store.data().thread_group.is_some() {
-        SignalOperation::UpdateMaskForThread {
-            thread_id,
-            how: SignalMaskHow::Block,
-            set: SignalSetValue::default(),
-        }
-    } else {
-        SignalOperation::UpdateMask {
-            how: SignalMaskHow::Block,
-            set: SignalSetValue::default(),
-        }
-    };
-    let reply = store
-        .data()
-        .host
-        .clone()
-        .submit(
-            HostOperation::Signal(update),
-            std::mem::size_of::<SignalSetValue>(),
-        )
-        .await?;
-    let value = match reply {
-        HostCallReply::Json(value) => value,
-        _ => {
-            return Err(HostServiceError::new(
-                "EIO",
-                "process.signal_mask returned a non-JSON reply",
-            ));
-        }
-    };
-    let signals = value
-        .get("signals")
-        .and_then(Value::as_array)
-        .ok_or_else(|| HostServiceError::new("EIO", "signal-mask query omitted signals"))?;
-    let mut low = 0u32;
-    let mut high = 0u32;
-    for signal in signals {
-        let signal = signal
-            .as_u64()
-            .and_then(|value| u32::try_from(value).ok())
-            .filter(|value| (1..=64).contains(value))
-            .ok_or_else(|| {
-                HostServiceError::new("EIO", "signal-mask query returned an invalid signal")
-            })?;
-        if signal <= 32 {
-            low |= 1 << (signal - 1);
-        } else {
-            high |= 1 << (signal - 33);
-        }
-    }
-    if low == 0 && high == 0 {
+    let mask = imports::inherited_signal_mask(
+        &store.data().host,
+        store.data().thread_id,
+        store.data().thread_group.is_some(),
+    )
+    .await?;
+    let Some((low, high)) = mask else {
         return Ok(());
-    }
+    };
     let setter = instance
         .get_typed_func::<(i32, i32), i32>(&mut *store, "__agentos_set_initial_sigmask")
         .map_err(|error| {
@@ -534,7 +291,7 @@ pub async fn initialize_inherited_signal_mask(
             )
         })?;
     let status = setter
-        .call_async(&mut *store, (low as i32, high as i32))
+        .call_async(&mut *store, (low, high))
         .await
         .map_err(initial_signal_mask_error)?;
     store.data().check_active_cpu_budget()?;
@@ -547,118 +304,29 @@ pub async fn initialize_inherited_signal_mask(
     Ok(())
 }
 
-fn host_json(reply: HostCallReply, method: &str) -> wasmtime::Result<Value> {
-    match reply {
-        HostCallReply::Json(value) => Ok(value),
-        _ => Err(wasmtime::format_err!("{method} returned a non-JSON reply")),
-    }
-}
-
-fn wasmtime_host_error(error: HostServiceError) -> wasmtime::Error {
-    wasmtime::Error::new(error)
-}
-
-fn table_bytes(values: &[Vec<u8>]) -> wasmtime::Result<usize> {
-    values.iter().try_fold(0usize, |total, value| {
-        total
-            .checked_add(value.len())
-            .ok_or_else(|| wasmtime::format_err!("string table byte count overflow"))
-    })
-}
-
-fn i32_arg(params: &[Val], index: usize) -> wasmtime::Result<u32> {
-    match params.get(index) {
-        Some(Val::I32(value)) => Ok(*value as u32),
-        _ => Err(wasmtime::format_err!(
-            "invalid i32 ABI argument at index {index}"
-        )),
-    }
-}
-
-fn set_i32_result(results: &mut [Val], value: i32) -> wasmtime::Result<()> {
-    match results {
-        [slot] => {
-            *slot = Val::I32(value);
-            Ok(())
-        }
-        _ => Err(wasmtime::format_err!("invalid i32 ABI result shape")),
-    }
-}
-
-fn set_default_result(results: &mut [Val]) -> wasmtime::Result<()> {
-    match results {
-        [] => Ok(()),
-        [slot @ Val::I32(_)] => {
-            *slot = Val::I32(WASI_ERRNO_NOSYS);
-            Ok(())
-        }
-        [slot @ Val::I64(_)] => {
-            *slot = Val::I64(-1);
-            Ok(())
-        }
-        _ => Err(wasmtime::format_err!(
-            "unsupported AgentOS ABI result shape"
-        )),
-    }
-}
-
-async fn check_fixed_request_limit(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
-    limit_name: &'static str,
-    observed: usize,
-    maximum: usize,
-    errno: i32,
-) -> i32 {
-    let warning_at = maximum.saturating_sub(maximum / 5).max(1);
-    let publish =
-        observed >= warning_at && caller.data_mut().warned_fixed_limits.insert(limit_name);
-    if publish {
-        let warning = format!(
-            "[agentos] WASM request is near {limit_name} ({observed}/{maximum}); split the request if needed\n"
-        );
-        let host = caller.data().host.clone();
-        if let Err(error) = host.publish_stderr(warning.into_bytes()).await {
-            eprintln!(
-                "ERR_AGENTOS_WASMTIME_LIMIT_WARNING: failed to publish {limit_name} warning: {error}"
-            );
+fn initial_signal_mask_error(error: wasmtime::Error) -> HostServiceError {
+    if let Some(host_error) = error.downcast_ref::<HostServiceError>() {
+        if matches!(
+            host_error.code.as_str(),
+            "ERR_AGENTOS_WASMTIME_CPU_CLOCK" | "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT"
+        ) {
+            return host_error.clone();
         }
     }
-    if observed > maximum {
-        errno
-    } else {
-        0
-    }
+    eprintln!(
+        "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK: private initialization diagnostic: {error:#}"
+    );
+    HostServiceError::new(
+        "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK",
+        "inherited signal-mask initialization trapped",
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::PermissionTier;
-
-    #[test]
-    fn linker_permission_filter_matches_generated_registry() {
-        for tier in [
-            WasmPermissionTier::Isolated,
-            WasmPermissionTier::ReadOnly,
-            WasmPermissionTier::ReadWrite,
-            WasmPermissionTier::Full,
-        ] {
-            assert_eq!(
-                ABI_BINDINGS
-                    .iter()
-                    .filter(|abi| permitted(**abi, tier))
-                    .count(),
-                ABI_BINDINGS
-                    .iter()
-                    .filter(|abi| abi.permission_tiers.contains(permission_tier(tier)))
-                    .count()
-            );
-        }
-        assert_eq!(
-            permission_tier(WasmPermissionTier::Full),
-            PermissionTier::Full
-        );
-    }
+    use agentos_executor_wasm_host::abi::ABI_BINDINGS;
+    use agentos_executor_wasm_host::imports::permitted;
 
     #[test]
     fn module_import_validation_uses_generated_registry_not_engine_strings() {
@@ -723,10 +391,7 @@ mod tests {
             "ambient_host"
         );
     }
-}
 
-#[cfg(test)]
-mod process_exit_error_tests {
     #[test]
     fn process_exit_preserves_cpu_error_metadata() {
         for code in [
@@ -737,46 +402,38 @@ mod process_exit_error_tests {
                 "ERR_AGENTOS_WASMTIME_INSTANTIATE",
                 "ERR_AGENTOS_WASMTIME_TRAP",
             ] {
-                let original = crate::backend::HostServiceError::new(code, "stable CPU error")
+                let original = HostServiceError::new(code, "stable CPU error")
                     .with_details(serde_json::json!({"limitName": "limits.wasm.activeCpuTimeLimitMs", "limit": 10, "observed": 12}));
-                let wrapped = super::wasmtime_host_error(original.clone());
+                let wrapped =
+                    into_wasmtime_error(agentos_executor_wasm_host::Error::Host(original.clone()));
                 let normalized = crate::error::normalize(default, &wrapped, false);
                 assert_eq!(normalized.code, original.code);
                 assert_eq!(normalized.details, original.details);
             }
         }
     }
-}
 
-fn initial_signal_mask_error(error: wasmtime::Error) -> HostServiceError {
-    if let Some(host_error) = error.downcast_ref::<HostServiceError>() {
-        if matches!(
-            host_error.code.as_str(),
-            "ERR_AGENTOS_WASMTIME_CPU_CLOCK" | "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT"
-        ) {
-            return host_error.clone();
-        }
+    #[test]
+    fn unwinding_sentinels_keep_their_text() {
+        assert_eq!(
+            into_wasmtime_error(agentos_executor_wasm_host::Error::Exit(7)).to_string(),
+            "agentos:wasi-exit:7"
+        );
+        assert_eq!(
+            into_wasmtime_error(agentos_executor_wasm_host::Error::ExecReplaced).to_string(),
+            "agentos:exec-replaced"
+        );
     }
-    eprintln!(
-        "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK: private initialization diagnostic: {error:#}"
-    );
-    HostServiceError::new(
-        "ERR_AGENTOS_WASMTIME_INITIAL_SIGNAL_MASK",
-        "inherited signal-mask initialization trapped",
-    )
-}
 
-#[cfg(test)]
-mod initial_signal_mask_error_tests {
     #[test]
     fn initial_signal_mask_preserves_cpu_error_metadata() {
         for code in [
             "ERR_AGENTOS_WASMTIME_CPU_CLOCK",
             "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT",
         ] {
-            let original = crate::backend::HostServiceError::new(code, "stable CPU error")
+            let original = HostServiceError::new(code, "stable CPU error")
                 .with_details(serde_json::json!({"limitName": "limits.wasm.activeCpuTimeLimitMs"}));
-            let actual = super::initial_signal_mask_error(wasmtime::Error::new(original.clone()));
+            let actual = initial_signal_mask_error(wasmtime::Error::new(original.clone()));
             assert_eq!(actual.code, original.code);
             assert_eq!(actual.details, original.details);
         }

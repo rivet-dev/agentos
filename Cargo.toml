@@ -15,6 +15,7 @@ members = [
     "crates/executor-node-v8",
     "crates/executor-python-v8-pyodide",
     "crates/executor-wasm-abi",
+    "crates/executor-wasm-host",
     "crates/executor-wasm-v8",
     "crates/vm-kernel",
     "crates/benchmark-baseline",
@@ -54,6 +55,7 @@ agentos-executor-contract = { path = "crates/executor-contract", version = "0.0.
 agentos-executor-node-v8 = { path = "crates/executor-node-v8", version = "0.0.1" }
 agentos-executor-python-v8-pyodide = { path = "crates/executor-python-v8-pyodide", version = "0.0.1" }
 agentos-executor-wasm-abi = { path = "crates/executor-wasm-abi", version = "0.0.1" }
+agentos-executor-wasm-host = { path = "crates/executor-wasm-host", version = "0.0.1" }
 agentos-executor-wasm-v8 = { path = "crates/executor-wasm-v8", version = "0.0.1" }
 agentos-executor-wasm-wasmtime = { path = "crates/executor-wasm-wasmtime", version = "0.0.1" }
 agentos-vm-kernel = { path = "crates/vm-kernel", version = "0.0.1" }

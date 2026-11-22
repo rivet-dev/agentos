@@ -6,11 +6,11 @@ use super::preview1::{
 };
 use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
-use crate::{memory, store::WasmtimeStoreState};
+use crate::memory;
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use wasmtime::{Caller, Val};
+use crate::{Val, WasmGuest};
 
 const KERNEL_WAIT_SLICE_MS: u32 = 10_000;
 
@@ -26,12 +26,12 @@ fn tty_read_timeout_slice(timeout: u32) -> (u32, bool) {
     )
 }
 
-pub async fn dispatch(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub async fn dispatch<C: WasmGuest>(
+    caller: &mut C,
     abi: AbiBinding,
     params: &[Val],
     results: &mut [Val],
-) -> wasmtime::Result<bool> {
+) -> crate::Result<bool> {
     use ImportId::*;
     let value = match abi.id {
         HostSystemGetIdentity => identity(caller, params).await,
@@ -64,7 +64,7 @@ pub async fn dispatch(
     Ok(true)
 }
 
-async fn identity(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn identity<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(field), Ok(output), Ok(capacity)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -106,7 +106,7 @@ async fn identity(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -
     }
 }
 
-async fn tty_read(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn tty_read<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(output), Ok(capacity), Ok(timeout)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -159,7 +159,7 @@ async fn tty_read(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -
     }
 }
 
-async fn tty_isatty(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn tty_isatty<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else { return 0 };
     match call(caller, "__kernel_isatty", vec![json!(fd)], HashMap::new()).await {
         Ok(reply) => json_reply(reply)
@@ -171,13 +171,13 @@ async fn tty_isatty(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val])
     }
 }
 
-async fn tty_name(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn tty_name<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(output), Ok(capacity)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
         return ERRNO_FAULT;
     };
-    if capacity <= 0 {
+    if capacity == 0 {
         return ERRNO_RANGE;
     }
     if memory::validate_range(caller, output, capacity as usize).is_err() {
@@ -201,7 +201,7 @@ async fn tty_name(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -
     SUCCESS
 }
 
-async fn tty_size(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn tty_size<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(columns), Ok(rows)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -242,7 +242,7 @@ async fn tty_size(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -
     }
 }
 
-async fn tty_set_size(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn tty_set_size<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(columns), Ok(rows)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -259,7 +259,7 @@ async fn tty_set_size(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val
     .await
 }
 
-async fn tty_get_attr(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn tty_get_attr<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(flags_output), Ok(cc_output)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -321,7 +321,7 @@ async fn tty_get_attr(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val
     }
 }
 
-async fn tty_set_attr(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn tty_set_attr<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(flags), Ok(cc_pointer)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -338,8 +338,8 @@ async fn tty_set_attr(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val
     .await
 }
 
-async fn tty_scalar_output(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn tty_scalar_output<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     method: &str,
 ) -> i32 {

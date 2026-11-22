@@ -76,7 +76,8 @@ agentos-sidecar                         binary and composition root
     │   └── agentos-executor-wasm-abi
     └── agentos-executor-wasm-wasmtime
         ├── agentos-executor-contract
-        └── agentos-executor-wasm-abi
+        ├── agentos-executor-wasm-abi
+        └── agentos-executor-wasm-host
 └── stdio, fd 3, framing, and connection routing
 ```
 
@@ -99,7 +100,9 @@ WASM support, package/tar filesystem tooling, V8, Pyodide, or Wasmtime.
 `agentos-executor-v8-runtime` is optional and enters the binary only with a V8 executor;
 it owns process-global platform setup, snapshot prewarm, and reusable V8 session
 mechanics. `agentos-executor-wasm-abi` enters only when `wasm-v8` or
-`wasm-wasmtime` selects the `wasm-api` feature.
+`wasm-wasmtime` selects the `wasm-api` feature. `agentos-executor-wasm-host`
+implements every WASM host import once for the WASM executors and enters only
+with one of them.
 
 ## Direct embedded use
 
@@ -141,6 +144,7 @@ engine fails with the typed `ERR_AGENTOS_EXECUTOR_UNAVAILABLE` error.
 | Executor crates | Engine state, guest ABI and memory adaptation, guest scheduling, and engine-specific interruption | Parallel filesystem, network, process, signal, or TTY implementations |
 | `agentos-executor-v8-runtime` | Process-global V8 platform ownership and reusable isolate/session mechanics | Node, Python, or standalone-WASM policy |
 | `agentos-executor-wasm-abi` | Shared agentOS WASM ABI definitions, validation, permission tiers, and stable WASM errors | A concrete V8 or Wasmtime engine |
+| `agentos-executor-wasm-host` | The agentOS WASM host imports (Preview1 plus the `host_*` POSIX extensions), import validation, and executable-image loading, shared by the WASM executors | A concrete engine, or descriptor, process, and filesystem state |
 | `agentos-vm` | VM lifecycle, kernel/VFS/storage composition, executor dispatch through injected contracts, mounts, snapshots, direct embedded operations, and the engine-neutral extension lifecycle/capability adapter | Sidecar transport, Concrete extensions, or concrete engine implementation |
 | `agentos-sidecar` | The executable and its `process_entrypoint::run` for other binaries that run the sidecar process mode, wire transport, connection/session authentication, concrete extension selection, Tokio-driver construction, and concrete executor registration | Guest Linux semantics or engine internals |
 | `agentos-sidecar-protocol` / `agentos-sidecar-client` | Execution-sidecar wire schema and client transport | VM policy or engine dispatch |

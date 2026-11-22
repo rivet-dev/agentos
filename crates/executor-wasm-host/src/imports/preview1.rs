@@ -8,12 +8,12 @@
 use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
 use crate::backend::{HostCallReply, HostServiceError};
-use crate::{memory, store::WasmtimeStoreState};
+use crate::memory;
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Instant;
-use wasmtime::{Caller, Val};
+use crate::{Val, WasmGuest};
 
 pub(super) const SUCCESS: i32 = 0;
 pub(super) const ERRNO_2BIG: i32 = 1;
@@ -75,12 +75,12 @@ pub(super) const ERRNO_NODATA: i32 = 78;
 const MAX_IOVECS: usize = 1024;
 const MAX_POLL_SUBSCRIPTIONS: usize = 1024;
 
-pub async fn dispatch(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub async fn dispatch<C: WasmGuest>(
+    caller: &mut C,
     abi: AbiBinding,
     params: &[Val],
     results: &mut [Val],
-) -> wasmtime::Result<bool> {
+) -> crate::Result<bool> {
     use ImportId::*;
     let status = match abi.id {
         WasiSnapshotPreview1ArgsGet
@@ -146,8 +146,8 @@ pub async fn dispatch(
     Ok(true)
 }
 
-pub(super) async fn call(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub(super) async fn call<C: WasmGuest>(
+    caller: &mut C,
     method: &str,
     args: Vec<Value>,
     raw: HashMap<usize, Vec<u8>>,
@@ -158,8 +158,8 @@ pub(super) async fn call(
     host.submit_adapter_call(method.to_owned(), args, raw).await
 }
 
-pub(super) async fn simple_call(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub(super) async fn simple_call<C: WasmGuest>(
+    caller: &mut C,
     method: &str,
     args: Vec<Value>,
 ) -> i32 {
@@ -169,14 +169,14 @@ pub(super) async fn simple_call(
     }
 }
 
-fn u32v(params: &[Val], index: usize) -> wasmtime::Result<Value> {
+fn u32v(params: &[Val], index: usize) -> crate::Result<Value> {
     Ok(json!(i32_arg(params, index)?))
 }
 
-pub(super) fn i64_arg(params: &[Val], index: usize) -> wasmtime::Result<u64> {
+pub(super) fn i64_arg(params: &[Val], index: usize) -> crate::Result<u64> {
     match params.get(index) {
         Some(Val::I64(value)) => Ok(*value as u64),
-        _ => Err(wasmtime::format_err!(
+        _ => Err(crate::format_err!(
             "invalid i64 ABI argument at index {index}"
         )),
     }
@@ -273,8 +273,8 @@ pub(super) fn value_u64(value: &Value) -> Option<u64> {
         .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
 }
 
-async fn clock_value(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn clock_value<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     resolution: bool,
 ) -> i32 {
@@ -320,7 +320,7 @@ async fn clock_value(
     }
 }
 
-async fn random_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn random_get<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(pointer) = i32_arg(params, 0) else {
         return ERRNO_FAULT;
     };
@@ -354,7 +354,7 @@ async fn random_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val])
     memory::write_bytes(caller, pointer, &output).map_or(ERRNO_FAULT, |_| SUCCESS)
 }
 
-async fn fd_allocate(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_allocate<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(offset), Ok(length)) =
         (i32_arg(params, 0), i64_arg(params, 1), i64_arg(params, 2))
     else {
@@ -368,7 +368,7 @@ async fn fd_allocate(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     .await
 }
 
-async fn fd_fdstat_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_fdstat_get<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(output)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_FAULT;
     };
@@ -401,7 +401,7 @@ async fn fd_fdstat_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Va
     }
 }
 
-async fn fd_fdstat_set_flags(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_fdstat_set_flags<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(flags)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_INVAL;
     };
@@ -416,14 +416,14 @@ async fn fd_fdstat_set_flags(caller: &mut Caller<'_, WasmtimeStoreState>, params
     .await
 }
 
-async fn fd_filestat_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_filestat_get<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(output)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_FAULT;
     };
     filestat_call(caller, "process.fd_filestat", vec![json!(fd)], output).await
 }
 
-async fn fd_filestat_set_times(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_filestat_set_times<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(atime), Ok(mtime), Ok(flags)) = (
         i32_arg(params, 0),
         i64_arg(params, 1),
@@ -451,8 +451,8 @@ struct Iovec {
     length: usize,
 }
 
-async fn read_iovecs(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn read_iovecs<C: WasmGuest>(
+    caller: &mut C,
     pointer: u32,
     count: u32,
     writable: bool,
@@ -497,8 +497,8 @@ fn iovec_total(iovecs: &[Iovec]) -> Result<usize, i32> {
     })
 }
 
-fn collect_iovecs(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+fn collect_iovecs<C: WasmGuest>(
+    caller: &mut C,
     iovecs: &[Iovec],
     maximum: usize,
 ) -> Result<Vec<u8>, i32> {
@@ -525,8 +525,8 @@ fn max_host_bytes_reply_payload(encoded_limit: usize) -> usize {
         .saturating_mul(3)
 }
 
-fn scatter_iovecs(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+fn scatter_iovecs<C: WasmGuest>(
+    caller: &mut C,
     iovecs: &[Iovec],
     bytes: &[u8],
 ) -> Result<usize, i32> {
@@ -543,8 +543,8 @@ fn scatter_iovecs(
     Ok(offset)
 }
 
-async fn fd_read(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn fd_read<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     positioned: bool,
 ) -> i32 {
@@ -609,8 +609,8 @@ async fn fd_read(
     }
 }
 
-async fn fd_write(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn fd_write<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     positioned: bool,
 ) -> i32 {
@@ -722,7 +722,7 @@ async fn fd_write(
     }
 }
 
-async fn fd_prestat_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_prestat_get<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(output)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_FAULT;
     };
@@ -739,7 +739,7 @@ async fn fd_prestat_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[V
     }
 }
 
-async fn fd_prestat_dir_name(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_prestat_dir_name<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(output), Ok(length)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -755,7 +755,7 @@ async fn fd_prestat_dir_name(caller: &mut Caller<'_, WasmtimeStoreState>, params
     }
 }
 
-async fn preopen(caller: &mut Caller<'_, WasmtimeStoreState>, fd: u32) -> Result<String, i32> {
+async fn preopen<C: WasmGuest>(caller: &mut C, fd: u32) -> Result<String, i32> {
     match call(
         caller,
         "process.fd_preopen",
@@ -773,7 +773,7 @@ async fn preopen(caller: &mut Caller<'_, WasmtimeStoreState>, fd: u32) -> Result
     }
 }
 
-async fn fd_readdir(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_readdir<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(output), Ok(length), Ok(cookie), Ok(used_ptr)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -849,7 +849,7 @@ async fn fd_readdir(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val])
     }
 }
 
-async fn fd_renumber(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn fd_renumber<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(from), Ok(to)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_BADF;
     };
@@ -873,7 +873,7 @@ async fn fd_renumber(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     }
 }
 
-async fn fd_seek(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], tell: bool) -> i32 {
+async fn fd_seek<C: WasmGuest>(caller: &mut C, params: &[Val], tell: bool) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_BADF;
     };
@@ -917,8 +917,8 @@ async fn fd_seek(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], te
     }
 }
 
-fn guest_path(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+fn guest_path<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     pointer_index: usize,
     length_index: usize,
@@ -928,12 +928,12 @@ fn guest_path(
     memory::read_string(caller, pointer, length).map_err(|_| ERRNO_FAULT)
 }
 
-async fn path_create_directory(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn path_create_directory<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     path_one(caller, params, "process.path_mkdir_at").await
 }
 
-async fn path_one(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn path_one<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     method: &str,
 ) -> i32 {
@@ -946,7 +946,7 @@ async fn path_one(
     simple_call(caller, method, vec![json!(fd), json!(path)]).await
 }
 
-async fn path_filestat_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn path_filestat_get<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(flags), Ok(output)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 4))
     else {
@@ -964,8 +964,8 @@ async fn path_filestat_get(caller: &mut Caller<'_, WasmtimeStoreState>, params: 
     .await
 }
 
-async fn filestat_call(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn filestat_call<C: WasmGuest>(
+    caller: &mut C,
     method: &str,
     args: Vec<Value>,
     output: u32,
@@ -1020,8 +1020,8 @@ async fn filestat_call(
     }
 }
 
-async fn path_filestat_set_times(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn path_filestat_set_times<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
 ) -> i32 {
     let (Ok(fd), Ok(lookup), Ok(atime), Ok(mtime), Ok(flags)) = (
@@ -1051,7 +1051,7 @@ async fn path_filestat_set_times(
     .await
 }
 
-async fn path_link(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn path_link<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(old_fd), Ok(flags), Ok(new_fd)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 4))
     else {
@@ -1077,7 +1077,7 @@ async fn path_link(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     .await
 }
 
-async fn path_open(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn path_open<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (
         Ok(fd),
         Ok(lookup),
@@ -1185,7 +1185,7 @@ async fn path_open(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     }
 }
 
-async fn path_readlink(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn path_readlink<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(output), Ok(length), Ok(used)) = (
         i32_arg(params, 0),
         i32_arg(params, 3),
@@ -1231,7 +1231,7 @@ async fn path_readlink(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Va
     }
 }
 
-async fn path_rename(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn path_rename<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(old_fd), Ok(new_fd)) = (i32_arg(params, 0), i32_arg(params, 3)) else {
         return ERRNO_BADF;
     };
@@ -1254,7 +1254,7 @@ async fn path_rename(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     .await
 }
 
-async fn path_symlink(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn path_symlink<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(old_path) = guest_path(caller, params, 0, 1) else {
         return ERRNO_FAULT;
     };
@@ -1272,7 +1272,7 @@ async fn path_symlink(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val
     .await
 }
 
-async fn sock_shutdown(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn sock_shutdown<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(how)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_INVAL;
     };
@@ -1290,7 +1290,7 @@ async fn sock_shutdown(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Va
     .await
 }
 
-async fn poll_oneoff(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn poll_oneoff<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(input), Ok(output), Ok(count), Ok(event_count)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1408,8 +1408,8 @@ async fn poll_oneoff(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     }
 }
 
-pub(super) fn commit(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub(super) fn commit<C: WasmGuest>(
+    caller: &mut C,
     output: u32,
     bytes: &[u8],
 ) -> i32 {

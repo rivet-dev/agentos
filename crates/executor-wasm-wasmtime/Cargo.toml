@@ -17,6 +17,7 @@ doctest = false
 agentos-executor-contract = { path = "../executor-contract", version = "0.0.1" }
 agentos-driver-tokio = { path = "../driver-tokio", version = "0.0.1" }
 agentos-executor-wasm-abi = { path = "../executor-wasm-abi", version = "0.0.1" }
+agentos-executor-wasm-host = { path = "../executor-wasm-host", version = "0.0.1" }
 base64 = "0.22"
 ciborium = "0.2"
 flume = "0.11"

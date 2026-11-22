@@ -12,14 +12,11 @@ use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
 use crate::backend::{HostCallReply, HostServiceError};
 use crate::host::{HostOperation, SignalMaskHow, SignalOperation, SignalSetValue};
-use crate::{
-    lifecycle, memory, module,
-    store::{PendingExecReplacement, WasmtimeStoreState},
-};
+use crate::{image, memory, PendingExecReplacement};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
-use wasmtime::{Caller, Extern, Val, ValType};
+use crate::{Val, WasmGuest};
 
 const ERRNO_AGAIN: i32 = 6;
 const ERRNO_BADF: i32 = 8;
@@ -34,12 +31,12 @@ const MAX_FDS: usize = 1 << 20;
 const MAX_RIGHTS: usize = 253;
 const SUPPORTED_SPAWN_FLAGS: u32 = 0xff;
 
-pub async fn dispatch(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub async fn dispatch<C: WasmGuest>(
+    caller: &mut C,
     abi: AbiBinding,
     params: &[Val],
     results: &mut [Val],
-) -> wasmtime::Result<bool> {
+) -> crate::Result<bool> {
     use ImportId::*;
     let status = match abi.id {
         HostProcessProcSpawn => spawn(caller, params, SpawnVersion::Legacy).await,
@@ -81,7 +78,7 @@ pub async fn dispatch(
         _ => return Ok(false),
     };
     if caller.data().exec_replaced {
-        return Err(wasmtime::format_err!("agentos:exec-replaced"));
+        return Err(crate::Error::ExecReplaced);
     }
     set_i32_result(results, status)?;
     Ok(true)
@@ -112,8 +109,8 @@ struct SpawnInput {
     output: u32,
 }
 
-async fn spawn(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn spawn<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     version: SpawnVersion,
 ) -> i32 {
@@ -240,8 +237,8 @@ async fn spawn(
     }
 }
 
-fn decode_spawn(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+fn decode_spawn<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     version: SpawnVersion,
     output: u32,
@@ -386,8 +383,8 @@ fn arg(params: &[Val], index: usize) -> Result<u32, i32> {
     i32_arg(params, index).map_err(|_| ERRNO_INVAL)
 }
 
-fn cwd(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+fn cwd<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     pointer_index: usize,
     length_index: usize,
@@ -453,8 +450,8 @@ fn stdio_actions(fds: [u32; 3]) -> Vec<Value> {
         .collect()
 }
 
-fn decode_actions(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+fn decode_actions<C: WasmGuest>(
+    caller: &mut C,
     pointer: u32,
     length: u32,
     max_bytes: usize,
@@ -533,7 +530,7 @@ fn signal_set(low: u32, high: u32) -> Vec<u32> {
         .collect()
 }
 
-async fn fd_snapshot(caller: &mut Caller<'_, WasmtimeStoreState>) -> Result<Vec<Value>, i32> {
+async fn fd_snapshot<C: WasmGuest>(caller: &mut C) -> Result<Vec<Value>, i32> {
     match call(caller, "process.fd_snapshot", vec![], HashMap::new()).await {
         Ok(reply) => json_reply(reply)?.as_array().cloned().ok_or(ERRNO_IO),
         Err(error) => Err(errno(&error)),
@@ -568,7 +565,7 @@ fn spawn_fd_state(snapshot: &[Value]) -> (Vec<Value>, Vec<Value>) {
     (mappings, host_net)
 }
 
-async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd: bool) -> i32 {
+async fn exec<C: WasmGuest>(caller: &mut C, params: &[Val], by_fd: bool) -> i32 {
     let (command, argv_start, env_start, close_start) = if by_fd {
         (None, 1, 3, 5)
     } else {
@@ -637,7 +634,6 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
     };
     let command = command.unwrap_or_else(|| format!("/proc/self/fd/{}", executable_fd.unwrap()));
     let host = caller.data().host.clone();
-    let engine = caller.data().engine.clone();
     let maximum = caller.data().max_module_file_bytes;
     let (open_method, open_args) = if let Some(fd) = executable_fd {
         (
@@ -663,7 +659,7 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
     } else {
         None
     };
-    let (bytes, resolved_argv) = match lifecycle::read_open_executable_image_for_exec(
+    let (bytes, resolved_argv) = match image::read_open_executable_image_for_exec(
         &host,
         open,
         maximum,
@@ -674,24 +670,11 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
         Ok(image) => image,
         Err(error) => return errno(&error),
     };
-    let prepared_replacement = (|| {
+    let prepared_replacement = (|| -> Result<_, crate::backend::HostServiceError> {
         let resolved_argv = resolved_argv.ok_or_else(|| {
             crate::backend::HostServiceError::new("EIO", "exec image omitted argv")
         })?;
-        let compiled = module::compile_module(&engine, &bytes)?.module;
-        let threaded = matches!(
-            engine.profile().feature_profile,
-            crate::WasmtimeFeatureProfile::AgentOsOwnedWasiV1Threads
-        );
-        let import_tiers = super::exec_import_tiers(&compiled, threaded)?;
-        if !matches!(compiled.get_export("_start"), Some(wasmtime::ExternType::Func(ty))
-            if ty.params().next().is_none() && ty.results().next().is_none())
-        {
-            return Err(crate::backend::HostServiceError::new(
-                "ENOEXEC",
-                "replacement has no valid _start",
-            ));
-        }
+        let (compiled, import_tiers) = caller.prepare_exec_replacement(&bytes)?;
         Ok((compiled, resolved_argv, import_tiers))
     })();
     let (prepared_replacement, resolved_argv, import_tiers) = match prepared_replacement {
@@ -770,13 +753,7 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
                     .remaining_active_cpu_ms()
                     .and_then(|remaining| {
                         let fuel = if caller.data().deterministic_fuel_enabled {
-                            Some(caller.get_fuel().map_err(|error| {
-                                eprintln!("ERR_AGENTOS_WASMTIME_FUEL_CONFIG: private Store diagnostic: {error:#}");
-                                HostServiceError::new(
-                                    "ERR_AGENTOS_WASMTIME_FUEL_CONFIG",
-                                    "failed to preserve limits.wasm.deterministicFuel",
-                                )
-                            })?)
+                            Some(caller.fuel()?)
                         } else {
                             None
                         };
@@ -803,7 +780,7 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
     // A successful commit or a post-commit cleanup failure must unwind the
     // old guest before reporting an error or starting the replacement.
     let permission_tier = match result {
-        Ok(reply) => lifecycle::committed_exec_tier(reply),
+        Ok(reply) => image::committed_exec_tier(reply),
         Err(error) if error.code == "ERR_AGENTOS_WASM_EXEC_COMMITTED_FAILURE" => Err(error),
         Err(error) if error.code == "ERR_AGENTOS_EXEC_REPLACED" => {
             record_exec_replacement(caller, None);
@@ -829,9 +806,9 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
     ERRNO_IO
 }
 
-fn record_exec_replacement(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
-    replacement: Option<PendingExecReplacement>,
+fn record_exec_replacement<C: WasmGuest>(
+    caller: &mut C,
+    replacement: Option<PendingExecReplacement<C::Module>>,
 ) {
     caller.data_mut().exec_replaced = true;
     if caller.data().thread_id != 0 {
@@ -845,8 +822,8 @@ fn record_exec_replacement(
     caller.data_mut().pending_exec_replacement = replacement;
 }
 
-async fn commit_cross_runtime_exec(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn commit_cross_runtime_exec<C: WasmGuest>(
+    caller: &mut C,
     command: &str,
     argv: &[String],
     env: &BTreeMap<String, String>,
@@ -891,8 +868,8 @@ enum WaitVersion {
     V3,
 }
 
-async fn wait(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn wait<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     version: WaitVersion,
 ) -> i32 {
@@ -1017,7 +994,7 @@ fn signal_name(signal: u32) -> Option<&'static str> {
     NAMES.get(signal as usize).copied()
 }
 
-async fn kill(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn kill<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(pid), Ok(signal)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_INVAL;
     };
@@ -1027,7 +1004,7 @@ async fn kill(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i3
     simple_call(caller, "process.kill", vec![json!(pid as i32), json!(name)]).await
 }
 
-fn local_pid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+fn local_pid<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(output) = i32_arg(params, 0) else {
         return ERRNO_FAULT;
     };
@@ -1035,7 +1012,7 @@ fn local_pid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32
     commit(caller, output, &value.to_le_bytes())
 }
 
-async fn parent_pid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn parent_pid<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(output) = i32_arg(params, 0) else {
         return ERRNO_FAULT;
     };
@@ -1057,7 +1034,7 @@ async fn parent_pid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val])
     }
 }
 
-async fn getrlimit(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn getrlimit<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(resource), Ok(soft_output), Ok(hard_output)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -1099,7 +1076,7 @@ async fn getrlimit(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     }
 }
 
-async fn setrlimit(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn setrlimit<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(resource), Ok(soft), Ok(hard)) =
         (i32_arg(params, 0), i64_arg(params, 1), i64_arg(params, 2))
     else {
@@ -1120,8 +1097,8 @@ async fn setrlimit(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     .await
 }
 
-async fn umask(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn umask<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     always_set: bool,
 ) -> i32 {
@@ -1162,7 +1139,7 @@ async fn umask(
     }
 }
 
-async fn itimer(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn itimer<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(operation), Ok(value), Ok(interval), Ok(remaining_output), Ok(interval_output)) = (
         i32_arg(params, 0),
         i64_arg(params, 1),
@@ -1206,7 +1183,7 @@ async fn itimer(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> 
     }
 }
 
-async fn getpgid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn getpgid<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(pid), Ok(output)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_FAULT;
     };
@@ -1230,7 +1207,7 @@ async fn getpgid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) ->
     }
 }
 
-async fn setpgid(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn setpgid<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(pid), Ok(pgid)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_INVAL;
     };
@@ -1247,7 +1224,7 @@ enum PairKind {
     Pty,
 }
 
-async fn pair(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], kind: PairKind) -> i32 {
+async fn pair<C: WasmGuest>(caller: &mut C, params: &[Val], kind: PairKind) -> i32 {
     let (first_output_index, second_output_index, method, args) = match kind {
         PairKind::Pipe => (0, 1, "process.fd_pipe", vec![]),
         PairKind::Pty => (0, 1, "process.pty_open", vec![]),
@@ -1325,8 +1302,8 @@ enum DuplicateKind {
     Minimum,
 }
 
-async fn duplicate(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn duplicate<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     kind: DuplicateKind,
 ) -> i32 {
@@ -1378,15 +1355,15 @@ async fn duplicate(
     }
 }
 
-async fn duplicate_to(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn duplicate_to<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(target)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_BADF;
     };
     simple_call(caller, "process.fd_dup2", vec![json!(fd), json!(target)]).await
 }
 
-async fn descriptor_flags(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn descriptor_flags<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     set: bool,
 ) -> i32 {
@@ -1419,7 +1396,7 @@ async fn descriptor_flags(
     }
 }
 
-async fn flock(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn flock<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(operation)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_INVAL;
     };
@@ -1431,7 +1408,7 @@ async fn flock(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i
     .await
 }
 
-async fn record_lock(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn record_lock<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(command), Ok(kind), Ok(start), Ok(length)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1555,7 +1532,7 @@ async fn record_lock(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     }
 }
 
-async fn cancel_record_lock_wait(caller: &mut Caller<'_, WasmtimeStoreState>) {
+async fn cancel_record_lock_wait<C: WasmGuest>(caller: &mut C) {
     let status = simple_call(caller, "process.fd_record_lock_cancel", Vec::new()).await;
     if status != SUCCESS && status != ERRNO_INTR {
         eprintln!(
@@ -1564,7 +1541,7 @@ async fn cancel_record_lock_wait(caller: &mut Caller<'_, WasmtimeStoreState>) {
     }
 }
 
-async fn closefrom(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn closefrom<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(minimum) = i32_arg(params, 0) else {
         return ERRNO_INVAL;
     };
@@ -1576,7 +1553,7 @@ async fn closefrom(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     .await
 }
 
-async fn send_rights(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn send_rights<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (
         Ok(fd),
         Ok(data_pointer),
@@ -1665,7 +1642,7 @@ async fn send_rights(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     }
 }
 
-async fn receive_rights(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn receive_rights<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let values = (0..9)
         .map(|index| i32_arg(params, index).map_err(|_| ERRNO_FAULT))
         .collect::<Result<Vec<_>, _>>();
@@ -1813,14 +1790,14 @@ async fn receive_rights(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[V
     }
 }
 
-async fn rollback_fds(caller: &mut Caller<'_, WasmtimeStoreState>, fds: &[u32]) {
+async fn rollback_fds<C: WasmGuest>(caller: &mut C, fds: &[u32]) {
     for fd in fds {
         log_fd_rollback(caller, *fd, "received-rights output commit").await;
     }
 }
 
-async fn log_fd_rollback(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn log_fd_rollback<C: WasmGuest>(
+    caller: &mut C,
     fd: u32,
     context: &'static str,
 ) {
@@ -1830,25 +1807,18 @@ async fn log_fd_rollback(
     }
 }
 
-async fn sleep(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn sleep<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let Ok(milliseconds) = i32_arg(params, 0) else {
         return ERRNO_INVAL;
     };
     simple_call(caller, "process.sleep", vec![json!(milliseconds)]).await
 }
 
-fn has_signal_trampoline(caller: &mut Caller<'_, WasmtimeStoreState>) -> bool {
-    let Some(Extern::Func(function)) = caller.get_export("__wasi_signal_trampoline") else {
-        return false;
-    };
-    let ty = function.ty(&mut *caller);
-    let mut params = ty.params();
-    matches!(params.next(), Some(ValType::I32))
-        && params.next().is_none()
-        && ty.results().next().is_none()
+fn has_signal_trampoline<C: WasmGuest>(caller: &mut C) -> bool {
+    caller.has_signal_trampoline()
 }
 
-async fn sigaction(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn sigaction<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(signal), Ok(action), Ok(low), Ok(high), Ok(flags)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1883,7 +1853,7 @@ async fn sigaction(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     .await
 }
 
-async fn signal_mask(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn signal_mask<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(how), Ok(low), Ok(high), Ok(old_low), Ok(old_high)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1961,7 +1931,7 @@ async fn signal_mask(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]
     }
 }
 
-async fn ppoll(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn ppoll<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (
         Ok(pointer),
         Ok(count),
@@ -2108,7 +2078,7 @@ mod cross_runtime_cpu_tests {
     #[tokio::test]
     async fn exhausted_cross_runtime_exec_never_polls_commit() {
         let mut commits = 0;
-        let error = crate::store::active_cpu_limit_error(0, 0);
+        let error = crate::active_cpu_limit_error(0, 0);
         let result = super::commit_with_cpu_budget(Err(error), async {
             commits += 1;
             Ok(crate::backend::HostCallReply::Json(serde_json::Value::Null))

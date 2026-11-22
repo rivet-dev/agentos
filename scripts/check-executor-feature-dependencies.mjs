@@ -46,6 +46,7 @@ assertGraph("no-executor sidecar", packagesFor(), {
 	absent: [
 		...concreteExecutors,
 		"agentos-executor-wasm-abi",
+		"agentos-executor-wasm-host",
 		"oxc_parser",
 	],
 });
@@ -54,6 +55,7 @@ assertGraph("node-v8", packagesFor("node-v8"), {
 	absent: [
 		"agentos-executor-python-v8-pyodide",
 		"agentos-executor-wasm-abi",
+		"agentos-executor-wasm-host",
 		"agentos-executor-wasm-v8",
 		"agentos-executor-wasm-wasmtime",
 	],
@@ -63,6 +65,7 @@ assertGraph("python-v8-pyodide", packagesFor("python-v8-pyodide"), {
 	absent: [
 		"agentos-executor-node-v8",
 		"agentos-executor-wasm-abi",
+		"agentos-executor-wasm-host",
 		"agentos-executor-wasm-v8",
 		"agentos-executor-wasm-wasmtime",
 		"oxc_parser",

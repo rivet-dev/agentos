@@ -153,6 +153,76 @@ impl std::fmt::Debug for WorkerIpcClient {
     }
 }
 
+impl agentos_executor_wasm_host::WorkerTransport for WorkerIpcClient {
+    fn process(&self) -> HostProcessContext {
+        WorkerIpcClient::process(self)
+    }
+
+    fn signal_pending(&self) -> bool {
+        WorkerIpcClient::signal_pending(self)
+    }
+
+    fn submit(
+        &self,
+        operation: HostOperation,
+    ) -> agentos_executor_wasm_host::BoxFuture<'_, Result<HostCallReply, HostServiceError>> {
+        Box::pin(WorkerIpcClient::submit(self, operation))
+    }
+
+    fn submit_adapter_call(
+        &self,
+        method: String,
+        args: Vec<Value>,
+        raw_bytes_args: HashMap<usize, Vec<u8>>,
+    ) -> agentos_executor_wasm_host::BoxFuture<'_, Result<HostCallReply, HostServiceError>> {
+        Box::pin(WorkerIpcClient::submit_adapter_call(
+            self,
+            method,
+            args,
+            raw_bytes_args,
+        ))
+    }
+
+    fn publish_stderr(
+        &self,
+        bytes: Vec<u8>,
+    ) -> agentos_executor_wasm_host::BoxFuture<'_, Result<(), HostServiceError>> {
+        Box::pin(WorkerIpcClient::publish_stderr(self, bytes))
+    }
+
+    fn report_group_exit(&self, code: i32) -> Result<(), HostServiceError> {
+        WorkerIpcClient::report_group_exit(self, code)
+    }
+
+    fn report_group_failure(&self, error: HostServiceError) -> Result<(), HostServiceError> {
+        WorkerIpcClient::report_group_failure(self, error)
+    }
+
+    fn sample_exec_cpu(&self) -> Result<ExecCpuSample, HostServiceError> {
+        WorkerIpcClient::sample_exec_cpu(self)
+    }
+
+    fn commit_exec(
+        &self,
+        open: Value,
+        method: String,
+        request: Value,
+        remaining_cpu_ms: Option<u32>,
+        cpu_sample: Option<ExecCpuSample>,
+        remaining_fuel: Option<u64>,
+    ) -> agentos_executor_wasm_host::BoxFuture<'_, Result<HostCallReply, HostServiceError>> {
+        Box::pin(WorkerIpcClient::commit_exec(
+            self,
+            open,
+            method,
+            request,
+            remaining_cpu_ms,
+            cpu_sample,
+            remaining_fuel,
+        ))
+    }
+}
+
 impl WorkerIpcClient {
     fn start(
         process: HostProcessContext,
@@ -620,13 +690,7 @@ pub fn run_worker_entry() -> Result<(), HostServiceError> {
     client.finish(result)
 }
 
-/// Both clocks are sampled by trusted worker code before its remaining-budget
-/// snapshot. Monotonic time is shared with the parent across process boundaries.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub(super) struct ExecCpuSample {
-    monotonic_ns: u64,
-    process_cpu_ns: u64,
-}
+pub(super) use agentos_executor_wasm_host::ExecCpuSample;
 
 fn cpu_handoff_error(message: impl Into<String>) -> HostServiceError {
     eprintln!(
