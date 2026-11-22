@@ -22,6 +22,10 @@ prevent integration of the selectable backend.
 [wasmtime-executor.md](./wasmtime-executor.md) records the implementation and
 benchmark methodology. This note defines rollout and default-selection policy.
 
+[v8-native-wasm-imports.md](./v8-native-wasm-imports.md) records the later
+decision to keep V8 as the default and bind the same Rust host imports to it
+natively, replacing the JavaScript WASM runner.
+
 ## Security evidence
 
 The integrated tree pins Wasmtime **48.0.3** exactly in `Cargo.toml` and
