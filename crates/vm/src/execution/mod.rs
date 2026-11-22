@@ -249,7 +249,7 @@ use crate::executor::{
     GuestRuntimeConfig, HostRpcRequest, JavascriptSyncRpcResponder,
     StandaloneWasmBackend as ExecutionStandaloneWasmBackend, StartWasmExecutionRequest,
     WasmExecutionEvent, WasmExecutionLimits, WasmPermissionTier as ExecutionWasmPermissionTier,
-    TRUSTED_INITIAL_MODULE_PREFIX,
+    uses_native_host_imports, TRUSTED_INITIAL_MODULE_PREFIX,
 };
 #[cfg(feature = "node-v8")]
 use crate::executor::{

@@ -3884,6 +3884,7 @@ fn stage_authorized_child_launch_image(
     vm: &mut VmState,
     kernel_pid: u32,
     resolved: &mut ResolvedChildProcessExecution,
+    backend: ExecutionStandaloneWasmBackend,
 ) -> Result<(), VmError> {
     for path in &resolved.guest_executable_paths {
         vm.kernel
@@ -3911,6 +3912,7 @@ fn stage_authorized_child_launch_image(
         WasmLaunchAuthority::GuestProcessImage {
             requester_pid: kernel_pid,
         },
+        backend,
     )
 }
 
@@ -4284,7 +4286,7 @@ fn validate_in_place_exec_tier(
     effective: ProcessPermissionTier,
     tiers: Option<crate::executor::host::ExecImportTiers>,
 ) -> Result<(), VmError> {
-    if backend == ExecutionStandaloneWasmBackend::V8 {
+    if !uses_native_host_imports(backend) {
         return Ok(());
     }
     let tiers = tiers
@@ -4305,7 +4307,7 @@ fn validate_in_place_exec_tier(
 }
 
 fn in_place_exec_cleanup_error(backend: ExecutionStandaloneWasmBackend, error: VmError) -> VmError {
-    if backend == ExecutionStandaloneWasmBackend::V8 {
+    if !uses_native_host_imports(backend) {
         return error;
     }
     tracing::error!(%error, "Wasm exec committed but replacement cleanup failed; retiring the old image");
@@ -5936,6 +5938,7 @@ where
                 guest_executable_paths: Vec::new(),
                 guest_input_path: None,
                 adapter_policy: ExecutionAdapterPolicy::HOST_FUNCTION,
+                wasm_image: None,
             });
         }
 
@@ -6000,6 +6003,7 @@ where
                 guest_executable_paths: vec![guest_executable_path.clone()],
                 guest_input_path: Some(guest_executable_path),
                 adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+                wasm_image: None,
             });
         }
 
@@ -6041,6 +6045,7 @@ where
                     guest_executable_paths: Vec::new(),
                     guest_input_path: None,
                     adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+                    wasm_image: None,
                 });
             }
 
@@ -6065,6 +6070,7 @@ where
                     guest_executable_paths: Vec::new(),
                     guest_input_path: None,
                     adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+                    wasm_image: None,
                 });
             }
 
@@ -6149,6 +6155,7 @@ where
                 guest_executable_paths: Vec::new(),
                 guest_input_path,
                 adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+                wasm_image: None,
             });
         }
 
@@ -6223,6 +6230,7 @@ where
                 guest_executable_paths: vec![guest_executable_path.clone()],
                 guest_input_path: Some(guest_executable_path),
                 adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+                wasm_image: None,
             });
         }
         prepare_guest_runtime_env(
@@ -6249,6 +6257,7 @@ where
             guest_executable_paths: vec![guest_executable_path],
             guest_input_path: None,
             adapter_policy: ExecutionAdapterPolicy::KERNEL_HOST_CALL_POSIX,
+            wasm_image: None,
         })
     }
 
@@ -6787,7 +6796,7 @@ where
                 // are installed. Parent-authorized staged bytes must never
                 // become a privilege-dropped child's executable image.
                 if let Err(error) =
-                    stage_authorized_child_launch_image(&mut vm, kernel_pid, &mut resolved)
+                    stage_authorized_child_launch_image(&mut vm, kernel_pid, &mut resolved, standalone_wasm_backend)
                 {
                     rollback_unregistered_spawn_child(
                         &mut vm.kernel,
@@ -6985,18 +6994,20 @@ where
                             Some(u64::from(parent_kernel_pid)),
                         );
                         let module_path = match standalone_wasm_backend {
-                            ExecutionStandaloneWasmBackend::Wasmtime
-                            | ExecutionStandaloneWasmBackend::WasmtimeThreads => execution_env
+                            backend if uses_native_host_imports(backend) => execution_env
                                 .get("AGENTOS_GUEST_ENTRYPOINT")
                                 .cloned()
                                 .unwrap_or_else(|| resolved.entrypoint.clone()),
-                            ExecutionStandaloneWasmBackend::V8 => resolved.entrypoint.clone(),
+                            _ => resolved.entrypoint.clone(),
                         };
                         let context = wasm_engine.create_context(CreateWasmContextRequest {
                             vm_id: vm_id.to_owned(),
                             module_path: Some(module_path),
                         });
                         let context_id = context.context_id;
+                        if let Some(image) = resolved.wasm_image.clone() {
+                            wasm_engine.attach_module_image(&context_id, image);
+                        }
                         let runtime_control = attach_child_runtime_control!(
                             "child_process.spawn WebAssembly runtime-control attachment"
                         );
@@ -7803,6 +7814,7 @@ where
                 WasmLaunchAuthority::GuestProcessImage {
                     requester_pid: kernel_pid,
                 },
+                standalone_wasm_backend,
             )?;
         }
         // Keep guest-visible envp separate from executor bootstrap variables
@@ -8011,18 +8023,20 @@ where
                 execution_env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
                 execution_env.insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
                 let module_path = match standalone_wasm_backend {
-                    ExecutionStandaloneWasmBackend::Wasmtime
-                    | ExecutionStandaloneWasmBackend::WasmtimeThreads => execution_env
+                    backend if uses_native_host_imports(backend) => execution_env
                         .get("AGENTOS_GUEST_ENTRYPOINT")
                         .cloned()
                         .unwrap_or_else(|| resolved.entrypoint.clone()),
-                    ExecutionStandaloneWasmBackend::V8 => resolved.entrypoint.clone(),
+                    _ => resolved.entrypoint.clone(),
                 };
                 let context = self.wasm_engine.create_context(CreateWasmContextRequest {
                     vm_id: vm_id.to_owned(),
                     module_path: Some(module_path),
                 });
                 let context_id = context.context_id;
+                if let Some(image) = resolved.wasm_image.clone() {
+                    self.wasm_engine.attach_module_image(&context_id, image);
+                }
                 let replacement_result =
                     self.wasm_engine.prepare_execution_with_runtime_for_backend(
                         StartWasmExecutionRequest {
@@ -8877,7 +8891,7 @@ where
                         &request.options,
                     )?;
                     pending_kernel_handle = Some(kernel_handle.clone());
-                    stage_authorized_child_launch_image(&mut vm, kernel_pid, &mut resolved)?;
+                    stage_authorized_child_launch_image(&mut vm, kernel_pid, &mut resolved, standalone_wasm_backend)?;
                     ipc_guard.borrow_mut().install(
                         &mut vm.kernel,
                         parent_kernel_pid,
@@ -9030,18 +9044,20 @@ where
                                 Some(u64::from(parent_kernel_pid)),
                             );
                             let module_path = match standalone_wasm_backend {
-                                ExecutionStandaloneWasmBackend::Wasmtime
-                                | ExecutionStandaloneWasmBackend::WasmtimeThreads => execution_env
+                                backend if uses_native_host_imports(backend) => execution_env
                                     .get("AGENTOS_GUEST_ENTRYPOINT")
                                     .cloned()
                                     .unwrap_or_else(|| resolved.entrypoint.clone()),
-                                ExecutionStandaloneWasmBackend::V8 => resolved.entrypoint.clone(),
+                                _ => resolved.entrypoint.clone(),
                             };
                             let context = wasm_engine.create_context(CreateWasmContextRequest {
                                 vm_id: vm_id.to_owned(),
                                 module_path: Some(module_path),
                             });
                             let context_id = context.context_id;
+                            if let Some(image) = resolved.wasm_image.clone() {
+                                wasm_engine.attach_module_image(&context_id, image);
+                            }
                             let runtime_control =
                                 ActiveProcess::attach_runtime_control_before_start(
                                     &kernel_handle,

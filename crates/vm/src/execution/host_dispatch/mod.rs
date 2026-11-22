@@ -1547,6 +1547,7 @@ fn decode_host_operation(
                 value: ResourceLimitValue { soft, hard },
             })
         }
+        "process.getppid" => HostOperation::Process(ProcessOperation::GetParentPid),
         "process.getpgid" => {
             let pid = javascript_sync_rpc_arg_u32(&request.args, 0, "process getpgid pid")?;
             HostOperation::Process(ProcessOperation::GetProcessGroup {
@@ -4059,6 +4060,18 @@ mod tests {
             })
             .collect::<BTreeSet<_>>();
         assert_eq!(covered, expected);
+    }
+
+    #[test]
+    fn wasm_getppid_decodes_to_the_kernel_parent_pid() {
+        // The shared WASM host imports ask for the parent PID by name.
+        let operation = decode_host_operation(&request("process.getppid", vec![]), true, 1024)
+            .expect("decode process.getppid")
+            .expect("process.getppid must not fall through to the legacy dispatcher");
+        assert!(matches!(
+            operation,
+            HostOperation::Process(ProcessOperation::GetParentPid)
+        ));
     }
 
     #[test]

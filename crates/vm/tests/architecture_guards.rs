@@ -4173,6 +4173,14 @@ fn production_threads_match_the_reviewed_topology_manifest() {
             "threaded-wasmtime-ipc-reader",
             "crates/executor-wasm-wasmtime/src/worker.rs",
         ),
+        (
+            "admitted-v8-wasm-guest-executor",
+            "crates/executor-wasm-v8/src/native/pool.rs",
+        ),
+        (
+            "bounded-v8-wasm-warm-guest",
+            "crates/executor-wasm-v8/src/native/pool.rs",
+        ),
         ("constant-stdio-writer", "crates/sidecar/src/transport.rs"),
         ("constant-stdio-reader", "crates/sidecar/src/transport.rs"),
         ("constant-heartbeat", "crates/sidecar/src/transport.rs"),

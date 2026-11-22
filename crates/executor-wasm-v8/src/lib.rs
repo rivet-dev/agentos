@@ -42,6 +42,12 @@ use tokio::sync::Notify;
 
 use agentos_executor_wasm_abi::profile;
 
+mod native;
+pub use native::{
+    native_wasm_enabled, preflight_native_image, NativeWasmV8Execution, PreloadedImage,
+    NATIVE_WASM_ENV,
+};
+
 const WASM_MODULE_PATH_ENV: &str = "AGENTOS_WASM_MODULE_PATH";
 const WASM_GUEST_ARGV_ENV: &str = "AGENTOS_GUEST_ARGV";
 const WASM_GUEST_ENV_ENV: &str = "AGENTOS_GUEST_ENV";

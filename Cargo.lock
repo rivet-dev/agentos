@@ -292,6 +292,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "wasmparser 0.251.0",
+ "wat",
 ]
 
 [[package]]
@@ -302,9 +304,12 @@ dependencies = [
  "agentos-executor-contract",
  "agentos-executor-v8-runtime",
  "agentos-executor-wasm-abi",
+ "agentos-executor-wasm-host",
  "agentos-resource-accounting",
+ "agentos-v8",
  "agentos-vm-host-interface",
  "base64",
+ "flume",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",

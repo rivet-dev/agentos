@@ -4273,6 +4273,9 @@ pub(crate) struct ResolvedChildProcessExecution {
     pub(crate) wasm_permission_tier: Option<WasmPermissionTier>,
     pub(crate) host_function_command: bool,
     pub(crate) adapter_policy: ExecutionAdapterPolicy,
+    /// The image bytes already loaded from the kernel at spawn, for an engine
+    /// that loads its module through the kernel (native host imports).
+    pub(crate) wasm_image: Option<crate::executor::PreloadedWasmImage>,
 }
 
 // ---------------------------------------------------------------------------

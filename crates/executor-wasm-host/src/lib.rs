@@ -27,6 +27,7 @@ mod guest;
 pub mod image;
 pub mod imports;
 pub mod memory;
+pub mod module_info;
 mod state;
 mod value;
 

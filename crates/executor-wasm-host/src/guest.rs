@@ -33,6 +33,8 @@ pub trait WasmGuest {
     /// Whether the guest exports `__wasi_signal_trampoline: (i32) -> ()`.
     fn has_signal_trampoline(&mut self) -> bool;
     /// Run the guest's signal handler for `signal` through its trampoline.
+    /// An engine that calls guests synchronously runs the handler before
+    /// returning and hands back a completed future.
     fn call_signal_trampoline(&mut self, signal: i32) -> BoxFuture<'_, crate::Result<()>>;
 
     /// Remaining deterministic fuel, when the engine meters it.
