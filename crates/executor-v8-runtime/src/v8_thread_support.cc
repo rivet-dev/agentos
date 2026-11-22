@@ -48,7 +48,9 @@ extern "C" void agentos_v8_suppress_microtasks_begin(void* storage, v8::Isolate*
   // The Rust caller pins storage BEFORE placement construction. nullptr selects
   // the default queue; call depth suppresses implicit checkpoints for all queues,
   // while an owned queue's explicit checkpoints remain available.
-  new (storage) AgentOsSuppressMicrotasks(isolate, nullptr);
+  // Global placement new constructs in that existing Rust stack slot; Clang
+  // correctly deletes the V8 class allocation operators for stack-only scopes.
+  ::new (storage) AgentOsSuppressMicrotasks(isolate, nullptr);
 }
 
 extern "C" void agentos_v8_suppress_microtasks_end(void* storage) {

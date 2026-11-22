@@ -5,9 +5,10 @@ Normal PR, benchmark and sidecar release jobs use reviewed binary inputs. The
 and arm64. It has read-only repository permissions. Each output contains the
 static library, Rust bindings, public headers, generated GN configuration, ICU
 common data, license notices and the Rust crate files from the pinned Git commit.
-CI installs those crate files using Cargo's directory source replacement and
-keeps the original Git identity in `Cargo.lock`. Consumer jobs can use the
-binary inputs without cloning Chromium's native submodules. Before upload, a
+The lockstep `agentos-v8` crate includes the unchanged upstream Rust sources
+and downloads the reviewed native archive for its target. Normal consumers need
+no Git override or Chromium checkout. The producer retains the upstream crate
+inside each archive for independent native-build qualification. Before upload, a
 separate Cargo build links the bundle and compares the native V8 version to
 the generated binding and the pinned source version.
 
@@ -18,9 +19,9 @@ consumer creates and disposes an isolate/context, links against the release
 sysroot, passes the ELF glibc-floor check and runs on Ubuntu 18.04. A full
 sidecar release link and runtime checks are still required before release.
 
-Pip-Boy's dependency comparison fetches only the Rust sources for each
-checkout's locked revision. A registry-only base uses Cargo's normal registry
-resolution. Its platform size jobs pass the reviewed bundle to BuildKit as a
+Pip-Boy's dependency comparison supports older checkouts with Git-pinned Rust
+sources. The current checkout uses `agentos-v8`; a registry-only base uses
+Cargo's normal registry resolution. Its platform size jobs pass the reviewed bundle to BuildKit as a
 read-only named context and verify the digest inside the build; Actions
 credentials stay on the runner.
 
@@ -63,9 +64,10 @@ DebugVisualizers are unused for these targets.
    upstream binary with the same crate version. No digest is credited until
    that target has actually been built and inspected.
 4. Before a crates.io release, qualify an independent, clean Rust consumer
-   using the registry dependency and its default artifact resolution. Cargo
-   ignores this workspace's Git patch in downstream crates. The publish
-   workflow checks for this before any real release job can publish.
+   using the packaged `agentos-v8` dependency and its default archive resolution.
+   Its source digests must match `crates/v8/UPSTREAM.json`; its provider files
+   must match this directory. Publish the binding before its dependent executor
+   crates. The release rehearsal verifies every crate from its own tarball.
 
 ## Running locally
 
@@ -95,18 +97,24 @@ python3 scripts/ci/v8/engine.py pack "$repo/target/rusty-v8-source" \
   "$repo/target/v8-build" "$target" "$repo/target/$target.tar.gz"
 ```
 
-To use an approved archive from the durable origin:
+Normal Cargo builds resolve the published archive automatically:
+
+```sh
+cargo build --locked -p agentos-sidecar
+```
+
+To prefetch and explicitly select an approved archive:
 
 ```sh
 python3 scripts/ci/v8/engine.py install "$target" "$repo/target/v8-bundles" \
-  --cargo-config "$repo/target/v8-source.toml" \
   --shell-env "$repo/target/v8-build.env"
 . "$repo/target/v8-build.env"
-cargo --config "$repo/target/v8-source.toml" build --locked -p agentos-sidecar
+cargo build --locked -p agentos-sidecar
 ```
 
 A draft checkout using temporary pins can add `--allow-actions` with an
 authenticated `gh` CLI that has read access to the artifact. A locally qualified build can use the same install command with
 `--bundle <file> --sha256 <trusted-pack-digest>`. The installer verifies the
 entire archive before extracting and checks all inputs against its manifest. The
-activation file pins both Cargo's library source and the generated Rust binding.
+activation file selects the verified library, generated binding and headers;
+the packaged Rust sources remain pinned in `agentos-v8`.
