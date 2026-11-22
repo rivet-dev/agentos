@@ -17,7 +17,9 @@ ARG CACHE_PLATFORM=darwin-arm64
 ARG RUST_TOOLCHAIN=1.95.0
 ARG DARWIN_LLVM_VERSION=21
 
-ENV SDK=/root/osxcross/target/SDK/MacOSX11.3.sdk \
+ENV SDK=/root/osxcross/target/SDK/MacOSX14.5.sdk \
+    SDKROOT=/root/osxcross/target/SDK/MacOSX14.5.sdk \
+    OSXCROSS_SDK=MacOSX14.5.sdk \
     RUSTC_WRAPPER=sccache \
     SCCACHE_DIR=/root/.cache/sccache \
     SCCACHE_IDLE_TIMEOUT=0
@@ -34,6 +36,10 @@ RUN set -eux; \
       > /etc/apt/sources.list.d/agentos-llvm.list; \
     apt-get update; \
     apt-get install -y --no-install-recommends "clang-${DARWIN_LLVM_VERSION}"; \
+    curl -fsSL https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz -o /tmp/macos-sdk.tar.xz; \
+    echo "6e146275d19f027faa2e8354da5e0267513abf013b8f16ad65a231653a2b1c5d  /tmp/macos-sdk.tar.xz" | sha256sum -c -; \
+    tar -xJf /tmp/macos-sdk.tar.xz -C /root/osxcross/target/SDK; \
+    rm /tmp/macos-sdk.tar.xz; \
     rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/root/osxcross/target/bin:/usr/lib/llvm-${DARWIN_LLVM_VERSION}/bin:${PATH}"
