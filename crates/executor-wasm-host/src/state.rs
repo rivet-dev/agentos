@@ -2,7 +2,9 @@
 
 use crate::backend::HostServiceError;
 use crate::{active_cpu_limit_error, ThreadGroupHooks, WasmHostClient};
-use agentos_executor_wasm_abi::{guest_visible_wasm_env, StartWasmExecutionRequest, WasmPermissionTier};
+use agentos_executor_wasm_abi::{
+    guest_visible_wasm_env, StartWasmExecutionRequest, WasmPermissionTier,
+};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 

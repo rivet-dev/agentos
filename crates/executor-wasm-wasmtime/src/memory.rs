@@ -67,4 +67,3 @@ pub fn exported_memory(
         _ => Err(GuestMemoryError::MissingMemory),
     }
 }
-

@@ -665,7 +665,7 @@ mod import_cache_retirement_tests {
 
     #[cfg(feature = "wasm-v8")]
     #[test]
-    fn actual_wasm_outer_and_nested_cache_slots_retire_in_both_engine_families() {
+    fn native_wasm_executions_own_no_import_cache_slot() {
         ic_with_vm(|manager, vm_id| {
             let temporary = tempfile::tempdir().unwrap();
             let module = temporary.path().join("cache-owner.wasm");
@@ -674,19 +674,17 @@ mod import_cache_retirement_tests {
                 wat::parse_str("(module (func (export \"_start\")))").unwrap(),
             )
             .unwrap();
+            // Native WebAssembly runs no JavaScript, so neither the outer nor
+            // a nested engine leases a Node import cache.
             ic_prepare_wasm(&mut manager.wasm_engine, vm_id, &module);
-            // The nested JavaScript engine runs on the WASM engine's cache and
-            // owns none of its own, so each engine family has one slot.
-            let mut roots = ic_roots(manager.wasm_engine.import_cache_cleanup_guards(vm_id), 1);
+            assert!(manager.wasm_engine.import_cache_cleanup_guards(vm_id).is_empty());
             let engines = manager.vms.get(vm_id).unwrap().execution_engines.clone();
             {
                 let mut engine = engines.wasm("cache retirement owner control").unwrap();
                 ic_prepare_wasm(&mut engine, vm_id, &module);
-                roots.extend(ic_roots(engine.import_cache_cleanup_guards(vm_id), 1));
+                assert!(engine.import_cache_cleanup_guards(vm_id).is_empty());
             }
-            assert_eq!(roots.iter().collect::<BTreeSet<_>>().len(), 2);
-            ic_check_collected(manager, vm_id, &roots);
-            roots
+            Vec::new()
         });
     }
 

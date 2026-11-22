@@ -6582,92 +6582,10 @@ mod error_code_tests {
 #[cfg(test)]
 mod wasm_sync_rpc_tests {
     use super::{
-        deferred_child_kernel_wait_request, javascript_sync_rpc_request_bytes_arg,
-        remap_wasm_process_sync_rpc, HostRpcRequest, ALLOWED_WASM_PROCESS_SYNC_RPCS,
+        deferred_child_kernel_wait_request, javascript_sync_rpc_request_bytes_arg, HostRpcRequest,
     };
     use serde_json::json;
-    use std::collections::{BTreeSet, HashMap};
-
-    fn emitted_wasm_wrapped_sync_rpcs() -> BTreeSet<&'static str> {
-        let source = include_str!("../../../../executor-wasm-v8/src/lib.rs");
-        let start = source
-            .find("case \"process.exec_image_open\":")
-            .expect("WASM process sync-RPC switch must exist");
-        let end = source[start..]
-            .find("_processWasmSyncRpc.applySync")
-            .map(|offset| start + offset)
-            .expect("WASM process sync-RPC dispatch call must exist");
-        source[start..end]
-            .lines()
-            .filter_map(|line| {
-                line.trim()
-                    .strip_prefix("case \"")
-                    .and_then(|line| line.strip_suffix("\":"))
-            })
-            .collect()
-    }
-
-    #[test]
-    fn every_emitted_wasm_wrapped_rpc_is_unwrapped_to_the_direct_handler_shape() {
-        let emitted = emitted_wasm_wrapped_sync_rpcs();
-        assert!(!emitted.is_empty(), "expected wrapped WASM RPC methods");
-        let allowed = ALLOWED_WASM_PROCESS_SYNC_RPCS
-            .iter()
-            .copied()
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            emitted, allowed,
-            "the generic WASM wrapper switch and sidecar allowlist must remain exact"
-        );
-
-        let service_source = include_str!("rpc.rs");
-        let service_start = service_source
-            .find("pub(crate) async fn service_javascript_sync_rpc")
-            .expect("sync RPC service must exist");
-        let service_end = service_source[service_start..]
-            .find("fn service_javascript_internal_bridge_sync_rpc")
-            .map(|offset| service_start + offset)
-            .expect("sync RPC service end must exist");
-        let service_source = &service_source[service_start..service_end];
-        let typed_dispatch_source = include_str!("../host_dispatch/mod.rs");
-        let typed_filesystem_dispatch_source = include_str!("../host_dispatch/filesystem.rs");
-
-        for method in emitted {
-            if !crate::execution::host_dispatch::is_wasm_adapter_only_rpc(method) {
-                assert!(
-                    service_source.contains(&format!("\"{method}\""))
-                        || typed_dispatch_source.contains(&format!("\"{method}\""))
-                        || typed_filesystem_dispatch_source.contains(&format!("\"{method}\"")),
-                    "WASM emits {method}, but the direct sync RPC dispatcher has no handler"
-                );
-            }
-            let direct = HostRpcRequest {
-                id: 17,
-                method: method.to_owned(),
-                args: vec![json!({ "marker": method })],
-                raw_bytes_args: HashMap::from([(0, vec![1, 2, 3])]),
-            };
-            let wrapped = HostRpcRequest {
-                id: direct.id,
-                method: String::from("process.wasm_sync_rpc"),
-                args: vec![json!(method), direct.args[0].clone()],
-                raw_bytes_args: HashMap::from([(1, vec![1, 2, 3])]),
-            };
-            let remapped = remap_wasm_process_sync_rpc(&wrapped)
-                .expect("emitted method must be accepted")
-                .expect("wrapper method must be remapped");
-            assert_eq!(remapped.id, direct.id, "request id for {method}");
-            assert_eq!(
-                remapped.method, direct.method,
-                "handler method for {method}"
-            );
-            assert_eq!(remapped.args, direct.args, "handler args for {method}");
-            assert_eq!(
-                remapped.raw_bytes_args, direct.raw_bytes_args,
-                "raw argument indexes for {method}"
-            );
-        }
-    }
+    use std::collections::HashMap;
 
     #[test]
     fn wrapped_wasm_fd_read_is_normalized_for_descendant_deferral() {

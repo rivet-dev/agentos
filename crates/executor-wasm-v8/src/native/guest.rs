@@ -71,12 +71,14 @@ pub(super) fn import_object<'s>(
     let object = v8::Object::new(scope);
     let mut namespaces: HashMap<&str, v8::Local<'s, v8::Object>> = HashMap::new();
     for (module, name) in &image.imports {
-        let abi = *permitted.get(&(module.as_str(), name.as_str())).ok_or_else(|| {
-            HostServiceError::new(
-                "ERR_AGENTOS_WASM_UNSUPPORTED_IMPORT",
-                format!("import {module}.{name} is not available at this permission tier"),
-            )
-        })?;
+        let abi = *permitted
+            .get(&(module.as_str(), name.as_str()))
+            .ok_or_else(|| {
+                HostServiceError::new(
+                    "ERR_AGENTOS_WASM_UNSUPPORTED_IMPORT",
+                    format!("import {module}.{name} is not available at this permission tier"),
+                )
+            })?;
         let namespace = match namespaces.get(module.as_str()) {
             Some(namespace) => *namespace,
             None => {
@@ -236,7 +238,10 @@ impl V8Guest<'_, '_, '_> {
     fn memory(&mut self) -> Result<(*mut u8, usize), GuestMemoryError> {
         // SAFETY: see `import_callback`.
         let state = unsafe { &*self.state };
-        let memory = state.memory.as_ref().ok_or(GuestMemoryError::MissingMemory)?;
+        let memory = state
+            .memory
+            .as_ref()
+            .ok_or(GuestMemoryError::MissingMemory)?;
         let memory = v8::Local::new(&*self.scope, memory);
         let buffer = memory.buffer();
         let length = buffer.byte_length();
@@ -284,7 +289,9 @@ impl WasmGuest for V8Guest<'_, '_, '_> {
         }
         // SAFETY: as for `memory_read`; the destination cannot overlap `bytes`,
         // which the handlers own.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), data.add(range.start), bytes.len()) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), data.add(range.start), bytes.len())
+        };
         Ok(())
     }
 
@@ -300,9 +307,11 @@ impl WasmGuest for V8Guest<'_, '_, '_> {
         // SAFETY: see `import_callback`.
         let trampoline = unsafe { (*self.state).signal_trampoline.clone() };
         let Some(trampoline) = trampoline else {
-            return Box::pin(std::future::ready(Err(agentos_executor_wasm_host::format_err!(
-                "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: caught signal has no trampoline"
-            ))));
+            return Box::pin(std::future::ready(Err(
+                agentos_executor_wasm_host::format_err!(
+                    "ERR_AGENTOS_WASMTIME_SIGNAL_TRAMPOLINE: caught signal has no trampoline"
+                ),
+            )));
         };
         let scope = &mut *self.scope;
         v8::tc_scope!(let tc, scope);

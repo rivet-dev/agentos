@@ -132,7 +132,9 @@ fn link_binding(
                 .await
                 .map_err(into_wasmtime_error)?;
             if host_results.len() != results.len() {
-                return Err(wasmtime::format_err!("unsupported AgentOS ABI result shape"));
+                return Err(wasmtime::format_err!(
+                    "unsupported AgentOS ABI result shape"
+                ));
             }
             for (slot, value) in results.iter_mut().zip(host_results) {
                 *slot = match value {

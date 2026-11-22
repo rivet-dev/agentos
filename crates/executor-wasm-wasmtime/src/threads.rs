@@ -68,7 +68,10 @@ impl agentos_executor_wasm_host::ThreadGroupHooks<Arc<wasmtime::Module>> for Thr
         ThreadGroup::request_process_exit(self, code)
     }
 
-    fn request_exec(&self, replacement: Option<PendingExecReplacement>) -> Result<(), HostServiceError> {
+    fn request_exec(
+        &self,
+        replacement: Option<PendingExecReplacement>,
+    ) -> Result<(), HostServiceError> {
         ThreadGroup::request_exec(self, replacement)
     }
 

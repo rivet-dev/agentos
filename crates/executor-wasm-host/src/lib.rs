@@ -39,5 +39,7 @@ pub use diagnostics::{ExecutionDiagnostics, PHASE_METRICS_PREFIX};
 pub use error::{Error, Result};
 pub use event::QueuedWasmEvent;
 pub use guest::{BoxFuture, ExecCpuSample, ThreadGroupHooks, WasmGuest, WorkerTransport};
-pub use state::{nul_terminated_strings, store_guest_environment, HostState, PendingExecReplacement};
+pub use state::{
+    nul_terminated_strings, store_guest_environment, HostState, PendingExecReplacement,
+};
 pub use value::Val;

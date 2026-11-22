@@ -13,10 +13,10 @@ use crate::abi::{AbiBinding, ImportId};
 use crate::backend::{HostCallReply, HostServiceError};
 use crate::host::{HostOperation, SignalMaskHow, SignalOperation, SignalSetValue};
 use crate::{image, memory, PendingExecReplacement};
+use crate::{Val, WasmGuest};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
-use crate::{Val, WasmGuest};
 
 const ERRNO_AGAIN: i32 = 6;
 const ERRNO_BADF: i32 = 8;
@@ -109,11 +109,7 @@ struct SpawnInput {
     output: u32,
 }
 
-async fn spawn<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    version: SpawnVersion,
-) -> i32 {
+async fn spawn<C: WasmGuest>(caller: &mut C, params: &[Val], version: SpawnVersion) -> i32 {
     let output_index = match version {
         SpawnVersion::Legacy => 9,
         SpawnVersion::V2 => 11,
@@ -748,32 +744,32 @@ async fn exec<C: WasmGuest>(caller: &mut C, params: &[Val], by_fd: bool) -> i32 
             Ok(None)
         };
         match cpu_sample.and_then(|sample| {
-                caller
-                    .data()
-                    .remaining_active_cpu_ms()
-                    .and_then(|remaining| {
-                        let fuel = if caller.data().deterministic_fuel_enabled {
-                            Some(caller.fuel()?)
-                        } else {
-                            None
-                        };
-                        Ok((sample, remaining, fuel))
-                    })
-            }) {
-                Ok((cpu_sample, remaining_cpu_ms, remaining_fuel)) => {
-                    worker
-                        .commit_exec(
-                            open,
-                            method.to_owned(),
-                            request,
-                            remaining_cpu_ms,
-                            cpu_sample,
-                            remaining_fuel,
-                        )
-                        .await
-                }
-                Err(error) => Err(error),
+            caller
+                .data()
+                .remaining_active_cpu_ms()
+                .and_then(|remaining| {
+                    let fuel = if caller.data().deterministic_fuel_enabled {
+                        Some(caller.fuel()?)
+                    } else {
+                        None
+                    };
+                    Ok((sample, remaining, fuel))
+                })
+        }) {
+            Ok((cpu_sample, remaining_cpu_ms, remaining_fuel)) => {
+                worker
+                    .commit_exec(
+                        open,
+                        method.to_owned(),
+                        request,
+                        remaining_cpu_ms,
+                        cpu_sample,
+                        remaining_fuel,
+                    )
+                    .await
             }
+            Err(error) => Err(error),
+        }
     } else {
         call(caller, method, vec![request], HashMap::new()).await
     };
@@ -868,11 +864,7 @@ enum WaitVersion {
     V3,
 }
 
-async fn wait<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    version: WaitVersion,
-) -> i32 {
+async fn wait<C: WasmGuest>(caller: &mut C, params: &[Val], version: WaitVersion) -> i32 {
     let (Ok(raw_pid), Ok(options)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_INVAL;
     };
@@ -1097,11 +1089,7 @@ async fn setrlimit<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     .await
 }
 
-async fn umask<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    always_set: bool,
-) -> i32 {
+async fn umask<C: WasmGuest>(caller: &mut C, params: &[Val], always_set: bool) -> i32 {
     let (mask, output) = if always_set {
         let (Ok(mask), Ok(output)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
             return ERRNO_FAULT;
@@ -1302,11 +1290,7 @@ enum DuplicateKind {
     Minimum,
 }
 
-async fn duplicate<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    kind: DuplicateKind,
-) -> i32 {
+async fn duplicate<C: WasmGuest>(caller: &mut C, params: &[Val], kind: DuplicateKind) -> i32 {
     let (Ok(fd), Ok(output)) = (
         i32_arg(params, 0),
         i32_arg(
@@ -1362,11 +1346,7 @@ async fn duplicate_to<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     simple_call(caller, "process.fd_dup2", vec![json!(fd), json!(target)]).await
 }
 
-async fn descriptor_flags<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    set: bool,
-) -> i32 {
+async fn descriptor_flags<C: WasmGuest>(caller: &mut C, params: &[Val], set: bool) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_BADF;
     };
@@ -1796,11 +1776,7 @@ async fn rollback_fds<C: WasmGuest>(caller: &mut C, fds: &[u32]) {
     }
 }
 
-async fn log_fd_rollback<C: WasmGuest>(
-    caller: &mut C,
-    fd: u32,
-    context: &'static str,
-) {
+async fn log_fd_rollback<C: WasmGuest>(caller: &mut C, fd: u32, context: &'static str) {
     let error = simple_call(caller, "process.fd_close", vec![json!(fd)]).await;
     if error != SUCCESS {
         eprintln!("ERR_AGENTOS_WASMTIME_FD_ROLLBACK: context={context} fd={fd} errno={error}");

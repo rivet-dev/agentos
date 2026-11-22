@@ -20,9 +20,7 @@ use agentos_executor_contract::host::ProcessHostCapabilitySet;
 ))]
 use agentos_executor_v8_runtime::adapter_host::V8SessionHandle;
 #[cfg(feature = "wasm-v8")]
-use agentos_executor_wasm_v8::{
-    native_wasm_enabled, NativeWasmV8Execution, WasmV8Execution, WasmV8ExecutionEngine,
-};
+use agentos_executor_wasm_v8::NativeWasmV8Execution;
 #[cfg(feature = "wasm-wasmtime")]
 use agentos_executor_wasm_wasmtime::{WasmtimeExecution, WasmtimeExecutionEngine};
 use serde_json::Value;
@@ -170,35 +168,22 @@ pub fn preflight_native_wasm_image(bytes: Vec<u8>) -> Result<PreloadedWasmImage,
 }
 
 #[cfg(not(feature = "wasm-v8"))]
-pub fn preflight_native_wasm_image(_bytes: Vec<u8>) -> Result<PreloadedWasmImage, HostServiceError> {
+pub fn preflight_native_wasm_image(
+    _bytes: Vec<u8>,
+) -> Result<PreloadedWasmImage, HostServiceError> {
     Err(HostServiceError::new(
         "ERR_AGENTOS_EXECUTOR_NOT_COMPILED",
         "the V8 WebAssembly executor was not compiled into this binary",
     ))
 }
 
-/// Whether `backend` runs its host imports natively in Rust: it loads its
-/// module through the kernel VFS and admits exec replacements by import tier.
-/// The JavaScript runner instead reads a host path and checks tiers itself.
-pub fn uses_native_host_imports(backend: StandaloneWasmBackend) -> bool {
-    match backend {
-        StandaloneWasmBackend::Wasmtime | StandaloneWasmBackend::WasmtimeThreads => true,
-        #[cfg(feature = "wasm-v8")]
-        StandaloneWasmBackend::V8 => native_wasm_enabled(),
-        #[cfg(not(feature = "wasm-v8"))]
-        StandaloneWasmBackend::V8 => false,
-    }
-}
-
 #[derive(Debug)]
 pub enum WasmExecution {
-    #[cfg(feature = "wasm-v8")]
-    V8(Box<WasmV8Execution>),
     #[cfg(feature = "wasm-wasmtime")]
     Wasmtime(WasmtimeExecution),
-    /// V8 with native Rust host imports; replaces `V8` once parity holds.
+    /// V8 with native Rust host imports.
     #[cfg(feature = "wasm-v8")]
-    V8Native(NativeWasmV8Execution),
+    V8(NativeWasmV8Execution),
     #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
     Disabled(std::convert::Infallible),
 }
@@ -208,8 +193,6 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(_) => StandaloneWasmBackend::V8,
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) if execution.is_threaded() => {
                 StandaloneWasmBackend::WasmtimeThreads
@@ -217,7 +200,7 @@ impl WasmExecution {
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => StandaloneWasmBackend::Wasmtime,
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => StandaloneWasmBackend::V8,
+            Self::V8(_) => StandaloneWasmBackend::V8,
         }
     }
 
@@ -225,12 +208,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => Some(execution.sync_rpc_responder()),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => None,
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => None,
+            Self::V8(_) => None,
         }
     }
 
@@ -238,12 +219,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.execution_id(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.execution_id(),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.execution_id(),
+            Self::V8(execution) => execution.execution_id(),
         }
     }
 
@@ -251,12 +230,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.native_process_id(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => None,
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => None,
+            Self::V8(_) => None,
         }
     }
 
@@ -264,12 +241,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => Some(execution.v8_session_handle()),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => None,
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => None,
+            Self::V8(_) => None,
         }
     }
 
@@ -277,12 +252,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.start_prepared(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.start_prepared(),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.start_prepared(),
+            Self::V8(execution) => execution.start_prepared(),
         }
     }
 
@@ -290,38 +263,32 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.is_prepared_for_start(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.is_prepared_for_start(),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.is_prepared_for_start(),
+            Self::V8(execution) => execution.is_prepared_for_start(),
         }
     }
 
-    pub fn write_stdin(&mut self, chunk: &[u8]) -> Result<(), WasmExecutionError> {
+    pub fn write_stdin(&mut self, _chunk: &[u8]) -> Result<(), WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.write_stdin(chunk),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Ok(()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Ok(()),
+            Self::V8(_) => Ok(()),
         }
     }
 
-    pub fn write_stdin_kernel_only(&mut self, chunk: &[u8]) -> Result<(), WasmExecutionError> {
+    pub fn write_stdin_kernel_only(&mut self, _chunk: &[u8]) -> Result<(), WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.write_stdin_kernel_only(chunk),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Ok(()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Ok(()),
+            Self::V8(_) => Ok(()),
         }
     }
 
@@ -329,32 +296,28 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.close_stdin(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Ok(()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Ok(()),
+            Self::V8(_) => Ok(()),
         }
     }
 
     pub fn send_stream_event(
         &self,
-        event_type: &str,
-        payload: Value,
+        _event_type: &str,
+        _payload: Value,
     ) -> Result<(), WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.send_stream_event(event_type, payload),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Err(wasm_host_error(
                 "ENOTSUP",
                 "native Wasmtime executions do not accept V8 stream events",
             )),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Err(wasm_host_error(
+            Self::V8(_) => Err(wasm_host_error(
                 "ENOTSUP",
                 "native Wasmtime executions do not accept V8 stream events",
             )),
@@ -365,15 +328,13 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.terminate(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => {
                 execution.terminate();
                 Ok(())
             }
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => {
+            Self::V8(execution) => {
                 execution.terminate();
                 Ok(())
             }
@@ -384,15 +345,13 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.pause(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => {
                 execution.set_paused(true);
                 Ok(())
             }
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => {
+            Self::V8(execution) => {
                 execution.set_paused(true);
                 Ok(())
             }
@@ -403,15 +362,13 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.resume(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => {
                 execution.set_paused(false);
                 Ok(())
             }
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => {
+            Self::V8(execution) => {
                 execution.set_paused(false);
                 Ok(())
             }
@@ -420,101 +377,89 @@ impl WasmExecution {
 
     pub fn respond_sync_rpc_success(
         &mut self,
-        id: u64,
-        result: Value,
+        _id: u64,
+        _result: Value,
     ) -> Result<(), WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.respond_sync_rpc_success(id, result),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Err(no_native_sync_rpc()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Err(no_native_sync_rpc()),
+            Self::V8(_) => Err(no_native_sync_rpc()),
         }
     }
 
-    pub fn claim_sync_rpc_response(&mut self, id: u64) -> Result<bool, WasmExecutionError> {
+    pub fn claim_sync_rpc_response(&mut self, _id: u64) -> Result<bool, WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.claim_sync_rpc_response(id),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Err(no_native_sync_rpc()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Err(no_native_sync_rpc()),
+            Self::V8(_) => Err(no_native_sync_rpc()),
         }
     }
 
     pub fn respond_claimed_sync_rpc_success(
         &mut self,
-        id: u64,
-        result: Value,
+        _id: u64,
+        _result: Value,
     ) -> Result<(), WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.respond_claimed_sync_rpc_success(id, result),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Err(no_native_sync_rpc()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Err(no_native_sync_rpc()),
+            Self::V8(_) => Err(no_native_sync_rpc()),
         }
     }
 
     pub fn respond_sync_rpc_raw_success(
         &mut self,
-        id: u64,
-        payload: Vec<u8>,
+        _id: u64,
+        _payload: Vec<u8>,
     ) -> Result<(), WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.respond_sync_rpc_raw_success(id, payload),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Err(no_native_sync_rpc()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Err(no_native_sync_rpc()),
+            Self::V8(_) => Err(no_native_sync_rpc()),
         }
     }
 
     pub fn respond_sync_rpc_error(
         &mut self,
-        id: u64,
-        code: impl Into<String>,
-        message: impl Into<String>,
+        _id: u64,
+        _code: impl Into<String>,
+        _message: impl Into<String>,
     ) -> Result<(), WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.respond_sync_rpc_error(id, code, message),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Err(no_native_sync_rpc()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Err(no_native_sync_rpc()),
+            Self::V8(_) => Err(no_native_sync_rpc()),
         }
     }
 
     pub fn respond_claimed_sync_rpc_error(
         &mut self,
-        id: u64,
-        code: impl Into<String>,
-        message: impl Into<String>,
+        _id: u64,
+        _code: impl Into<String>,
+        _message: impl Into<String>,
     ) -> Result<(), WasmExecutionError> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.respond_claimed_sync_rpc_error(id, code, message),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => Err(no_native_sync_rpc()),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => Err(no_native_sync_rpc()),
+            Self::V8(_) => Err(no_native_sync_rpc()),
         }
     }
 
@@ -525,12 +470,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.poll_event(timeout).await,
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.poll_event(timeout).await,
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.poll_event(timeout).await,
+            Self::V8(execution) => execution.poll_event(timeout).await,
         }
     }
 
@@ -538,12 +481,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.has_pending_events(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.has_pending_events(),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.has_pending_events(),
+            Self::V8(execution) => execution.has_pending_events(),
         }
     }
 
@@ -551,12 +492,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.try_poll_event(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.try_poll_event(),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.try_poll_event(),
+            Self::V8(execution) => execution.try_poll_event(),
         }
     }
 
@@ -567,12 +506,10 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.poll_event_blocking(timeout),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.poll_event_blocking(timeout),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.poll_event_blocking(timeout),
+            Self::V8(execution) => execution.poll_event_blocking(timeout),
         }
     }
 
@@ -580,8 +517,6 @@ impl WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.wait(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => {
                 let execution_id = execution.execution_id().to_owned();
@@ -613,7 +548,7 @@ impl WasmExecution {
                 }
             }
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => {
+            Self::V8(execution) => {
                 let execution_id = execution.execution_id().to_owned();
                 let mut stdout = Vec::new();
                 let mut stderr = Vec::new();
@@ -655,12 +590,10 @@ impl ExecutionBackend for WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.synchronous_fd_write_policy(),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => SynchronousFdWritePolicy::Blocking,
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => SynchronousFdWritePolicy::Blocking,
+            Self::V8(_) => SynchronousFdWritePolicy::Blocking,
         }
     }
 
@@ -676,16 +609,14 @@ impl ExecutionBackend for WasmExecution {
         WasmExecution::native_process_id(self)
     }
 
-    fn wake_handle(&self, identity: ExecutionWakeIdentity) -> Option<ExecutionWakeHandle> {
+    fn wake_handle(&self, _identity: ExecutionWakeIdentity) -> Option<ExecutionWakeHandle> {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.wake_handle(identity),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(_) => None,
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(_) => None,
+            Self::V8(_) => None,
         }
     }
 
@@ -694,7 +625,7 @@ impl ExecutionBackend for WasmExecution {
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.configure_host_services(host),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.configure_host_services(host),
+            Self::V8(execution) => execution.configure_host_services(host),
             #[allow(unreachable_patterns)]
             _ => {
                 let _ = host;
@@ -717,8 +648,6 @@ impl ExecutionBackend for WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.begin_shutdown(reason),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => {
                 execution.terminate();
@@ -736,7 +665,7 @@ impl ExecutionBackend for WasmExecution {
                 })
             }
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => {
+            Self::V8(execution) => {
                 execution.terminate();
                 Ok(match reason {
                     ShutdownReason::Signal(signal) => {
@@ -778,14 +707,6 @@ impl ExecutionBackend for WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.deliver_signal_checkpoint(
-                identity,
-                signal,
-                delivery_token,
-                flags,
-                thread_id,
-            ),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => {
                 execution.deliver_signal_checkpoint(
@@ -798,7 +719,7 @@ impl ExecutionBackend for WasmExecution {
                 Ok(SignalCheckpointOutcome::Published)
             }
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => {
+            Self::V8(execution) => {
                 execution.deliver_signal_checkpoint(
                     identity,
                     signal,
@@ -818,12 +739,10 @@ impl ExecutionBackend for WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.take_signal_checkpoint(identity),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.take_signal_checkpoint(identity),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.take_signal_checkpoint(identity),
+            Self::V8(execution) => execution.take_signal_checkpoint(identity),
         }
     }
 
@@ -835,16 +754,12 @@ impl ExecutionBackend for WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.take_signal_checkpoint_for_thread(identity, thread_id),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => {
                 execution.take_signal_checkpoint_for_thread(identity, thread_id)
             }
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => {
-                execution.take_signal_checkpoint_for_thread(identity, thread_id)
-            }
+            Self::V8(execution) => execution.take_signal_checkpoint_for_thread(identity, thread_id),
         }
     }
 
@@ -855,12 +770,10 @@ impl ExecutionBackend for WasmExecution {
         match self {
             #[cfg(not(any(feature = "wasm-v8", feature = "wasm-wasmtime")))]
             Self::Disabled(never) => match *never {},
-            #[cfg(feature = "wasm-v8")]
-            Self::V8(execution) => execution.discard_signal_checkpoints(identity),
             #[cfg(feature = "wasm-wasmtime")]
             Self::Wasmtime(execution) => execution.discard_signal_checkpoints(identity),
             #[cfg(feature = "wasm-v8")]
-            Self::V8Native(execution) => execution.discard_signal_checkpoints(identity),
+            Self::V8(execution) => execution.discard_signal_checkpoints(identity),
         }
     }
 }
@@ -868,10 +781,7 @@ impl ExecutionBackend for WasmExecution {
 #[derive(Default)]
 pub struct WasmExecutionEngine {
     runtime: Option<DriverHandle>,
-    #[cfg(feature = "wasm-v8")]
-    v8: WasmV8ExecutionEngine,
     contexts: BTreeMap<String, WasmContext>,
-    #[cfg(not(feature = "wasm-v8"))]
     next_context_id: u64,
     #[cfg(any(feature = "wasm-v8", feature = "wasm-wasmtime"))]
     next_execution_id: u64,
@@ -884,11 +794,8 @@ pub struct WasmExecutionEngine {
 impl WasmExecutionEngine {
     pub fn new(runtime: DriverHandle) -> Self {
         Self {
-            #[cfg(feature = "wasm-v8")]
-            v8: WasmV8ExecutionEngine::new(runtime.clone()),
             runtime: Some(runtime),
             contexts: BTreeMap::new(),
-            #[cfg(not(feature = "wasm-v8"))]
             next_context_id: 0,
             #[cfg(any(feature = "wasm-v8", feature = "wasm-wasmtime"))]
             next_execution_id: 0,
@@ -898,28 +805,19 @@ impl WasmExecutionEngine {
     }
 
     pub fn set_runtime_context(&mut self, runtime: DriverHandle) {
-        #[cfg(feature = "wasm-v8")]
-        self.v8.set_runtime_context(runtime.clone());
         self.runtime = Some(runtime);
     }
 
     pub fn set_event_notify(&mut self, notify: Option<Arc<Notify>>) {
-        #[cfg(feature = "wasm-v8")]
-        self.v8.set_event_notify(notify.clone());
         self.event_notify = notify;
     }
 
     pub fn create_context(&mut self, request: CreateWasmContextRequest) -> WasmContext {
-        #[cfg(feature = "wasm-v8")]
-        let context = self.v8.create_context(request);
-        #[cfg(not(feature = "wasm-v8"))]
-        let context = {
-            self.next_context_id = self.next_context_id.saturating_add(1);
-            WasmContext {
-                context_id: format!("wasm-ctx-{}", self.next_context_id),
-                vm_id: request.vm_id,
-                module_path: request.module_path,
-            }
+        self.next_context_id = self.next_context_id.saturating_add(1);
+        let context = WasmContext {
+            context_id: format!("wasm-ctx-{}", self.next_context_id),
+            vm_id: request.vm_id,
+            module_path: request.module_path,
         };
         self.contexts
             .insert(context.context_id.clone(), context.clone());
@@ -936,30 +834,16 @@ impl WasmExecutionEngine {
 
     pub fn dispose_context(&mut self, context_id: &str) -> bool {
         self.module_images.remove(context_id);
-        let removed = self.contexts.remove(context_id).is_some();
-        #[cfg(feature = "wasm-v8")]
-        {
-            self.v8.dispose_context(context_id) || removed
-        }
-        #[cfg(not(feature = "wasm-v8"))]
-        {
-            removed
-        }
+        self.contexts.remove(context_id).is_some()
     }
 
     pub fn context_count_for_test(&self) -> usize {
         self.contexts.len()
     }
 
+    /// Native WebAssembly executions keep no JavaScript contexts.
     pub fn javascript_context_count_for_test(&self) -> usize {
-        #[cfg(feature = "wasm-v8")]
-        {
-            self.v8.javascript_context_count_for_test()
-        }
-        #[cfg(not(feature = "wasm-v8"))]
-        {
-            0
-        }
+        0
     }
 
     pub fn wasmtime_metrics(&self) -> Result<WasmtimeMetricsSnapshot, HostServiceError> {
@@ -998,14 +882,7 @@ impl WasmExecutionEngine {
     ) -> Result<WasmExecution, WasmExecutionError> {
         match backend {
             #[cfg(feature = "wasm-v8")]
-            StandaloneWasmBackend::V8 if native_wasm_enabled() => {
-                self.spawn_v8_native(request, runtime, true)
-            }
-            #[cfg(feature = "wasm-v8")]
-            StandaloneWasmBackend::V8 => self
-                .v8
-                .prepare_execution_with_runtime(request, runtime)
-                .map(|execution| WasmExecution::V8(Box::new(execution))),
+            StandaloneWasmBackend::V8 => self.spawn_v8_native(request, runtime, true),
             #[cfg(not(feature = "wasm-v8"))]
             StandaloneWasmBackend::V8 => Err(executor_not_compiled("wasm-v8", "wasm-v8")),
             #[cfg(feature = "wasm-wasmtime")]
@@ -1034,14 +911,7 @@ impl WasmExecutionEngine {
     ) -> Result<WasmExecution, WasmExecutionError> {
         match backend {
             #[cfg(feature = "wasm-v8")]
-            StandaloneWasmBackend::V8 if native_wasm_enabled() => {
-                self.spawn_v8_native(request, runtime, false)
-            }
-            #[cfg(feature = "wasm-v8")]
-            StandaloneWasmBackend::V8 => self
-                .v8
-                .start_execution_with_runtime(request, runtime)
-                .map(|execution| WasmExecution::V8(Box::new(execution))),
+            StandaloneWasmBackend::V8 => self.spawn_v8_native(request, runtime, false),
             #[cfg(not(feature = "wasm-v8"))]
             StandaloneWasmBackend::V8 => Err(executor_not_compiled("wasm-v8", "wasm-v8")),
             #[cfg(feature = "wasm-wasmtime")]
@@ -1070,15 +940,7 @@ impl WasmExecutionEngine {
     ) -> Result<WasmExecution, WasmExecutionError> {
         match backend {
             #[cfg(feature = "wasm-v8")]
-            StandaloneWasmBackend::V8 if native_wasm_enabled() => {
-                self.spawn_v8_native(request, runtime, false)
-            }
-            #[cfg(feature = "wasm-v8")]
-            StandaloneWasmBackend::V8 => self
-                .v8
-                .start_execution_with_runtime_async(request, runtime)
-                .await
-                .map(|execution| WasmExecution::V8(Box::new(execution))),
+            StandaloneWasmBackend::V8 => self.spawn_v8_native(request, runtime, false),
             #[cfg(not(feature = "wasm-v8"))]
             StandaloneWasmBackend::V8 => Err(executor_not_compiled("wasm-v8", "wasm-v8")),
             #[cfg(feature = "wasm-wasmtime")]
@@ -1131,7 +993,7 @@ impl WasmExecutionEngine {
             self.event_notify.clone(),
             defer_execute,
         )
-        .map(WasmExecution::V8Native)
+        .map(WasmExecution::V8)
     }
 
     #[cfg(feature = "wasm-wasmtime")]
@@ -1169,6 +1031,7 @@ impl WasmExecutionEngine {
         .map(WasmExecution::Wasmtime)
     }
 
+    /// Native WebAssembly holds no Node import-cache leases.
     #[cfg(any(
         feature = "node-v8",
         feature = "python-v8-pyodide",
@@ -1176,17 +1039,9 @@ impl WasmExecutionEngine {
     ))]
     pub(crate) fn import_cache_cleanup_guards(
         &self,
-        vm_id: &str,
+        _vm_id: &str,
     ) -> Vec<std::sync::Arc<agentos_executor_v8_runtime::asset_cache::NodeImportCacheCleanup>> {
-        #[cfg(feature = "wasm-v8")]
-        {
-            self.v8.import_cache_cleanup_guards(vm_id)
-        }
-        #[cfg(not(feature = "wasm-v8"))]
-        {
-            let _ = vm_id;
-            Vec::new()
-        }
+        Vec::new()
     }
 
     #[cfg(any(
@@ -1194,23 +1049,16 @@ impl WasmExecutionEngine {
         feature = "python-v8-pyodide",
         feature = "wasm-v8"
     ))]
-    pub(crate) fn release_import_caches(&mut self, vm_id: &str) {
-        #[cfg(feature = "wasm-v8")]
-        self.v8.release_import_caches(vm_id);
-        #[cfg(not(feature = "wasm-v8"))]
-        {
-            let _ = vm_id;
-        }
-    }
+    pub(crate) fn release_import_caches(&mut self, _vm_id: &str) {}
 
     pub fn dispose_vm(&mut self, vm_id: &str) {
         let contexts = &self.contexts;
         self.module_images.retain(|context_id, _| {
-            contexts.get(context_id).is_some_and(|context| context.vm_id != vm_id)
+            contexts
+                .get(context_id)
+                .is_some_and(|context| context.vm_id != vm_id)
         });
         self.contexts.retain(|_, context| context.vm_id != vm_id);
-        #[cfg(feature = "wasm-v8")]
-        self.v8.dispose_vm(vm_id);
     }
 
     fn runtime_context(&self) -> Result<&DriverHandle, WasmExecutionError> {

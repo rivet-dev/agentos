@@ -177,8 +177,7 @@ use crate::state::{
     VmPendingBudgetReservation, VmPendingByteBudget, VmState, DEFAULT_NET_BACKLOG,
     EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV, HOST_FUNCTION_DRIVER_NAME,
     JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND,
-    VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND, WASM_EXEC_COMMIT_RPC_ENV,
-    WASM_STDIO_SYNC_RPC_ENV,
+    VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, WASM_COMMAND,
 };
 use crate::wire::{ProtocolFrame as WireProtocolFrame, WireFrameCodec};
 use crate::{DispatchResult, VmError, VmManager, VmManagerHost};
@@ -249,7 +248,7 @@ use crate::executor::{
     GuestRuntimeConfig, HostRpcRequest, JavascriptSyncRpcResponder,
     StandaloneWasmBackend as ExecutionStandaloneWasmBackend, StartWasmExecutionRequest,
     WasmExecutionEvent, WasmExecutionLimits, WasmPermissionTier as ExecutionWasmPermissionTier,
-    uses_native_host_imports, TRUSTED_INITIAL_MODULE_PREFIX,
+    TRUSTED_INITIAL_MODULE_PREFIX,
 };
 #[cfg(feature = "node-v8")]
 use crate::executor::{

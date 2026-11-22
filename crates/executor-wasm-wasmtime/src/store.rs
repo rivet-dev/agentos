@@ -15,9 +15,9 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 use wasmtime::{Store, StoreLimits, UpdateDeadline};
 
-pub use agentos_executor_wasm_host::{active_cpu_limit_error, max_host_reply_bytes};
 #[cfg(test)]
 pub use agentos_executor_wasm_host::DEFAULT_MAX_HOST_REPLY_BYTES;
+pub use agentos_executor_wasm_host::{active_cpu_limit_error, max_host_reply_bytes};
 
 /// The shared host-import channel; Wasmtime-specific only in name.
 pub type WasmtimeHostClient = agentos_executor_wasm_host::WasmHostClient;
@@ -124,9 +124,9 @@ impl WasmtimeStoreState {
             profile.feature_profile,
             crate::WasmtimeFeatureProfile::AgentOsOwnedWasiV1Threads
         );
-        let hooks = thread_group
-            .clone()
-            .map(|group| group as Arc<dyn agentos_executor_wasm_host::ThreadGroupHooks<Arc<wasmtime::Module>>>);
+        let hooks = thread_group.clone().map(|group| {
+            group as Arc<dyn agentos_executor_wasm_host::ThreadGroupHooks<Arc<wasmtime::Module>>>
+        });
         let common = HostState::new(
             host,
             request,
@@ -245,13 +245,13 @@ fn thread_cpu_time_ns() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::ProcessHostCapabilitySet;
-    use std::collections::BTreeMap;
     use crate::backend::{bounded_execution_event_channel, PayloadLimit};
+    use crate::host::ProcessHostCapabilitySet;
     use agentos_driver_tokio::accounting::{ResourceLedger, ResourceLimit};
     use agentos_driver_tokio::{DriverConfig, TokioDriver};
     use agentos_executor_contract::GuestRuntimeConfig;
     use agentos_executor_wasm_abi::{WasmExecutionLimits, WasmPermissionTier};
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     #[test]

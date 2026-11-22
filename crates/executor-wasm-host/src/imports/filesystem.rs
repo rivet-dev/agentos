@@ -7,9 +7,9 @@ use super::preview1::{
 use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
 use crate::memory;
+use crate::{Val, WasmGuest};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use crate::{Val, WasmGuest};
 
 const XATTR_NAME_MAX: usize = 255;
 const XATTR_SIZE_MAX: usize = 64 * 1024;
@@ -473,12 +473,7 @@ async fn fd_fiemap<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     }
 }
 
-async fn range<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    method: &str,
-    keep_size: bool,
-) -> i32 {
+async fn range<C: WasmGuest>(caller: &mut C, params: &[Val], method: &str, keep_size: bool) -> i32 {
     let (Ok(fd), Ok(offset), Ok(length)) =
         (i32_arg(params, 0), i64_arg(params, 1), i64_arg(params, 2))
     else {
@@ -491,11 +486,7 @@ async fn range<C: WasmGuest>(
     simple_call(caller, method, args).await
 }
 
-async fn owner_get<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    is_path: bool,
-) -> i32 {
+async fn owner_get<C: WasmGuest>(caller: &mut C, params: &[Val], is_path: bool) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_INVAL;
     };
@@ -571,11 +562,7 @@ async fn path_access<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     .await
 }
 
-async fn xattr_get<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    is_path: bool,
-) -> i32 {
+async fn xattr_get<C: WasmGuest>(caller: &mut C, params: &[Val], is_path: bool) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_INVAL;
     };
@@ -641,11 +628,7 @@ async fn xattr_get<C: WasmGuest>(
     }
 }
 
-async fn xattr_list<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    is_path: bool,
-) -> i32 {
+async fn xattr_list<C: WasmGuest>(caller: &mut C, params: &[Val], is_path: bool) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_INVAL;
     };
@@ -703,11 +686,7 @@ async fn xattr_list<C: WasmGuest>(
     }
 }
 
-async fn xattr_set<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    is_path: bool,
-) -> i32 {
+async fn xattr_set<C: WasmGuest>(caller: &mut C, params: &[Val], is_path: bool) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_INVAL;
     };
@@ -778,11 +757,7 @@ async fn xattr_set<C: WasmGuest>(
     }
 }
 
-async fn xattr_remove<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    is_path: bool,
-) -> i32 {
+async fn xattr_remove<C: WasmGuest>(caller: &mut C, params: &[Val], is_path: bool) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_INVAL;
     };
@@ -898,9 +873,7 @@ fn set_scalar(results: &mut [Val], i64_result: bool, value: u64) -> crate::Resul
             *slot = Val::I32(value as i32);
             Ok(())
         }
-        _ => Err(crate::format_err!(
-            "invalid filesystem scalar result shape"
-        )),
+        _ => Err(crate::format_err!("invalid filesystem scalar result shape")),
     }
 }
 

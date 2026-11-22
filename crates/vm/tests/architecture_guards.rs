@@ -61,91 +61,10 @@ fn repo_root() -> PathBuf {
 #[test]
 fn managed_v8_filesystem_state_is_kernel_authoritative() {
     let root = repo_root();
-    let runner = std::fs::read_to_string(
-        root.join("crates/executor-v8-runtime/assets/runners/wasm-runner.mjs"),
-    )
-    .expect("read managed WASM runner");
-    let wasi = std::fs::read_to_string(
-        root.join("crates/executor-v8-runtime/assets/runners/wasi-module.js"),
-    )
-    .expect("read WASI module");
     let filesystem = std::fs::read_to_string(root.join("crates/vm/src/filesystem.rs"))
         .expect("read sidecar filesystem service");
     let rpc = std::fs::read_to_string(root.join("crates/vm/src/execution/javascript/rpc.rs"))
         .expect("read JavaScript process RPC service");
-
-    for stale_shadow in [
-        "hostFsSizeByGuestPath",
-        "rememberHostFsSize",
-        "rememberedHostFsSize",
-        "forgetHostFsSize",
-    ] {
-        assert!(
-            !runner.contains(stale_shadow),
-            "managed runner must not retain mutable path shadow {stale_shadow}"
-        );
-    }
-    assert!(
-        runner.contains(
-            "if (!Number.isFinite(nextSize) || nextSize < 0) {\n        return WASI_ERRNO_INVAL;"
-        ),
-        "host ftruncate must return the typed EINVAL value, never a numeric sentinel"
-    );
-
-    let path_open = runner
-        .find("  wasiImport.path_open = (")
-        .expect("managed path_open wrapper");
-    let path_open = &runner[path_open..];
-    let kernel_open = path_open
-        .find("callSyncRpc('process.path_open_at'")
-        .expect("dirfd-aware kernel path_open");
-    let kernel_registration = path_open
-        .find("registerKernelDelegateFd(kernelFd)")
-        .expect("kernel descriptor registration");
-    let ambient_delegate = path_open
-        .find("() => delegatePathOpen(")
-        .expect("standalone WASI path_open fallback");
-    assert!(
-        kernel_open < kernel_registration && kernel_registration < ambient_delegate,
-        "managed path_open must return a kernel open description before standalone WASI fallback"
-    );
-
-    assert!(
-        path_open.contains(
-            "const procFdResult = SIDECAR_MANAGED_PROCESS\n      ? null\n      : openProcSelfFdAlias("
-        ),
-        "managed /proc/self/fd aliases must flow through capability-aware kernel path_open"
-    );
-
-    for (start, end) in [
-        ("  path_owner(", "  fd_owner("),
-        ("  path_mode(", "  path_size("),
-        ("  path_size(", "  path_blocks("),
-        ("  path_blocks(", "  path_rdev("),
-        ("  path_rdev(", "  chmod("),
-    ] {
-        let start = runner
-            .find(start)
-            .unwrap_or_else(|| panic!("missing {start}"));
-        let section = &runner[start..];
-        let end = section.find(end).unwrap_or_else(|| panic!("missing {end}"));
-        assert!(
-            section[..end].contains("callSyncRpc('process.path_stat_at'"),
-            "{start} must read dirfd-relative metadata from the kernel"
-        );
-    }
-
-    let wasi_path_open = wasi.find("    _pathOpen(").expect("WASI path_open");
-    let wasi_path_open = &wasi[wasi_path_open..];
-    assert!(
-        wasi_path_open
-            .find("if (this._sidecarManagedProcess())")
-            .expect("managed ambient-open rejection")
-            < wasi_path_open
-                .find("__agentOSFs().openSync")
-                .expect("standalone Node-fs open"),
-        "managed WASI must reject ambient Node-fs path_open fallback"
-    );
 
     for field in ["mode", "uid", "gid", "blocks", "rdev"] {
         assert!(
@@ -158,215 +77,6 @@ fn managed_v8_filesystem_state_is_kernel_authoritative() {
             && filesystem.contains("read_file_for_process(")
             && filesystem.contains("let reader = ProcessModuleFsReader"),
         "production JavaScript module loading must resolve against the live kernel VFS"
-    );
-}
-
-#[test]
-fn managed_wasm_uses_one_sidecar_owned_posix_poll() {
-    let root = repo_root();
-    let runner = std::fs::read_to_string(
-        root.join("crates/executor-v8-runtime/assets/runners/wasm-runner.mjs"),
-    )
-    .expect("read managed WASM runner");
-    let sidecar = std::fs::read_to_string(
-        root.join("crates/vm/src/execution/host_dispatch/network_compat.rs"),
-    )
-    .expect("read POSIX poll dispatcher");
-
-    let net_poll = runner
-        .split("  net_poll(fdsPtr, nfds, timeoutMs, retReadyPtr, temporarySignalMask = null) {")
-        .nth(1)
-        .expect("managed net_poll implementation");
-    let managed = net_poll
-        .split("    const startedAt = Date.now();")
-        .next()
-        .expect("managed poll fast path");
-    assert!(
-        managed.contains("callSyncRpc('process.posix_poll'")
-            && managed.contains("temporarySignalMask"),
-        "managed poll and ppoll must use one typed sidecar RPC carrying the optional mask"
-    );
-    for split_wait in [
-        "callSyncRpc('__kernel_poll'",
-        "callSyncRpc('process.hostnet_poll'",
-        "pumpSpawnedChildren(",
-        "Atomics.wait(",
-    ] {
-        assert!(
-            !managed.contains(split_wait),
-            "managed poll must not regress to a split/pumped wait: {split_wait}"
-        );
-    }
-
-    let ppoll = runner
-        .split("        proc_ppoll_v1(")
-        .nth(1)
-        .expect("ppoll ABI implementation")
-        .split("        },")
-        .next()
-        .expect("ppoll ABI body");
-    assert!(ppoll.contains("hostNetImport.net_poll("));
-    assert!(!ppoll.contains("signal_mask_scope_begin"));
-    assert!(!ppoll.contains("signal_mask_scope_end"));
-
-    assert!(
-        sidecar.contains("pub(in crate::execution) fn service_deferred_posix_poll")
-            && sidecar.contains("wait_for_posix_poll_change(")
-            && sidecar.contains("wait_handle.wait_for_change_async(observed)")
-            && sidecar.contains("DeferredPosixPollWake")
-            && sidecar.contains("managed_posix_poll_read_notifies")
-            && sidecar.contains("wait_for_managed_posix_poll_readiness")
-            && sidecar.contains("indexed_posix_poll_response")
-            && sidecar.contains("kernel_interest_indexes"),
-        "the sidecar must own one coalesced managed/kernel/deadline wait task"
-    );
-    let wait = sidecar
-        .split("async fn wait_for_posix_poll_change(")
-        .nth(1)
-        .expect("coalesced POSIX poll wait")
-        .split("pub(super) fn dispatch_context_posix_poll")
-        .next()
-        .expect("POSIX poll wait body");
-    assert!(
-        !wait.contains("task_notify") && !wait.contains("process_event_notify"),
-        "POSIX poll must not consume its own global broker wake"
-    );
-}
-
-#[test]
-fn managed_blocking_socket_operations_wait_through_posix_poll() {
-    let root = repo_root();
-    let runner = std::fs::read_to_string(
-        root.join("crates/executor-v8-runtime/assets/runners/wasm-runner.mjs"),
-    )
-    .expect("read managed WASM runner");
-    let helper = runner
-        .split("function waitManagedHostNetReadable(")
-        .nth(1)
-        .expect("managed socket wait helper")
-        .split("\n}")
-        .next()
-        .expect("managed socket wait body");
-    assert!(helper.contains("callSyncRpc('process.posix_poll'"));
-    assert!(helper.contains("dispatchPendingWasmSignals(restartableOperation === true)"));
-    assert!(helper.contains("pumpSpawnedChildren(0)"));
-    assert!(helper.contains("Math.min(SPAWNED_CHILD_WAIT_SLICE_MS"));
-    assert!(helper.contains("deadline - Date.now()"));
-
-    for (operation, managed_end) in [
-        ("net_accept", "\n    if (!socket.serverId"),
-        ("net_recv", "\n      if (hostNetSocketBaseType"),
-    ] {
-        let body = runner
-            .split(&format!("  {operation}("))
-            .nth(1)
-            .unwrap_or_else(|| panic!("{operation} implementation"));
-        let body = body
-            .split("\n  },")
-            .next()
-            .expect("operation body boundary");
-        let managed = body
-            .split("managed === true")
-            .nth(1)
-            .unwrap_or_else(|| panic!("{operation} managed path"));
-        let managed = managed
-            .split(managed_end)
-            .next()
-            .unwrap_or_else(|| panic!("{operation} managed path boundary"));
-        assert!(
-            managed.contains("waitManagedHostNetReadable"),
-            "managed {operation} must use the interruptible combined wait"
-        );
-        assert!(
-            !managed.contains("pumpSpawnedChildrenOrWaitRestartable"),
-            "managed {operation} must not poll/pump on a timer"
-        );
-    }
-
-    let datagram = runner
-        .split("function receiveManagedHostNetDatagram(")
-        .nth(1)
-        .expect("managed datagram receive helper")
-        .split("\n}")
-        .next()
-        .expect("managed datagram receive body");
-    for required in [
-        "managedHostNetOperationIsNonblocking(socket, recvFlags)",
-        "'process.hostnet_get_option'",
-        "[targetFd, 'receive-timeout']",
-        "waitManagedHostNetReadable(socket, remaining, true)",
-        "readable === WASI_ERRNO_INTR",
-        "callSyncRpc('process.hostnet_recv'",
-        "if (nonblocking) return { error: WASI_ERRNO_AGAIN }",
-        "Date.now() - startedAt >= waitLimit",
-    ] {
-        assert!(
-            datagram.contains(required),
-            "managed datagram receive is missing {required}"
-        );
-    }
-    assert!(!datagram.contains("pumpSpawnedChildrenOrWaitRestartable"));
-    for (operation, managed_start, managed_end, delegation) in [
-        (
-            "net_recvfrom",
-            "if (socket.managed === true) {",
-            "\n      const udpSocketId",
-            "receiveManagedHostNetDatagram(socket, Number(bufLen) >>> 0, recvFlags)",
-        ),
-        (
-            "net_recvmsg",
-            "if (socket.managed !== true) return WASI_ERRNO_NOTSOCK;",
-            "\n  },",
-            "receiveManagedHostNetDatagram(socket, snapshot.request.totalLength, recvFlags & ~ignoredFlags)",
-        ),
-    ] {
-        let managed = runner
-            .split(&format!("  {operation}("))
-            .nth(1)
-            .and_then(|body| body.split("\n  },").next())
-            .and_then(|body| body.split(managed_start).nth(1))
-            .and_then(|body| body.split(managed_end).next())
-            .unwrap_or_else(|| panic!("{operation} managed datagram path"));
-        assert!(
-            managed.contains(delegation),
-            "managed {operation} must use the checked datagram wait helper"
-        );
-        assert!(!managed.contains("pumpSpawnedChildrenOrWaitRestartable"));
-    }
-}
-
-#[test]
-fn managed_wasm_socket_reads_probe_before_and_after_readiness_waits() {
-    let runner = std::fs::read_to_string(
-        repo_root().join("crates/executor-v8-runtime/assets/runners/wasm-runner.mjs"),
-    )
-    .expect("read managed WASM runner");
-    let read = runner
-        .split("function readHostNetSocketToGuestIovs(")
-        .nth(1)
-        .expect("managed WASM socket read helper")
-        .split("\nfunction writeHostNetSocketFromGuestIovs(")
-        .next()
-        .expect("managed WASM socket read boundary");
-    let managed = read
-        .split("if (socket?.managed === true)")
-        .nth(1)
-        .expect("managed socket branch");
-    let first_receive = managed
-        .find("callSyncRpc('process.hostnet_recv'")
-        .expect("initial receive probe");
-    let readiness_wait = managed
-        .find("waitManagedHostNetReadable(socket, remaining, true)")
-        .expect("readiness wait");
-    assert!(
-        first_receive < readiness_wait,
-        "managed reads must follow the Linux read-then-wait pattern"
-    );
-    let after_wait = &managed[readiness_wait..];
-    assert!(
-        after_wait.contains("const finalResult = callSyncRpc('process.hostnet_recv'")
-            && after_wait.contains("if (finalResult == null)"),
-        "a timeout-boundary receive probe must win over a coalesced readiness wake"
     );
 }
 
@@ -401,49 +111,34 @@ fn dormant_wasmtime_stays_scoped_to_the_standalone_wasm_adapter() {
         "the dormant backend must pin reviewed Wasmtime without installing ambient wasmtime-wasi"
     );
 
-    let wasm_adapter = std::fs::read_to_string(root.join("crates/executor-wasm-v8/src/lib.rs"))
-        .expect("read standalone WASM adapter");
+    let wasm_admission =
+        std::fs::read_to_string(root.join("crates/executor-wasm-v8/src/native/module.rs"))
+            .expect("read V8 WASM image admission");
     let wasmtime_module =
         std::fs::read_to_string(root.join("crates/executor-wasm-wasmtime/src/module.rs"))
             .expect("read Wasmtime module compiler");
-    for (start, end) in [
-        (
-            "    fn create_execution_with_runtime(",
-            "    pub async fn start_execution_with_runtime_async(",
-        ),
-        (
-            "    pub async fn start_execution_with_runtime_async(",
-            "    fn finish_start_execution(",
-        ),
-    ] {
-        let body = wasm_adapter
-            .split(start)
-            .nth(1)
-            .and_then(|tail| tail.split(end).next())
-            .unwrap_or_else(|| panic!("production V8 WASM start path {start}"));
-        let limits = body
-            .find("validate_module_limits(&resolved_module, &request)?;")
-            .expect("per-launch WASM limits");
-        let profile = body
-            .find("validate_module_profile(&resolved_module, cache_owner.asset_root())?;")
-            .expect("owner-aware WASM profile validation");
-        assert!(
-            limits < profile,
-            "per-launch limits must precede cached profile validation"
-        );
-    }
-    let validator = wasm_adapter
-        .split("\nfn validate_module_profile(")
+    let admit = wasm_admission
+        .split("pub(super) fn admit_image(")
         .nth(1)
-        .and_then(|body| body.split("\nfn validate_module_profile_with(").next())
-        .expect("production V8 profile validator");
-    assert!(validator.contains(
-        "validate_module_profile_with(resolved_module, owner, profile::validate_locked_profile)"
-    ));
+        .expect("V8 WASM admission path");
+    let profile = admit
+        .find("validate_profile_digest(bytes, digest)?;")
+        .expect("V8 WASM profile validation");
+    let limits = admit
+        .find("cap_memory_maximum(bytes, request)?;")
+        .expect("per-launch V8 WASM memory limit");
+    let compile = admit
+        .find("WasmModuleObject::compile(")
+        .expect("V8 WASM compile");
+    assert!(
+        profile < limits && limits < compile,
+        "V8 WASM admission must validate the locked profile and apply launch limits before compiling"
+    );
+    assert!(wasm_admission.contains("profile::validate_locked_profile(bytes)?;"));
     assert!(
         wasmtime_module.contains("validate_locked_profile(bytes)?;")
             && wasmtime_module.contains("validate_locked_threaded_profile(bytes)?;"),
-        "both V8-WASM start paths and both Wasmtime profiles must use the shared wasmparser validators"
+        "V8 WASM admission and both Wasmtime profiles must use the shared wasmparser validators"
     );
 
     let publish = std::fs::read_to_string(root.join(".github/workflows/publish.yaml"))
@@ -1179,175 +874,6 @@ fn shared_tcp_connect_has_no_blocking_native_fallback() {
 }
 
 #[test]
-fn compatibility_wasm_rpc_inventory_matches_runner_literals() {
-    let root = repo_root();
-    let runner = std::fs::read_to_string(
-        root.join("crates/executor-v8-runtime/assets/runners/wasm-runner.mjs"),
-    )
-    .expect("read compatibility WASM runner");
-    let inventory =
-        std::fs::read_to_string(root.join("crates/vm/src/execution/host_dispatch/inventory.rs"))
-            .expect("read reviewed compatibility WASM RPC inventory");
-
-    fn quoted_values(section: &str) -> BTreeSet<String> {
-        section
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                line.strip_prefix('"')
-                    .and_then(|line| line.strip_suffix(","))
-                    .and_then(|line| line.strip_suffix('"'))
-                    .map(str::to_owned)
-            })
-            .collect()
-    }
-
-    let mut dynamic_targets = Vec::new();
-    let runner_methods = runner
-        .match_indices("callSyncRpc(")
-        .filter_map(|(offset, marker)| {
-            let tail = runner[offset + marker.len()..].trim_start();
-            let quote = tail.chars().next()?;
-            if quote != '\'' && quote != '"' {
-                if runner[..offset].ends_with("function ") {
-                    return None;
-                }
-                let line = runner[..offset]
-                    .rsplit_once('\n')
-                    .map(|(_, line)| line)
-                    .unwrap_or(&runner[..offset]);
-                dynamic_targets.push(format!(
-                    "{}{}",
-                    line.trim(),
-                    tail.lines().next().unwrap_or("")
-                ));
-                return None;
-            }
-            let tail = &tail[quote.len_utf8()..];
-            let end = tail.find(quote)?;
-            Some(tail[..end].to_owned())
-        })
-        .collect::<BTreeSet<_>>();
-    assert!(
-        dynamic_targets.is_empty(),
-        "compatibility WASM runner callSyncRpc targets must be literal; add every target to the frozen inventory: {dynamic_targets:?}"
-    );
-    let inventory_section = inventory
-        .split_once("WASM_RUNNER_RPC_INVENTORY: &[&str] = &[")
-        .expect("inventory declaration")
-        .1
-        .split_once("\n];")
-        .expect("inventory terminator")
-        .0;
-    let frozen_methods = quoted_values(inventory_section);
-    assert_eq!(
-        frozen_methods, runner_methods,
-        "update and review the typed/adapter-only WASM RPC inventory whenever the runner changes"
-    );
-
-    // The compatibility bootstrap hides a second semantic surface behind one
-    // generic `process.wasm_sync_rpc` method. Freeze both the wrapper switch
-    // and its delta from the literal runner inventory; otherwise a Linux call
-    // can bypass the typed decoder without changing wasm-runner.mjs.
-    let bootstrap = std::fs::read_to_string(root.join("crates/executor-wasm-v8/src/lib.rs"))
-        .expect("read compatibility WASM bootstrap");
-    let rpc = std::fs::read_to_string(root.join("crates/vm/src/execution/javascript/rpc.rs"))
-        .expect("read compatibility RPC allowlist");
-    let allowed_section = rpc
-        .split_once("const ALLOWED_WASM_PROCESS_SYNC_RPCS: &[&str] = &[")
-        .expect("wrapped RPC allowlist")
-        .1
-        .split_once("\n];")
-        .expect("wrapped RPC allowlist terminator")
-        .0;
-    let allowed = quoted_values(allowed_section);
-    let wrapped_switch = bootstrap
-        .split_once("case \"process.exec_image_open\":")
-        .expect("wrapped RPC switch")
-        .1
-        .split_once("_processWasmSyncRpc.applySync")
-        .expect("wrapped RPC dispatch")
-        .0;
-    let mut emitted_wrapped = wrapped_switch
-        .lines()
-        .filter_map(|line| {
-            line.trim()
-                .strip_prefix("case \"")
-                .and_then(|line| line.strip_suffix("\":"))
-                .map(str::to_owned)
-        })
-        .collect::<BTreeSet<_>>();
-    emitted_wrapped.insert(String::from("process.exec_image_open"));
-    assert_eq!(
-        allowed, emitted_wrapped,
-        "the generic WASM wrapper switch and sidecar allowlist must remain exact"
-    );
-
-    let wrapped_only_section = inventory
-        .split_once("WASM_WRAPPED_ONLY_RPC_INVENTORY: &[&str] = &[")
-        .expect("wrapped-only inventory declaration")
-        .1
-        .split_once("\n];")
-        .expect("wrapped-only inventory terminator")
-        .0;
-    let frozen_wrapped_only = quoted_values(wrapped_only_section);
-    let actual_wrapped_only = allowed
-        .difference(&runner_methods)
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        frozen_wrapped_only, actual_wrapped_only,
-        "review every semantic RPC hidden behind process.wasm_sync_rpc"
-    );
-
-    let adapter_only_section = inventory
-        .split_once("WASM_ADAPTER_ONLY_RPCS: &[&str] = &[")
-        .expect("adapter-only inventory declaration")
-        .1
-        .split_once("\n];")
-        .expect("adapter-only inventory terminator")
-        .0;
-    assert_eq!(
-        quoted_values(adapter_only_section),
-        BTreeSet::from([
-            String::from("fs.blockingIoTimeoutMsSync"),
-            String::from("process.fd_description_alias_count"),
-            String::from("process.fd_description_identity"),
-            String::from("process.fd_snapshot"),
-        ]),
-        "only read-only V8 projection/configuration queries may bypass typed Linux operations"
-    );
-
-    let filesystem =
-        std::fs::read_to_string(root.join("crates/vm/src/execution/host_dispatch/filesystem.rs"))
-            .expect("read typed filesystem decoder");
-    assert!(
-        filesystem.contains("for method in semantic_rpc_inventory()")
-            && filesystem.contains("must not fall through to the legacy bridge"),
-        "the typed decoder proof must cover the union of literal and wrapped-only RPCs"
-    );
-
-    let legacy_exec_routes = production_matches(
-        &root,
-        &[
-            PathBuf::from("crates/vm/src/execution/child_process.rs"),
-            PathBuf::from("crates/vm/src/service.rs"),
-        ],
-        &[
-            "request.method == \"process.exec\"",
-            "request.method == \"process.exec_fd_image_commit\"",
-            "\"process.exec\" =>",
-            "\"process.exec_fd_image_commit\" =>",
-        ],
-    );
-    assert!(
-        legacy_exec_routes.is_empty(),
-        "execve/fexecve must enter as typed ProcessOperation::Exec, never a legacy HostRpcRequest:\n{}",
-        legacy_exec_routes.join("\n")
-    );
-}
-
-#[test]
 fn compatibility_wasm_filesystem_inventory_uses_only_typed_kernel_dispatch() {
     let root = repo_root();
     let router = std::fs::read_to_string(root.join("crates/vm/src/execution/host_dispatch/mod.rs"))
@@ -1767,7 +1293,6 @@ const FS_ALLOW: &[&str] = &[
     "crates/vfs-core/src/posix/tar_fs.rs",
     // language-runtime asset / module loaders (read host runtime assets)
     "crates/executor-python-v8-pyodide/src/lib.rs",
-    "crates/executor-wasm-v8/src/lib.rs",
     "crates/executor-v8-runtime/src/javascript.rs",
     "crates/executor-v8-runtime/src/asset_cache.rs",
     "crates/executor-v8-runtime/src/adapter_support.rs",
@@ -1901,11 +1426,9 @@ const ENV_ALLOW: &[&str] = &[
     // Warm-isolate pool sizing knob (AGENTOS_V8_WARM_ISOLATES), read at
     // executor init from operator env. Not guest-reachable.
     "crates/executor-v8-runtime/src/adapter_host.rs",
-    // Wasm runner mode/cache knobs (AGENTOS_WASM_SNAPSHOT_RUNNER,
-    // AGENTOS_WASM_RUNNER_NO_CACHE) + warm-pool sizing, read at executor init
-    // from operator env. Not guest-reachable. (wasm.rs is already a sanctioned
-    // FS asset-loading boundary above.)
-    "crates/executor-wasm-v8/src/lib.rs",
+    // Warm guest-isolate pool sizing (AGENTOS_V8_WASM_WARM_ISOLATES), read
+    // once from operator env. Not guest-reachable.
+    "crates/executor-wasm-v8/src/native/pool.rs",
     // Session-phase perf diagnostics toggles (AGENTOS_V8_SESSION_PHASES*),
     // read from operator env. Not guest-reachable.
     "crates/executor-v8-runtime/src/session.rs",
@@ -2149,21 +1672,6 @@ fn production_execution_lifecycle_is_runtime_neutral_and_delegated() {
         "every backend, including compatibility WASM, must enter the kernel-owned signal checkpoint path"
     );
 
-    let v8_wasm = std::fs::read_to_string(root.join("crates/executor-wasm-v8/src/lib.rs"))
-        .expect("read V8-WASM adapter");
-    let v8_backend_start = v8_wasm
-        .find("impl ExecutionBackend for WasmV8Execution")
-        .expect("find V8-WASM backend adapter");
-    let v8_backend: String = v8_wasm[v8_backend_start..]
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
-    assert!(
-        v8_backend.contains("fndeliver_signal_checkpoint(")
-            && v8_backend.contains("self.wake_handle(identity)")
-            && v8_backend.contains("wake.publish_signal(signal,delivery_token)"),
-        "compatibility WASM checkpoints must publish through the runtime-neutral kernel wake capability"
-    );
     let composition = std::fs::read_to_string(root.join("crates/vm/src/executor.rs"))
         .expect("read native executor composition");
     let wasm_backend_start = composition
@@ -2180,7 +1688,8 @@ fn production_execution_lifecycle_is_runtime_neutral_and_delegated() {
             )
             .count()
             >= 2
-            && wasm_backend.contains("Self::Wasmtime(execution)"),
+            && wasm_backend.contains("Self::Wasmtime(execution)")
+            && wasm_backend.contains("Self::V8(execution)"),
         "both standalone WASM engines must consume the common signal-checkpoint contract"
     );
 }
@@ -4323,26 +3832,6 @@ fn protocol_and_abort_delivery_have_no_recurring_poll_timer() {
             );
         }
     }
-}
-
-#[test]
-fn standalone_wasm_wait_has_no_recurring_adapter_poll() {
-    let path = repo_root().join("crates/executor-wasm-v8/src/lib.rs");
-    let source =
-        std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {path:?}: {error}"));
-    for marker in [
-        "self.poll_event_blocking(Duration::from_millis(50))",
-        "Sample elapsed budget each poll",
-    ] {
-        assert!(
-            !source.contains(marker),
-            "standalone WASM waits must block on readiness with one deadline-aware wait, not a recurring adapter poll ({marker})"
-        );
-    }
-    assert!(
-        source.contains("fn wait_event_blocking("),
-        "standalone WASM wait must retain its direct readiness/deadline wait helper"
-    );
 }
 
 #[test]

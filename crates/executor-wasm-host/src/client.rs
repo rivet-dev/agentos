@@ -1,6 +1,8 @@
 //! The per-execution channel from host imports to the sidecar kernel.
 
-use crate::backend::{direct_host_reply_channel, HostCallIdentity, HostCallReply, HostServiceError};
+use crate::backend::{
+    direct_host_reply_channel, HostCallIdentity, HostCallReply, HostServiceError,
+};
 use crate::host::{HostOperation, HostProcessContext, ProcessHostCapabilitySet};
 use crate::{ExecutionDiagnostics, QueuedWasmEvent, WorkerTransport};
 use agentos_driver_tokio::accounting::ResourceLedger;
@@ -100,10 +102,7 @@ impl WasmHostClient {
         cpu_time_ns(self.worker.is_some())
     }
 
-    pub fn check_active_cpu_budget(
-        &self,
-        limit_ms: Option<u32>,
-    ) -> Result<(), HostServiceError> {
+    pub fn check_active_cpu_budget(&self, limit_ms: Option<u32>) -> Result<(), HostServiceError> {
         if let (Some(limit_ms), Some(origin)) = (limit_ms, self.active_cpu_origin_ns.get()) {
             let observed_ns = self.cpu_time_ns()?.saturating_sub(*origin);
             let limit_ns = u64::from(limit_ms) * 1_000_000;

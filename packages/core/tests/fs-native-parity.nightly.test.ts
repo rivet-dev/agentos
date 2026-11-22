@@ -60,7 +60,7 @@ function runChecked(
 	const result = spawnSync(command, args, {
 		cwd: options.cwd,
 		encoding: "utf8",
-		env: { ...process.env, AGENTOS_WASM_SNAPSHOT_RUNNER: "off" },
+		env: process.env,
 		maxBuffer: 32 * 1024 * 1024,
 	});
 	if (result.status !== 0) {
@@ -100,7 +100,6 @@ function ensureWorkspaceSidecarBuilt(): void {
 				`AGENTOS_SIDECAR_BIN is set to ${configuredSidecar} but the file does not exist`,
 			);
 		}
-		process.env.AGENTOS_WASM_SNAPSHOT_RUNNER = "off";
 		return;
 	}
 	runChecked("cargo", ["build", "--locked", "-q", "-p", "agentos-sidecar"], {
@@ -108,7 +107,6 @@ function ensureWorkspaceSidecarBuilt(): void {
 		label: "failed to build workspace agentos-sidecar",
 	});
 	process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
-	process.env.AGENTOS_WASM_SNAPSHOT_RUNNER = "off";
 }
 
 function materializeFsProbePackage(): string {

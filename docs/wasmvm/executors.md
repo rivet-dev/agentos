@@ -36,14 +36,18 @@ required.
 ## Shared host behavior and safety
 
 Both executors use the same sidecar-owned kernel, VFS, process table, fd and
-socket tables, signal broker, permissions, and resource ledger. Wasmtime links
-the AgentOS-owned Preview1/POSIX ABI directly. It does not construct a
-`wasmtime-wasi` context and receives no ambient host filesystem, network,
-process, environment, clock, random, or stdio authority.
+socket tables, signal broker, permissions, and resource ledger. They also share
+one implementation of the AgentOS-owned Preview1/POSIX ABI: the host imports in
+`agentos-executor-wasm-host` are Rust handlers that each engine binds to its
+own guest. V8 instantiates the module from Rust in a per-guest isolate and
+calls the handlers from native import callbacks, so no JavaScript runs in the
+guest path. Neither engine constructs a `wasmtime-wasi` context or receives
+ambient host filesystem, network, process, environment, clock, random, or
+stdio authority.
 
-All filesystem and network waits use owned request/result buffers. Wasmtime
-validates and copies guest input before awaiting, holds no guest-memory borrow
-across the wait, then reacquires and revalidates every output range before
+All filesystem and network waits use owned request/result buffers. The shared
+handlers validate and copy guest input before awaiting, hold no guest-memory
+borrow across the wait, then reacquire and revalidate every output range before
 commit. Guest execution runs on the bounded non-Tokio VM executor; host I/O
 continues on the process's one Tokio runtime.
 
@@ -55,8 +59,8 @@ the parent. A bounded typed protocol carries owned host-operation values over
 stdio. The child receives no ambient host capability, and guest memory is
 never mapped into the parent as an IPC shortcut.
 
-V8-WASM remains on the same parity and safety suite. AgentOS never shadow-runs
-a side-effecting command through both engines.
+Both engines run the same cross-engine parity and safety suites. AgentOS never
+shadow-runs a side-effecting command through both engines.
 
 ## Metrics and warnings
 

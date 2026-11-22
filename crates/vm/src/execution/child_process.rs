@@ -1006,7 +1006,6 @@ pub(super) struct PreparedSpawnHostNetDescription {
     guest_fds: Vec<u32>,
     description_id: Option<u64>,
     resource: TransferredHostNetSocket,
-    metadata: Value,
 }
 
 #[derive(Debug, Default)]
@@ -1565,45 +1564,6 @@ impl PreparedSpawnHostNetFds {
             .iter()
             .map(|description| description.guest_fds.len())
             .sum()
-    }
-
-    fn bootstrap_json(&self) -> Value {
-        Value::Array(
-            self.descriptions
-                .iter()
-                .enumerate()
-                .map(|(index, description)| {
-                    let mut value = json!({
-                        "guestFds": description.guest_fds,
-                        "descriptionId": description.description_id.map(|id| id.to_string()),
-                        "metadata": description.metadata,
-                    });
-                    let object = value
-                        .as_object_mut()
-                        .expect("spawn host-network bootstrap value is an object");
-                    let (key, id) = match description.resource {
-                        TransferredHostNetSocket::Tcp { .. } => {
-                            ("socketId", format!("spawn-tcp-{index}"))
-                        }
-                        TransferredHostNetSocket::TcpListener { .. } => {
-                            ("serverId", format!("spawn-listener-{index}"))
-                        }
-                        TransferredHostNetSocket::Udp { .. } => {
-                            ("udpSocketId", format!("spawn-udp-{index}"))
-                        }
-                        TransferredHostNetSocket::Unix { .. } => {
-                            ("socketId", format!("spawn-unix-{index}"))
-                        }
-                        TransferredHostNetSocket::UnixListener { .. } => {
-                            ("serverId", format!("spawn-unix-listener-{index}"))
-                        }
-                        TransferredHostNetSocket::Pending { .. } => return value,
-                    };
-                    object.insert(key.to_owned(), Value::String(id));
-                    value
-                })
-                .collect(),
-        )
     }
 
     fn validate_install(
@@ -3033,7 +2993,6 @@ pub(super) fn prepare_spawn_host_net_fds(
         .collect::<BTreeSet<_>>();
     let mut fd_states = BTreeMap::<u32, SpawnHostNetFdState>::new();
     let mut source_descriptions = BTreeMap::<SpawnHostNetSource, usize>::new();
-    let mut description_metadata = Vec::<Value>::new();
     let mut description_ids = Vec::<Option<u64>>::new();
     let mut description_resources = Vec::<Option<TransferredHostNetSocket>>::new();
 
@@ -3169,7 +3128,7 @@ pub(super) fn prepare_spawn_host_net_fds(
             }
             index
         } else {
-            let (metadata, resource) = if let Some(description) = managed_description.as_ref() {
+            let resource = if let Some(description) = managed_description.as_ref() {
                 let kernel_fd = managed_kernel_fd.expect("managed kernel fd exists");
                 let nonblocking = kernel
                     .fd_stat(EXECUTION_DRIVER_NAME, parent.kernel_pid, kernel_fd)
@@ -3214,7 +3173,7 @@ pub(super) fn prepare_spawn_host_net_fds(
                     "remoteUnixAddress": Value::Null,
                     "listening": false,
                 });
-                let resource = prepare_transferred_host_net_resource_with_options(
+                prepare_transferred_host_net_resource_with_options(
                     kernel,
                     parent,
                     &source,
@@ -3224,21 +3183,18 @@ pub(super) fn prepare_spawn_host_net_fds(
                         nonblocking,
                         recv_timeout_ms: description.receive_timeout_ms,
                     }),
-                )?;
-                (resource.metadata().as_value(), resource)
+                )?
             } else {
-                let resource = prepare_transferred_host_net_resource(
+                prepare_transferred_host_net_resource(
                     kernel,
                     parent,
                     &source,
                     &inherited.metadata,
                     "spawn host-network",
-                )?;
-                (resource.metadata().as_value(), resource)
+                )?
             };
             let index = description_resources.len();
             source_descriptions.insert(source, index);
-            description_metadata.push(metadata);
             description_ids.push(managed_description_id);
             description_resources.push(Some(resource));
             index
@@ -3299,7 +3255,6 @@ pub(super) fn prepare_spawn_host_net_fds(
             resource: description_resources[index]
                 .take()
                 .expect("spawn host-network description resource exists"),
-            metadata: description_metadata[index].clone(),
         });
     }
     Ok(PreparedSpawnHostNetFds {
@@ -4282,15 +4237,13 @@ pub(super) fn validate_process_launch_request(
 /// Only the trusted kernel selects authority. Verify image compatibility under
 /// the same VM borrow as commit, including policy changes since image open.
 fn validate_in_place_exec_tier(
-    backend: ExecutionStandaloneWasmBackend,
+    _backend: ExecutionStandaloneWasmBackend,
     effective: ProcessPermissionTier,
     tiers: Option<crate::executor::host::ExecImportTiers>,
 ) -> Result<(), VmError> {
-    if !uses_native_host_imports(backend) {
-        return Ok(());
-    }
-    let tiers = tiers
-        .ok_or_else(|| VmError::host("EINVAL", "Wasmtime exec requires validated import tiers"))?;
+    let tiers = tiers.ok_or_else(|| {
+        VmError::host("EINVAL", "WebAssembly exec requires validated import tiers")
+    })?;
     let admitted = match effective {
         ProcessPermissionTier::Isolated => tiers.isolated,
         ProcessPermissionTier::ReadOnly => tiers.read_only,
@@ -4306,10 +4259,10 @@ fn validate_in_place_exec_tier(
     Ok(())
 }
 
-fn in_place_exec_cleanup_error(backend: ExecutionStandaloneWasmBackend, error: VmError) -> VmError {
-    if !uses_native_host_imports(backend) {
-        return error;
-    }
+fn in_place_exec_cleanup_error(
+    _backend: ExecutionStandaloneWasmBackend,
+    error: VmError,
+) -> VmError {
     tracing::error!(%error, "Wasm exec committed but replacement cleanup failed; retiring the old image");
     VmError::host("ERR_AGENTOS_WASM_EXEC_COMMITTED_FAILURE", error.to_string())
 }
@@ -6795,9 +6748,12 @@ where
                 // Load the executable only after the child's final credentials
                 // are installed. Parent-authorized staged bytes must never
                 // become a privilege-dropped child's executable image.
-                if let Err(error) =
-                    stage_authorized_child_launch_image(&mut vm, kernel_pid, &mut resolved, standalone_wasm_backend)
-                {
+                if let Err(error) = stage_authorized_child_launch_image(
+                    &mut vm,
+                    kernel_pid,
+                    &mut resolved,
+                    standalone_wasm_backend,
+                ) {
                     rollback_unregistered_spawn_child(
                         &mut vm.kernel,
                         &kernel_handle,
@@ -6825,38 +6781,6 @@ where
                     execution_env.insert(
                         String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
                         String::from("1"),
-                    );
-                }
-                if resolved.adapter_policy.encodes_inherited_fd_bootstrap {
-                    execution_env.insert(
-                        String::from("AGENTOS_WASM_INHERITED_FD_MAPPINGS"),
-                        serde_json::to_string(&applied_spawn_actions.fd_mappings).map_err(
-                            |error| {
-                                VmError::InvalidState(format!(
-                                    "failed to serialize inherited WASM fd mappings: {error}"
-                                ))
-                            },
-                        )?,
-                    );
-                    execution_env.insert(
-                        String::from("AGENTOS_WASM_CLOSED_INHERITED_FDS"),
-                        serde_json::to_string(&applied_spawn_actions.closed_guest_fds).map_err(
-                            |error| {
-                                VmError::InvalidState(format!(
-                                    "failed to serialize closed inherited WASM fds: {error}"
-                                ))
-                            },
-                        )?,
-                    );
-                    execution_env.insert(
-                        String::from("AGENTOS_WASM_INHERITED_HOSTNET_FDS"),
-                        serde_json::to_string(&prepared_host_net_fds.bootstrap_json()).map_err(
-                            |error| {
-                                VmError::InvalidState(format!(
-                                    "failed to serialize inherited WASM host-network fds: {error}"
-                                ))
-                            },
-                        )?,
                     );
                 }
                 execution_env.insert(
@@ -6983,23 +6907,16 @@ where
                                 &request.options.internal_bootstrap_env,
                             ),
                         );
-                        execution_env
-                            .insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
-                        execution_env
-                            .insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
                         let wasm_limits = wasm_execution_limits(&vm);
                         let wasm_guest_runtime = guest_runtime_identity(
                             &vm,
                             Some(u64::from(kernel_pid)),
                             Some(u64::from(parent_kernel_pid)),
                         );
-                        let module_path = match standalone_wasm_backend {
-                            backend if uses_native_host_imports(backend) => execution_env
-                                .get("AGENTOS_GUEST_ENTRYPOINT")
-                                .cloned()
-                                .unwrap_or_else(|| resolved.entrypoint.clone()),
-                            _ => resolved.entrypoint.clone(),
-                        };
+                        let module_path = execution_env
+                            .get("AGENTOS_GUEST_ENTRYPOINT")
+                            .cloned()
+                            .unwrap_or_else(|| resolved.entrypoint.clone());
                         let context = wasm_engine.create_context(CreateWasmContextRequest {
                             vm_id: vm_id.to_owned(),
                             module_path: Some(module_path),
@@ -8020,15 +7937,10 @@ where
                 execution_env.extend(sanitize_javascript_child_process_internal_bootstrap_env(
                     &request.options.internal_bootstrap_env,
                 ));
-                execution_env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
-                execution_env.insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
-                let module_path = match standalone_wasm_backend {
-                    backend if uses_native_host_imports(backend) => execution_env
-                        .get("AGENTOS_GUEST_ENTRYPOINT")
-                        .cloned()
-                        .unwrap_or_else(|| resolved.entrypoint.clone()),
-                    _ => resolved.entrypoint.clone(),
-                };
+                let module_path = execution_env
+                    .get("AGENTOS_GUEST_ENTRYPOINT")
+                    .cloned()
+                    .unwrap_or_else(|| resolved.entrypoint.clone());
                 let context = self.wasm_engine.create_context(CreateWasmContextRequest {
                     vm_id: vm_id.to_owned(),
                     module_path: Some(module_path),
@@ -8891,7 +8803,12 @@ where
                         &request.options,
                     )?;
                     pending_kernel_handle = Some(kernel_handle.clone());
-                    stage_authorized_child_launch_image(&mut vm, kernel_pid, &mut resolved, standalone_wasm_backend)?;
+                    stage_authorized_child_launch_image(
+                        &mut vm,
+                        kernel_pid,
+                        &mut resolved,
+                        standalone_wasm_backend,
+                    )?;
                     ipc_guard.borrow_mut().install(
                         &mut vm.kernel,
                         parent_kernel_pid,
@@ -8903,36 +8820,6 @@ where
                         execution_env.insert(
                             String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
                             String::from("1"),
-                        );
-                    }
-                    if resolved.adapter_policy.encodes_inherited_fd_bootstrap {
-                        execution_env.insert(
-                            String::from("AGENTOS_WASM_INHERITED_FD_MAPPINGS"),
-                            serde_json::to_string(&applied_spawn_actions.fd_mappings).map_err(
-                                |error| {
-                                    VmError::InvalidState(format!(
-                                        "failed to serialize inherited WASM fd mappings: {error}"
-                                    ))
-                                },
-                            )?,
-                        );
-                        execution_env.insert(
-                            String::from("AGENTOS_WASM_CLOSED_INHERITED_FDS"),
-                            serde_json::to_string(&applied_spawn_actions.closed_guest_fds)
-                                .map_err(|error| {
-                                    VmError::InvalidState(format!(
-                                        "failed to serialize closed inherited WASM fds: {error}"
-                                    ))
-                                })?,
-                        );
-                        execution_env.insert(
-                            String::from("AGENTOS_WASM_INHERITED_HOSTNET_FDS"),
-                            serde_json::to_string(&prepared_host_net_fds.bootstrap_json())
-                                .map_err(|error| {
-                                    VmError::InvalidState(format!(
-                                    "failed to serialize inherited WASM host-network fds: {error}"
-                                ))
-                                })?,
                         );
                     }
                     execution_env.insert(
@@ -9033,23 +8920,16 @@ where
                                     &request.options.internal_bootstrap_env,
                                 ),
                             );
-                            execution_env
-                                .insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
-                            execution_env
-                                .insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
                             let wasm_limits = wasm_execution_limits(&vm);
                             let wasm_guest_runtime = guest_runtime_identity(
                                 &vm,
                                 Some(u64::from(kernel_pid)),
                                 Some(u64::from(parent_kernel_pid)),
                             );
-                            let module_path = match standalone_wasm_backend {
-                                backend if uses_native_host_imports(backend) => execution_env
-                                    .get("AGENTOS_GUEST_ENTRYPOINT")
-                                    .cloned()
-                                    .unwrap_or_else(|| resolved.entrypoint.clone()),
-                                _ => resolved.entrypoint.clone(),
-                            };
+                            let module_path = execution_env
+                                .get("AGENTOS_GUEST_ENTRYPOINT")
+                                .cloned()
+                                .unwrap_or_else(|| resolved.entrypoint.clone());
                             let context = wasm_engine.create_context(CreateWasmContextRequest {
                                 vm_id: vm_id.to_owned(),
                                 module_path: Some(module_path),

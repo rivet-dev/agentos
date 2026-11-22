@@ -53,7 +53,10 @@ pub trait WasmGuest {
 /// The engine's guest-thread group, when the guest runs WASI threads.
 pub trait ThreadGroupHooks<M>: Send + Sync {
     fn request_process_exit(&self, code: i32) -> Result<(), HostServiceError>;
-    fn request_exec(&self, replacement: Option<PendingExecReplacement<M>>) -> Result<(), HostServiceError>;
+    fn request_exec(
+        &self,
+        replacement: Option<PendingExecReplacement<M>>,
+    ) -> Result<(), HostServiceError>;
     fn is_shutting_down(&self) -> bool;
 }
 
@@ -62,7 +65,10 @@ pub trait ThreadGroupHooks<M>: Send + Sync {
 pub trait WorkerTransport: Send + Sync {
     fn process(&self) -> HostProcessContext;
     fn signal_pending(&self) -> bool;
-    fn submit(&self, operation: HostOperation) -> BoxFuture<'_, Result<HostCallReply, HostServiceError>>;
+    fn submit(
+        &self,
+        operation: HostOperation,
+    ) -> BoxFuture<'_, Result<HostCallReply, HostServiceError>>;
     fn submit_adapter_call(
         &self,
         method: String,

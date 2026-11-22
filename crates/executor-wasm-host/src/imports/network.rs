@@ -12,11 +12,11 @@ use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
 use crate::backend::HostCallReply;
 use crate::memory;
+use crate::{Val, WasmGuest};
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Instant;
-use crate::{Val, WasmGuest};
 
 const ERRNO_AGAIN: i32 = 6;
 const ERRNO_BADF: i32 = 8;
@@ -160,11 +160,7 @@ async fn set_nonblock<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     .await
 }
 
-async fn address_call<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    method: &str,
-) -> i32 {
+async fn address_call<C: WasmGuest>(caller: &mut C, params: &[Val], method: &str) -> i32 {
     let (Ok(fd), Ok(pointer), Ok(length)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -439,11 +435,7 @@ async fn listen<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     .await
 }
 
-async fn validate<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    listening: bool,
-) -> i32 {
+async fn validate<C: WasmGuest>(caller: &mut C, params: &[Val], listening: bool) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_BADF;
     };
@@ -543,10 +535,7 @@ async fn accept<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     }
 }
 
-pub(super) async fn fd_is_nonblocking<C: WasmGuest>(
-    caller: &mut C,
-    fd: u32,
-) -> Result<bool, i32> {
+pub(super) async fn fd_is_nonblocking<C: WasmGuest>(caller: &mut C, fd: u32) -> Result<bool, i32> {
     match call(caller, "process.fd_stat", vec![json!(fd)], HashMap::new()).await {
         Ok(reply) => json_reply(reply)
             .ok()
@@ -668,22 +657,14 @@ async fn wait_for_fd_ready<C: WasmGuest>(
     }
 }
 
-async fn log_fd_rollback<C: WasmGuest>(
-    caller: &mut C,
-    fd: u32,
-    context: &'static str,
-) {
+async fn log_fd_rollback<C: WasmGuest>(caller: &mut C, fd: u32, context: &'static str) {
     let error = simple_call(caller, "process.fd_close", vec![json!(fd)]).await;
     if error != SUCCESS {
         eprintln!("ERR_AGENTOS_WASMTIME_FD_ROLLBACK: context={context} fd={fd} errno={error}");
     }
 }
 
-async fn address_output<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    peer: bool,
-) -> i32 {
+async fn address_output<C: WasmGuest>(caller: &mut C, params: &[Val], peer: bool) -> i32 {
     let (Ok(fd), Ok(output), Ok(length_output)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {

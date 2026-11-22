@@ -16,10 +16,6 @@ mod identity;
 mod inventory;
 mod ipc;
 
-#[cfg(test)]
-pub(crate) fn is_wasm_adapter_only_rpc(method: &str) -> bool {
-    inventory::WASM_ADAPTER_ONLY_RPCS.contains(&method)
-}
 mod network;
 pub(super) use network::service_deferred_kernel_poll;
 mod network_compat;

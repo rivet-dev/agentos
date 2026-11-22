@@ -121,10 +121,19 @@ mod tests {
     fn v8_trap_messages_map_to_shared_trap_kinds() {
         for (diagnostic, kind) in [
             ("RuntimeError: unreachable", "unreachable"),
-            ("RuntimeError: memory access out of bounds", "memory-out-of-bounds"),
+            (
+                "RuntimeError: memory access out of bounds",
+                "memory-out-of-bounds",
+            ),
             ("RuntimeError: divide by zero", "integer-division-by-zero"),
-            ("RuntimeError: divide result unrepresentable", "integer-overflow"),
-            ("RangeError: Maximum call stack size exceeded", "stack-overflow"),
+            (
+                "RuntimeError: divide result unrepresentable",
+                "integer-overflow",
+            ),
+            (
+                "RangeError: Maximum call stack size exceeded",
+                "stack-overflow",
+            ),
             ("Error: something else", "other"),
         ] {
             let error = classify_trap(diagnostic);

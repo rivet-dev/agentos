@@ -7,9 +7,9 @@ use super::preview1::{
 use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
 use crate::memory;
+use crate::{Val, WasmGuest};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use crate::{Val, WasmGuest};
 
 const MAX_GROUPS: usize = 64;
 const MAX_ACCOUNT_NAME_BYTES: usize = 4096;

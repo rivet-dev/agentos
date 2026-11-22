@@ -7,10 +7,10 @@ use super::preview1::{
 use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
 use crate::memory;
+use crate::{Val, WasmGuest};
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use crate::{Val, WasmGuest};
 
 const KERNEL_WAIT_SLICE_MS: u32 = 10_000;
 
@@ -338,11 +338,7 @@ async fn tty_set_attr<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     .await
 }
 
-async fn tty_scalar_output<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    method: &str,
-) -> i32 {
+async fn tty_scalar_output<C: WasmGuest>(caller: &mut C, params: &[Val], method: &str) -> i32 {
     let (Ok(fd), Ok(output)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_FAULT;
     };

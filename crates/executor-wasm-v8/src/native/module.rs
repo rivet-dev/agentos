@@ -97,7 +97,8 @@ pub(super) fn admit_image(
     let capped = cap_memory_maximum(bytes, request)?;
     let bytes = capped.as_deref().unwrap_or(bytes);
     let info = inspect_module(bytes)?;
-    let launch = ALL_TIERS.map(|tier| imports::validate_imports(info.imports.iter().cloned(), tier, false));
+    let launch =
+        ALL_TIERS.map(|tier| imports::validate_imports(info.imports.iter().cloned(), tier, false));
     // The first image reports unsupported imports the way Wasmtime does,
     // before any exec-tier classification.
     if let Some(tier) = launch_tier {
@@ -204,9 +205,8 @@ fn cache_poisoned<T>(_: T) -> HostServiceError {
 }
 
 fn memory_limit_error(message: String) -> HostServiceError {
-    HostServiceError::new("ERR_AGENTOS_WASMTIME_MEMORY_LIMIT", message).with_details(
-        serde_json::json!({ "limitName": "limits.resources.maxWasmMemoryBytes" }),
-    )
+    HostServiceError::new("ERR_AGENTOS_WASMTIME_MEMORY_LIMIT", message)
+        .with_details(serde_json::json!({ "limitName": "limits.resources.maxWasmMemoryBytes" }))
 }
 
 /// V8 has no per-store memory limiter, so the configured limit becomes each
@@ -244,7 +244,8 @@ fn rewrite_memory_section(bytes: &[u8], limit_pages: u64) -> Result<Vec<u8>, Hos
         let section_start = offset;
         let id = bytes[offset];
         offset += 1;
-        let size = read_varuint(bytes, &mut offset).ok_or_else(|| invalid("section size truncated"))?;
+        let size =
+            read_varuint(bytes, &mut offset).ok_or_else(|| invalid("section size truncated"))?;
         let end = offset
             .checked_add(usize::try_from(size).map_err(|_| invalid("section size overflow"))?)
             .filter(|end| *end <= bytes.len())
@@ -255,19 +256,25 @@ fn rewrite_memory_section(bytes: &[u8], limit_pages: u64) -> Result<Vec<u8>, Hos
             continue;
         }
         let mut cursor = offset;
-        let count = read_varuint(bytes, &mut cursor).ok_or_else(|| invalid("memory count truncated"))?;
+        let count =
+            read_varuint(bytes, &mut cursor).ok_or_else(|| invalid("memory count truncated"))?;
         let mut section = Vec::new();
         write_varuint(&mut section, count);
         for _ in 0..count {
-            let flags = read_varuint(bytes, &mut cursor).ok_or_else(|| invalid("memory flags truncated"))?;
+            let flags = read_varuint(bytes, &mut cursor)
+                .ok_or_else(|| invalid("memory flags truncated"))?;
             if flags & !1 != 0 {
                 return Err(memory_limit_error(format!(
                     "configured WebAssembly memory limit does not support memory flags {flags}"
                 )));
             }
-            let initial = read_varuint(bytes, &mut cursor).ok_or_else(|| invalid("memory minimum truncated"))?;
+            let initial = read_varuint(bytes, &mut cursor)
+                .ok_or_else(|| invalid("memory minimum truncated"))?;
             let maximum = if flags & 1 != 0 {
-                Some(read_varuint(bytes, &mut cursor).ok_or_else(|| invalid("memory maximum truncated"))?)
+                Some(
+                    read_varuint(bytes, &mut cursor)
+                        .ok_or_else(|| invalid("memory maximum truncated"))?,
+                )
             } else {
                 None
             };
@@ -278,10 +285,15 @@ fn rewrite_memory_section(bytes: &[u8], limit_pages: u64) -> Result<Vec<u8>, Hos
             }
             write_varuint(&mut section, 1);
             write_varuint(&mut section, initial);
-            write_varuint(&mut section, maximum.map_or(limit_pages, |max| max.min(limit_pages)));
+            write_varuint(
+                &mut section,
+                maximum.map_or(limit_pages, |max| max.min(limit_pages)),
+            );
         }
         if cursor != end {
-            return Err(invalid("memory section parsing did not consume the full section"));
+            return Err(invalid(
+                "memory section parsing did not consume the full section",
+            ));
         }
         out.push(5);
         write_varuint(&mut out, section.len() as u64);

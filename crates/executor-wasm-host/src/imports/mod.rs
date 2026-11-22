@@ -3,16 +3,16 @@
 //! Engines bind every permitted ABI binding to [`dispatch`], and validate a
 //! module's imports with [`validate_imports`] before instantiating it.
 
-use crate::memory;
 use crate::abi::{
     binding, core_signature, AbiBinding, CoreValueType, ImportId, PermissionTier, Restartability,
     ABI_BINDINGS, ALIAS_BINDINGS,
 };
 use crate::backend::{HostCallReply, HostServiceError};
 use crate::host::{ExecImportTiers, HostOperation, SignalMaskHow, SignalOperation, SignalSetValue};
+use crate::memory;
+use crate::{Val, WasmGuest, WasmHostClient};
 use agentos_executor_wasm_abi::WasmPermissionTier;
 use serde_json::Value;
-use crate::{Val, WasmGuest, WasmHostClient};
 
 mod filesystem;
 mod network;
@@ -132,9 +132,19 @@ pub fn exec_import_tiers<'a>(
 // signature before exec can commit destructive changes to the old image.
 fn import_type_supported(import: &ImportDesc<'_>) -> bool {
     if (import.module, import.name) == ("env", "memory") {
-        return matches!(import.kind, ImportKind::Memory { shared: true, memory64: false });
+        return matches!(
+            import.kind,
+            ImportKind::Memory {
+                shared: true,
+                memory64: false
+            }
+        );
     }
-    let ImportKind::Func { params: actual_params, results: actual_results } = &import.kind else {
+    let ImportKind::Func {
+        params: actual_params,
+        results: actual_results,
+    } = &import.kind
+    else {
         return false;
     };
     let abi = ABI_BINDINGS
@@ -543,9 +553,7 @@ fn set_default_result(results: &mut [Val]) -> crate::Result<()> {
             *slot = Val::I64(-1);
             Ok(())
         }
-        _ => Err(crate::format_err!(
-            "unsupported AgentOS ABI result shape"
-        )),
+        _ => Err(crate::format_err!("unsupported AgentOS ABI result shape")),
     }
 }
 

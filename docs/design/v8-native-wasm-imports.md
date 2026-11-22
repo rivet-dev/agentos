@@ -1,6 +1,6 @@
 # Native V8 WASM imports
 
-Status: approved; replaces the JavaScript WASM runner on the V8 backend
+Status: implemented; the JavaScript WASM runner is removed
 
 Date: 2026-11-22
 
@@ -93,14 +93,45 @@ both; it is not part of this change.
 
 ## What this decision requires
 
-- Replace the JavaScript runner with native imports, then delete it.
-- Reuse isolates between guests on a fixed pool of worker threads. A new
-  isolate costs about 1 ms per command.
+- Replace the JavaScript runner with native imports, then delete it. Done.
+- Keep isolate creation off the command's critical path. Done with a bounded
+  pool of parked threads that each pre-create one isolate
+  (`AGENTOS_V8_WASM_WARM_ISOLATES`, default 4). An isolate still runs exactly
+  one guest; reusing isolates across guests was rejected because it would make
+  one guest's leftover heap state reachable from the next.
 - Handle the tiering hazard before workloads start many copies of one binary at
   once.
 - Keep V8 within its support window.
 - Refuse WASM features the toolchain does not use. Most recent V8 WASM bugs are
   in newer features such as garbage-collected types and exceptions.
+
+## Results
+
+Measured on the release sidecar against the JavaScript runner it replaces,
+with Wasmtime as a reference. Medians; the full charts and method are in the
+agent workbook (Cycle 257).
+
+| Workload | Runner | Native V8 | Wasmtime |
+| --- | --- | --- | --- |
+| `true`, warm | 50.5 ms | 17.0 ms | 17.1 ms |
+| `sqlite3` sum, warm | 104 ms | 27.8 ms | 54.7 ms |
+| `sh` pipeline, warm | 173 ms | 45.6 ms | 121 ms |
+| `git --version`, warm | 94.4 ms | 39.6 ms | 133 ms |
+| 200 commands at once, throughput | 95 per second | 346 per second | not measured |
+| 200 commands at once, peak sidecar memory | 1,810 MiB | 307 MiB | not measured |
+
+- Warm commands run 2.2 to 3.8 times faster, and first runs 1.5 to 3.6 times
+  faster. File and descriptor syscalls in the benchmark matrix run 1.2 to 7.8
+  times faster.
+- About 90% of a short command is now the sidecar's process launch and reap,
+  which Wasmtime pays equally. The engine itself takes about 1.6 ms for `true`.
+- Short guest sleeps are slower: a 1 ms sleep takes about 2.2 ms, because guest
+  sleeps wait on the shared millisecond timer. Both engines share this.
+
+Three optimizations keep the engine path short: each image is admitted once
+per process (profile check, import tiers, compiled module) under a digest the
+sidecar computes once at spawn; the sidecar hands the engine the image bytes it
+already read at spawn; and the warm pool above.
 
 ## What would change it
 

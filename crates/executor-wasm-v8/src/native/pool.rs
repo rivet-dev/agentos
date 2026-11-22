@@ -82,15 +82,26 @@ impl Pool {
         Some(parked)
     }
 
+    /// Claim one of `capacity` parked-or-starting slots.
+    fn reserve_slot(&self) -> bool {
+        let mut reserved = self.reserved.load(Ordering::Acquire);
+        while reserved < self.capacity {
+            match self.reserved.compare_exchange_weak(
+                reserved,
+                reserved + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(current) => reserved = current,
+            }
+        }
+        false
+    }
+
     /// Start threads until `capacity` are parked or starting.
     fn refill(&self) {
-        while self
-            .reserved
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |reserved| {
-                (reserved < self.capacity).then_some(reserved + 1)
-            })
-            .is_ok()
-        {
+        while self.reserve_slot() {
             let (sender, receiver) = flume::bounded::<Guest>(1);
             let heap_limit_mb = self.heap_limit_mb;
             // AGENTOS_THREAD_SITE: bounded-v8-wasm-warm-guest

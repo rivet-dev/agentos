@@ -9,11 +9,11 @@ use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
 use crate::backend::{HostCallReply, HostServiceError};
 use crate::memory;
+use crate::{Val, WasmGuest};
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::time::Instant;
-use crate::{Val, WasmGuest};
 
 pub(super) const SUCCESS: i32 = 0;
 pub(super) const ERRNO_2BIG: i32 = 1;
@@ -273,11 +273,7 @@ pub(super) fn value_u64(value: &Value) -> Option<u64> {
         .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
 }
 
-async fn clock_value<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    resolution: bool,
-) -> i32 {
+async fn clock_value<C: WasmGuest>(caller: &mut C, params: &[Val], resolution: bool) -> i32 {
     let output = if resolution {
         i32_arg(params, 1)
     } else {
@@ -543,11 +539,7 @@ fn scatter_iovecs<C: WasmGuest>(
     Ok(offset)
 }
 
-async fn fd_read<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    positioned: bool,
-) -> i32 {
+async fn fd_read<C: WasmGuest>(caller: &mut C, params: &[Val], positioned: bool) -> i32 {
     let (Ok(fd), Ok(iovs_ptr), Ok(iovs_len)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -609,11 +601,7 @@ async fn fd_read<C: WasmGuest>(
     }
 }
 
-async fn fd_write<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    positioned: bool,
-) -> i32 {
+async fn fd_write<C: WasmGuest>(caller: &mut C, params: &[Val], positioned: bool) -> i32 {
     let (Ok(fd), Ok(iovs_ptr), Ok(iovs_len)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -932,11 +920,7 @@ async fn path_create_directory<C: WasmGuest>(caller: &mut C, params: &[Val]) -> 
     path_one(caller, params, "process.path_mkdir_at").await
 }
 
-async fn path_one<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-    method: &str,
-) -> i32 {
+async fn path_one<C: WasmGuest>(caller: &mut C, params: &[Val], method: &str) -> i32 {
     let Ok(fd) = i32_arg(params, 0) else {
         return ERRNO_BADF;
     };
@@ -1020,10 +1004,7 @@ async fn filestat_call<C: WasmGuest>(
     }
 }
 
-async fn path_filestat_set_times<C: WasmGuest>(
-    caller: &mut C,
-    params: &[Val],
-) -> i32 {
+async fn path_filestat_set_times<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(lookup), Ok(atime), Ok(mtime), Ok(flags)) = (
         i32_arg(params, 0),
         i32_arg(params, 1),
@@ -1408,11 +1389,7 @@ async fn poll_oneoff<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     }
 }
 
-pub(super) fn commit<C: WasmGuest>(
-    caller: &mut C,
-    output: u32,
-    bytes: &[u8],
-) -> i32 {
+pub(super) fn commit<C: WasmGuest>(caller: &mut C, output: u32, bytes: &[u8]) -> i32 {
     if memory::validate_range(caller, output, bytes.len()).is_err() {
         return ERRNO_FAULT;
     }

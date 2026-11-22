@@ -18,7 +18,9 @@ use agentos_executor_contract::backend::{
     ExecutionWakeIdentity, HostServiceError, PublishedSignalCheckpoint,
 };
 use agentos_executor_contract::host::ProcessHostCapabilitySet;
-use agentos_executor_wasm_abi::{StartWasmExecutionRequest, WasmExecutionError, WasmExecutionEvent};
+use agentos_executor_wasm_abi::{
+    StartWasmExecutionRequest, WasmExecutionError, WasmExecutionEvent,
+};
 use agentos_executor_wasm_host::QueuedWasmEvent;
 use flume::Receiver;
 use std::collections::VecDeque;
@@ -26,14 +28,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
-
-/// Process-wide switch for the native path while it replaces the JavaScript
-/// runner. Read per launch so tests can select either path.
-pub const NATIVE_WASM_ENV: &str = "AGENTOS_WASM_V8_NATIVE";
-
-pub fn native_wasm_enabled() -> bool {
-    std::env::var(NATIVE_WASM_ENV).is_ok_and(|value| value == "1")
-}
 
 /// An image the vm loaded and checked at spawn, handed to the execution so
 /// it is neither read nor hashed again.
@@ -145,7 +139,8 @@ impl Control {
     ) -> Result<Option<PublishedSignalCheckpoint>, HostServiceError> {
         let mut checkpoints = self.checkpoints()?;
         let Some(position) = checkpoints.iter().position(|(pending, delivery)| {
-            *pending == identity && thread_id.is_none_or(|thread_id| delivery.thread_id == thread_id)
+            *pending == identity
+                && thread_id.is_none_or(|thread_id| delivery.thread_id == thread_id)
         }) else {
             return Ok(None);
         };
@@ -218,7 +213,10 @@ impl Control {
 }
 
 /// Runs on the guest thread between guest instructions, at V8's request.
-unsafe extern "C" fn pause_interrupt(_isolate: v8::UnsafeRawIsolatePtr, data: *mut std::ffi::c_void) {
+unsafe extern "C" fn pause_interrupt(
+    _isolate: v8::UnsafeRawIsolatePtr,
+    data: *mut std::ffi::c_void,
+) {
     // SAFETY: `data` is an `Arc<Control>` leaked by `set_paused` for exactly
     // this callback.
     let control = unsafe { Arc::from_raw(data as *const Control) };
@@ -278,7 +276,7 @@ impl NativeWasmV8Execution {
         let heap_limit_mb = request
             .limits
             .runner_heap_limit_mb
-            .unwrap_or(crate::DEFAULT_WASM_RUNNER_HEAP_LIMIT_MB);
+            .unwrap_or(crate::DEFAULT_WASM_ISOLATE_HEAP_LIMIT_MB);
         pool::launch(
             format!("agentos-v8-wasm-{execution_id}"),
             heap_limit_mb,
@@ -325,9 +323,9 @@ impl NativeWasmV8Execution {
             Ok(_) => eprintln!(
                 "ERR_AGENTOS_WASM_HOST_ALREADY_BOUND: ignored duplicate host capability binding"
             ),
-            Err(_) => eprintln!(
-                "ERR_AGENTOS_WASM_HOST_LATCH_POISONED: failed to bind host capabilities"
-            ),
+            Err(_) => {
+                eprintln!("ERR_AGENTOS_WASM_HOST_LATCH_POISONED: failed to bind host capabilities")
+            }
         }
     }
 

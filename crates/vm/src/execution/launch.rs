@@ -3375,10 +3375,7 @@ pub(super) fn stage_kernel_wasm_launch_asset(
             },
         ));
     }
-    if backend == ExecutionStandaloneWasmBackend::V8
-        && uses_native_host_imports(backend)
-        && image.bytes.starts_with(b"\0asm")
-    {
+    if backend == ExecutionStandaloneWasmBackend::V8 && image.bytes.starts_with(b"\0asm") {
         // Like execve, reject a malformed module before the spawn returns.
         // The engine then reuses these bytes instead of reading the image
         // through the kernel again, and needs no host copy. Other images
@@ -5310,11 +5307,6 @@ where
             String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
             String::from("1"),
         );
-    } else if resolved.adapter_policy.encodes_inherited_fd_bootstrap {
-        env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
-    }
-    if resolved.adapter_policy.supports_prepared_in_place_exec {
-        env.insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
     }
     let provisional_launch_entrypoint = if resolved
         .adapter_policy
@@ -5738,14 +5730,11 @@ where
                     .map_err(kernel_error),
                 "top-level compatibility-WASM permission lookup"
             );
-            let module_path = match payload.wasm_backend {
-                _ if uses_native_host_imports(standalone_wasm_backend) => {
-                    env.get("AGENTOS_GUEST_ENTRYPOINT")
-                        .map(|path| format!("{TRUSTED_INITIAL_MODULE_PREFIX}{path}"))
-                        .unwrap_or_else(|| resolved.entrypoint.clone())
-                }
-                _ => resolved.entrypoint.clone(),
-            };
+            // Every engine loads its module through the kernel VFS.
+            let module_path = env
+                .get("AGENTOS_GUEST_ENTRYPOINT")
+                .map(|path| format!("{TRUSTED_INITIAL_MODULE_PREFIX}{path}"))
+                .unwrap_or_else(|| resolved.entrypoint.clone());
             let context = wasm_engine.create_context(CreateWasmContextRequest {
                 vm_id: vm_id.clone(),
                 module_path: Some(module_path),

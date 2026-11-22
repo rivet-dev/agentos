@@ -2,7 +2,9 @@
 //! for exec replacements.
 
 use crate::backend::{HostCallReply, HostServiceError, PayloadLimit};
-use crate::host::{BoundedString, BoundedUsize, ExecutableImageSource, HostOperation, ProcessOperation};
+use crate::host::{
+    BoundedString, BoundedUsize, ExecutableImageSource, HostOperation, ProcessOperation,
+};
 use crate::WasmHostClient;
 use agentos_executor_wasm_abi::StartWasmExecutionRequest;
 use base64::Engine as _;
@@ -20,8 +22,7 @@ pub async fn load_module(
     request: &StartWasmExecutionRequest,
 ) -> Result<Vec<u8>, HostServiceError> {
     let path_limit = PayloadLimit::new("runtime.filesystem.maxPathBytes", 4096)?;
-    let source = if let Some(path) = module_path.strip_prefix(TRUSTED_INITIAL_MODULE_PREFIX)
-    {
+    let source = if let Some(path) = module_path.strip_prefix(TRUSTED_INITIAL_MODULE_PREFIX) {
         ExecutableImageSource::TrustedInitialPath(BoundedString::try_new(
             path.to_owned(),
             &path_limit,

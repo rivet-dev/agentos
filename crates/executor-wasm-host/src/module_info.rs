@@ -38,8 +38,16 @@ pub fn inspect_module(bytes: &[u8]) -> Result<ModuleInfo<'_>, HostServiceError> 
                 for ty in reader.into_iter_err_on_gc_types() {
                     let ty = ty.map_err(invalid_module)?;
                     types.push((
-                        ty.params().iter().copied().map(core_type).collect::<Option<Vec<_>>>(),
-                        ty.results().iter().copied().map(core_type).collect::<Option<Vec<_>>>(),
+                        ty.params()
+                            .iter()
+                            .copied()
+                            .map(core_type)
+                            .collect::<Option<Vec<_>>>(),
+                        ty.results()
+                            .iter()
+                            .copied()
+                            .map(core_type)
+                            .collect::<Option<Vec<_>>>(),
                     ));
                 }
             }
@@ -93,17 +101,20 @@ pub fn inspect_module(bytes: &[u8]) -> Result<ModuleInfo<'_>, HostServiceError> 
             .and_then(|(_, function)| function_types.get(*function as usize))
             .and_then(|ty| types.get(*ty as usize))
             .is_some_and(|(actual_params, actual_results)| {
-                actual_params.as_deref() == Some(params) && actual_results.as_deref() == Some(results)
+                actual_params.as_deref() == Some(params)
+                    && actual_results.as_deref() == Some(results)
             })
     };
     use CoreValueType::I32;
     let has_valid_start = export_is("_start", &[], &[]);
     let has_signal_trampoline = export_is("__wasi_signal_trampoline", &[I32], &[]);
-    let has_initial_sigmask_setter = export_is("__agentos_set_initial_sigmask", &[I32, I32], &[I32]);
+    let has_initial_sigmask_setter =
+        export_is("__agentos_set_initial_sigmask", &[I32, I32], &[I32]);
     let uses_thread_runtime = imports.iter().any(|import| {
         matches!(
             (import.module, import.name, &import.kind),
-            ("wasi", "thread-spawn", _) | ("env", "memory", ImportKind::Memory { shared: true, .. })
+            ("wasi", "thread-spawn", _)
+                | ("env", "memory", ImportKind::Memory { shared: true, .. })
         )
     });
     Ok(ModuleInfo {
@@ -154,7 +165,10 @@ mod tests {
         ));
         assert!(matches!(
             info.imports[1].kind,
-            ImportKind::Memory { shared: false, memory64: false }
+            ImportKind::Memory {
+                shared: false,
+                memory64: false
+            }
         ));
     }
 
@@ -174,8 +188,8 @@ mod tests {
 
     #[test]
     fn start_with_parameters_is_not_an_entrypoint() {
-        let bytes = wat::parse_str(r#"(module (func (export "_start") (param i32)))"#)
-            .expect("module");
+        let bytes =
+            wat::parse_str(r#"(module (func (export "_start") (param i32)))"#).expect("module");
         assert!(!inspect_module(&bytes).expect("inspect").has_valid_start);
     }
 }

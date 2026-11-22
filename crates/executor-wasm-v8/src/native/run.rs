@@ -7,9 +7,11 @@ use super::guest::{import_object, v8_string, Bindings, GuestState, Unwind};
 use super::module::{admit_image, NativeImage};
 use super::Control;
 use agentos_driver_tokio::accounting::ResourceLedger;
-use agentos_driver_tokio::DriverHandle;
+use agentos_driver_tokio::{DriverHandle, TaskClass};
 use agentos_executor_contract::backend::HostServiceError;
-use agentos_executor_contract::host::{FilesystemOperation, HostOperation, ProcessHostCapabilitySet};
+use agentos_executor_contract::host::{
+    FilesystemOperation, HostOperation, ProcessHostCapabilitySet,
+};
 use agentos_executor_v8_runtime::isolate;
 use agentos_executor_v8_runtime::timeout::{current_thread_cpu_clock, ThreadCpuClock};
 use agentos_executor_wasm_abi::{StartWasmExecutionRequest, WasmExecutionEvent};
@@ -124,13 +126,17 @@ fn run(
     if control.cancelled.load(Ordering::Acquire) {
         guest_isolate.terminate_execution();
     }
-    let _watchdog = Watchdog::start(runtime, control, &request);
+    let _watchdog = Watchdog::start(runtime, control, &request)?;
     let result = run_images(guest_isolate, bytes, digest, request, &host, &diagnostics);
     if let Ok(mut slot) = control.isolate.lock() {
         slot.take();
     }
     if diagnostics.enabled() {
-        let reason = if result.is_ok() { "completed" } else { "failed" };
+        let reason = if result.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        };
         if let Some(line) = diagnostics.line(reason, &module_path) {
             if let Err(error) = block_on(host.publish_stderr(line)) {
                 eprintln!(
@@ -170,7 +176,13 @@ fn run_images(
         v8::scope!(let scope, &mut *guest_isolate);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
-        let admitted = admit_image(scope, &bytes, digest, &request, Some(request.permission_tier))?;
+        let admitted = admit_image(
+            scope,
+            &bytes,
+            digest,
+            &request,
+            Some(request.permission_tier),
+        )?;
         if !admitted.has_valid_start {
             return Err(HostServiceError::new(
                 "ERR_AGENTOS_WASMTIME_ENTRYPOINT",
@@ -305,7 +317,8 @@ fn run_image(
         }
         let diagnostic = exception_text(tc);
         eprintln!("ERR_AGENTOS_WASM_INSTANTIATION: private instantiation diagnostic: {diagnostic}");
-        if diagnostic.contains("Out of memory") || diagnostic.contains("could not allocate memory") {
+        if diagnostic.contains("Out of memory") || diagnostic.contains("could not allocate memory")
+        {
             return Err(HostServiceError::new(
                 "ERR_AGENTOS_WASMTIME_MEMORY_LIMIT",
                 "WebAssembly initial memory exceeds the configured linear-memory limit",
@@ -495,19 +508,41 @@ async fn wait_for_host(control: &Control) -> Result<ProcessHostCapabilitySet, Ho
 struct Watchdog(Option<tokio::task::JoinHandle<()>>);
 
 impl Watchdog {
-    fn start(runtime: &DriverHandle, control: &Arc<Control>, request: &StartWasmExecutionRequest) -> Self {
+    /// Arm the configured limits. A limit that cannot be enforced fails the
+    /// execution instead of letting the guest run unbounded.
+    fn start(
+        runtime: &DriverHandle,
+        control: &Arc<Control>,
+        request: &StartWasmExecutionRequest,
+    ) -> Result<Self, HostServiceError> {
         let wall_limit_ms = request.limits.wall_clock_limit_ms;
-        let cpu = request
-            .limits
-            .active_cpu_time_limit_ms
-            .zip(current_thread_cpu_clock());
+        let cpu = match request.limits.active_cpu_time_limit_ms {
+            Some(limit) => Some((
+                limit,
+                current_thread_cpu_clock().ok_or_else(|| {
+                    HostServiceError::new(
+                        "ERR_AGENTOS_WASMTIME_CPU_CLOCK",
+                        "this platform exposes no per-thread CPU clock to enforce limits.wasm.activeCpuTimeLimitMs",
+                    )
+                })?,
+            )),
+            None => None,
+        };
         if wall_limit_ms.is_none() && cpu.is_none() {
-            return Self(None);
+            return Ok(Self(None));
         }
         let control = Arc::clone(control);
-        Self(Some(runtime.tokio_handle().spawn(async move {
-            watch(control, wall_limit_ms, cpu).await;
-        })))
+        let task = runtime
+            .spawn(TaskClass::Timer, async move {
+                watch(control, wall_limit_ms, cpu).await;
+            })
+            .map_err(|error| {
+                HostServiceError::new(
+                    "ERR_AGENTOS_WASM_LIMIT_WATCHDOG",
+                    format!("could not start the WebAssembly limit watchdog: {error}"),
+                )
+            })?;
+        Ok(Self(Some(task)))
     }
 }
 
@@ -565,10 +600,20 @@ fn publish_result(
     result: Result<i32, HostServiceError>,
 ) {
     match result {
-        Ok(code) => publish(sender, notify, resources, WasmExecutionEvent::Exited(code), 0),
+        Ok(code) => publish(
+            sender,
+            notify,
+            resources,
+            WasmExecutionEvent::Exited(code),
+            0,
+        ),
         // Exec replacement and sidecar-directed cancellation have their
         // authoritative lifecycle event published by the controller.
-        Err(error) if matches!(error.code.as_str(), "ERR_AGENTOS_EXEC_REPLACED" | "ECANCELED") => {}
+        Err(error)
+            if matches!(
+                error.code.as_str(),
+                "ERR_AGENTOS_EXEC_REPLACED" | "ECANCELED"
+            ) => {}
         Err(error) => {
             let message = format!("{}: {}\n", error.code, error.message).into_bytes();
             let retained = message.len();

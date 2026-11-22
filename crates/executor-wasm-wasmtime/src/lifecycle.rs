@@ -23,8 +23,10 @@ use tokio::sync::Notify;
 #[cfg(test)]
 use {crate::backend::PayloadLimit, crate::host::ProcessOperation, serde_json::Value};
 
-pub(super) use agentos_executor_wasm_host::image::{committed_exec_tier, read_open_executable_image};
 use agentos_executor_wasm_host::image::load_module;
+pub(super) use agentos_executor_wasm_host::image::{
+    committed_exec_tier, read_open_executable_image,
+};
 
 /// One queued executor event plus the ledger ownership for bytes retained by
 /// that queue slot, shared with the host-import channel.
