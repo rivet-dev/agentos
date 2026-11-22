@@ -1,0 +1,140 @@
+name: Build pinned V8 archives
+on:
+  # Build a new pin on a dedicated same-repository branch before it reaches main.
+  # Once on main, workflow_dispatch covers future refreshes.
+  push:
+    branches: ['v8-artifacts/**']
+    paths:
+      - scripts/ci/v8/source.json
+      - scripts/ci/v8/*.patch
+      - .github/workflows/v8-artifacts.yml
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.label.name == 'build-pinned-v8' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'v8-artifacts/'))
+    name: V8 archive (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: depot-ubuntu-24.04-8
+          - target: aarch64-unknown-linux-gnu
+            # Chromium's Linux host toolchain is distributed for x64.
+            runner: depot-ubuntu-24.04-8
+          - target: x86_64-apple-darwin
+            runner: macos-15
+          - target: aarch64-apple-darwin
+            runner: macos-15
+    env:
+      TARGET: ${{ matrix.target }}
+      CARGO_BUILD_JOBS: '3'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@01e2821fc38dbca62c2557c927b33938a2e005fd # 1.98.1
+        with:
+          targets: ${{ matrix.target }}
+      - name: Prepare pinned engine source
+        run: python3 scripts/ci/v8/engine.py prepare "$RUNNER_TEMP/rusty-v8"
+      - name: Select libclang for bindgen (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@21
+          echo "LIBCLANG_PATH=$(brew --prefix llvm@21)/lib" >> "$GITHUB_ENV"
+      - name: Enable x64 execution on the macOS arm64 host
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: softwareupdate --install-rosetta --agree-to-license
+      - name: Select libclang for bindgen (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg python-is-python3
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o "$RUNNER_TEMP/llvm.asc"
+          fingerprint=$(gpg --show-keys --with-colons "$RUNNER_TEMP/llvm.asc" | awk -F: '$1 == "pub" { primary=1 } $1 == "fpr" && primary { print $10; primary=0 }')
+          test "$fingerprint" = 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+          gpg --dearmor < "$RUNNER_TEMP/llvm.asc" | sudo tee /usr/share/keyrings/agentos-llvm.gpg >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/agentos-llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' | sudo tee /etc/apt/sources.list.d/agentos-llvm.list
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-21 libclang-21-dev pkg-config libglib2.0-dev
+          echo 'LIBCLANG_PATH=/usr/lib/llvm-21/lib' >> "$GITHUB_ENV"
+          echo "RUSTY_V8_BINDGEN_RESOURCE_DIR=$(clang-21 -print-resource-dir)" >> "$GITHUB_ENV"
+      - name: Install arm64 Linux cross compilation and execution tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get install -y --no-install-recommends g++-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER=qemu-aarch64 -L /usr/aarch64-linux-gnu' >> "$GITHUB_ENV"
+          echo 'RUSTY_V8_GLIBC_PREFIX=/usr/aarch64-linux-gnu' >> "$GITHUB_ENV"
+      - name: Build release library and bindings
+        env:
+          V8_FROM_SOURCE: '1'
+          GN_ARGS: v8_generate_external_defines_header=true
+        run: |
+          cd "$RUNNER_TEMP/rusty-v8"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/v8-target"
+          export BINDGEN_EXTRA_CLANG_ARGS="-I$CARGO_TARGET_DIR/$TARGET/release/gn_out/gen/v8/include"
+          cargo +1.98.1 build --locked --lib --release --target "$TARGET"
+      - name: Package target inputs and verify the bundle
+        run: |
+          bundle="$RUNNER_TEMP/$TARGET.tar.gz"
+          python3 scripts/ci/v8/engine.py pack "$RUNNER_TEMP/rusty-v8" "$RUNNER_TEMP/v8-target" "$TARGET" "$bundle" > "$RUNNER_TEMP/$TARGET.sha256"
+          digest=$(cut -d' ' -f1 "$RUNNER_TEMP/$TARGET.sha256")
+          python3 scripts/ci/v8/engine.py install "$TARGET" "$RUNNER_TEMP/v8-verify" --bundle "$bundle" --sha256 "$digest" --github-env "$GITHUB_ENV" --cargo-config "$RUNNER_TEMP/v8-source.toml"
+          cat "$RUNNER_TEMP/$TARGET.sha256" >> "$GITHUB_STEP_SUMMARY"
+      - name: Link an independent consumer and check the engine version
+        run: |
+          expected=$(python3 -c 'import json;print(json.load(open("scripts/ci/v8/source.json"))["version"])')
+          revision=$(python3 -c 'import json;print(json.load(open("scripts/ci/v8/source.json"))["rustyV8"])')
+          mkdir -p "$RUNNER_TEMP/consumer/src"
+          python3 scripts/ci/v8/engine.py consumer-lock "$RUNNER_TEMP/rusty-v8" "$RUNNER_TEMP/consumer/Cargo.lock"
+          cd "$RUNNER_TEMP/consumer"
+          cat > Cargo.toml <<TOML
+          [package]
+          name = "agentos-v8-version-check"
+          version = "0.0.1"
+          edition = "2024"
+          [dependencies]
+          v8 = { git = "https://github.com/denoland/rusty_v8", rev = "$revision" }
+          TOML
+          cat > src/main.rs <<'RS'
+          fn main() {
+              let native = v8::V8::get_version();
+              assert_eq!(native, v8::VERSION_STRING, "archive and bindgen disagree");
+              println!("{}", native.split('-').next().unwrap());
+          }
+          RS
+          # Narrow the pinned upstream lockfile to this one-crate consumer while
+          # retaining the locked Git identity. Cargo resolves the vendored source.
+          cargo +1.98.1 --config "$RUNNER_TEMP/v8-source.toml" metadata --filter-platform "$TARGET" --format-version 1 > /dev/null
+          python3 "$GITHUB_WORKSPACE/scripts/ci/v8/engine.py" check-temporal-lock "$RUNNER_TEMP/rusty-v8/Cargo.lock" Cargo.lock
+          actual=$(CARGO_TARGET_DIR="$RUNNER_TEMP/v8-consumer" cargo +1.98.1 --config "$RUNNER_TEMP/v8-source.toml" run --locked --release --target "$TARGET")
+          test "$actual" = "$expected"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: upload
+        with:
+          name: rusty-v8-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.target }}.tar.gz
+            ${{ runner.temp }}/${{ matrix.target }}.sha256
+          compression-level: 0
+          if-no-files-found: error
+      - name: Record the immutable Actions artifact ID
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+        run: echo "Draft artifact ID for $TARGET is $ARTIFACT_ID" >> "$GITHUB_STEP_SUMMARY"
