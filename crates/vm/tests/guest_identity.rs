@@ -995,7 +995,11 @@ fn guest_identity_cases() {
 
     for case_name in GUEST_IDENTITY_CASES {
         let backends: &[Option<&str>] = if case_name.starts_with("wasm_") {
-            &[Some("v8"), Some("wasmtime")]
+            &[
+                Some("v8"),
+                #[cfg(feature = "wasm-wasmtime")]
+                Some("wasmtime"),
+            ]
         } else {
             &[None]
         };

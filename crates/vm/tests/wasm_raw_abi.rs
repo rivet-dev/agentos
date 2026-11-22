@@ -385,18 +385,21 @@ fn run_raw_module_with_metadata(
         metadata.clone(),
         StandaloneWasmBackend::V8,
     );
-    let wasmtime = run_raw_module_for_backend(
-        &format!("{name}-wasmtime"),
-        module,
-        tier,
-        metadata,
-        StandaloneWasmBackend::Wasmtime,
-    );
-    assert_eq!(
-        wasmtime, v8,
-        "Wasmtime and V8-WASM raw ABI outcomes diverged for {name}"
-    );
-    wasmtime
+    #[cfg(feature = "wasm-wasmtime")]
+    {
+        let wasmtime = run_raw_module_for_backend(
+            &format!("{name}-wasmtime"),
+            module,
+            tier,
+            metadata,
+            StandaloneWasmBackend::Wasmtime,
+        );
+        assert_eq!(
+            wasmtime, v8,
+            "Wasmtime and V8-WASM raw ABI outcomes diverged for {name}"
+        );
+    }
+    v8
 }
 
 fn run_raw_module_for_backend(
