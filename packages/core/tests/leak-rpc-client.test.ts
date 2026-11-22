@@ -582,7 +582,7 @@ it("a sidecar-side VM disposal rejects wait instead of hanging or inventing an e
 	}
 });
 
-it("disposal wakes wait before a stalled DisposeVm completes", async () => {
+it("disposal preserves authoritative exit while DisposeVm acknowledgement is stalled", async () => {
 	vi.useFakeTimers();
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	const stub = createStubClient();
@@ -603,17 +603,22 @@ it("disposal wakes wait before a stalled DisposeVm completes", async () => {
 			settled = true;
 		},
 	);
-	const assertion = expect(waiting).rejects.toThrow(
-		/^termination_failed:.*disposed/,
-	);
+	const assertion = expect(waiting).resolves.toBe(137);
 	await vi.advanceTimersByTimeAsync(100);
 	const disposal = proxy.dispose();
 	try {
-		await vi.advanceTimersByTimeAsync(499);
+		await vi.advanceTimersByTimeAsync(1_000);
 		expect(settled).toBe(false);
-		await vi.advanceTimersByTimeAsync(1);
+		stub.pushEvent({
+			ownership: { scope: "vm", vm_id: vm.vmId },
+			payload: {
+				type: "process_exited",
+				process_id: "proc-1000000",
+				exit_code: 137,
+			},
+		});
 		await assertion;
-		expect(proc.exitCode).toBeNull();
+		expect(proc.exitCode).toBe(137);
 	} finally {
 		acknowledgeDispose();
 		await vi.runAllTimersAsync();

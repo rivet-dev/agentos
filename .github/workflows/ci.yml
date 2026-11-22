@@ -768,6 +768,37 @@ jobs:
         with:
           key: wasm-backend-${{ matrix.backend }}
       - run: pnpm install --frozen-lockfile
+      - name: Install native protocol fixture prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends g++-14 pkg-config openssh-server curl
+          sudo mkdir -p /run/sshd
+          /usr/bin/curl --version | grep -w sftp
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: curl-protocol-fixtures
+        with:
+          path: ${{ runner.temp }}/agentos-curl-protocol-fixtures
+          key: native-curl-protocol-v1-${{ runner.os }}-${{ runner.arch }}-gcc14-${{ hashFiles('toolchain/c/scripts/build-native-http3-fixture.sh', 'toolchain/c/scripts/check-generation-limit.sh') }}
+      - name: Build pinned native HTTP/3 fixtures
+        if: steps.curl-protocol-fixtures.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        env:
+          PREFIX: ${{ runner.temp }}/agentos-http3
+          CACHE_DIR: ${{ runner.temp }}/agentos-http3-sources
+          JOBS: '4'
+          NATIVE_CC: gcc-14
+          NATIVE_CXX: g++-14
+        run: |
+          bash toolchain/c/scripts/build-native-http3-fixture.sh
+          mkdir -p "$RUNNER_TEMP/agentos-curl-protocol-fixtures"
+          cp -L "$PREFIX/bin/curl" "$PREFIX/bin/nghttpx" "$RUNNER_TEMP/agentos-curl-protocol-fixtures/"
+      - name: Select native protocol fixtures
+        run: |
+          fixture_dir="$RUNNER_TEMP/agentos-curl-protocol-fixtures"
+          "$fixture_dir/curl" --version | grep -w HTTP3
+          "$fixture_dir/nghttpx" --version
+          printf 'AGENTOS_NATIVE_HTTP3_CURL=%s/curl\nAGENTOS_NGHTTPX_HTTP3_SERVER=%s/nghttpx\n' "$fixture_dir" "$fixture_dir" >> "$GITHUB_ENV"
+          printf 'SSHD=/usr/sbin/sshd\nAGENTOS_NATIVE_SSH_CURL=/usr/bin/curl\n' >> "$GITHUB_ENV"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-commands

@@ -374,6 +374,11 @@ const CASES: Case[] = [
 			await ctx.waitForScreen("#READY tag=sigint");
 			await ctx.writeShell("\x03");
 			const status = await ctx.waitShellStatus();
+			// Process exit does not flush xterm's asynchronous write queue.
+			// Observe the existing final marker before capturing the screen.
+			if (ctx.runtime.name === "js-node") {
+				await ctx.waitForScreen("#DONE id=sigint");
+			}
 			ctx.snapshot("after");
 			// Correct: VINTR is consumed as a signal, so the byte is neither
 			// echoed nor delivered.

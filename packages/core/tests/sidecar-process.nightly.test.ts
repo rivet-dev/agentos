@@ -652,7 +652,7 @@ describe("sidecar process client", () => {
 			driverPath,
 			[
 				"import { Socket } from 'node:net';",
-				"const schema = { name: 'agentos-sidecar', version: 8 };",
+				`const schema = ${JSON.stringify(SIDECAR_PROTOCOL_SCHEMA)};`,
 				"const control = new Socket({ fd: 3, readable: true, writable: true });",
 				"let stdinBuffer = Buffer.alloc(0);",
 				"const writeFrame = (frame) => {",
@@ -677,6 +677,8 @@ describe("sidecar process client", () => {
 				"      respond(frame, {",
 				"        type: 'authenticated',",
 				"        connection_id: 'conn-1',",
+				"        max_frame_bytes: 1048576,",
+				"        max_write_files_entries: 1024,",
 				"      });",
 				"      break;",
 				"    case 'open_session':",
@@ -990,9 +992,12 @@ describe("sidecar process client", () => {
 		}
 	}, 60_000);
 
-	test("NativeKernel wait() drains trailing stdout from short-lived processes", async () => {
+	test("NativeKernel wait() drains trailing stdout and stderr from short-lived processes", async () => {
 		const projectRoot = mkdtempSync(join(tmpdir(), "agentos-fast-exit-"));
 		cleanupPaths.push(projectRoot);
+		// This fixture is a guest-readable project root, not an owner-only host
+		// directory. Keep the normal guest UID and filesystem access checks.
+		chmodSync(projectRoot, 0o755);
 
 		const kernel = createKernel({
 			filesystem: new NodeFileSystem({ root: projectRoot }),
@@ -1011,6 +1016,7 @@ describe("sidecar process client", () => {
 						"console.log('first');",
 						"console.log('second');",
 						"console.log('third');",
+						"console.error('diagnostic');",
 					].join(" "),
 				],
 				{
@@ -1025,7 +1031,7 @@ describe("sidecar process client", () => {
 			const exitCode = await child.wait();
 
 			expect(exitCode).toBe(0);
-			expect(stderr).toBe("");
+			expect(stderr).toBe("diagnostic\n");
 			expect(stdout).toBe("first\nsecond\nthird\n");
 		} finally {
 			await kernel.dispose();
@@ -1878,7 +1884,7 @@ describe("sidecar process client", () => {
 		}
 	}, 60_000);
 
-	test("openShell preserves terminal order and exposes diagnostic stderr", async () => {
+	test("openShell preserves merged PTY output without duplicating guest stderr", async () => {
 		const kernel = createKernel({
 			filesystem: createInMemoryFileSystem(),
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
@@ -1919,9 +1925,7 @@ describe("sidecar process client", () => {
 					value.includes("OUT:hello-shell") &&
 					value.includes("ERR:hello-shell"),
 			});
-			await waitFor(() => stderr, {
-				isReady: (value) => value.includes("ERR:hello-shell"),
-			});
+			expect(await shell.wait()).toBe(0);
 
 			expect(terminal).toContain("OUT:hello-shell");
 			expect(terminal).toContain("ERR:hello-shell");
@@ -1929,9 +1933,9 @@ describe("sidecar process client", () => {
 				terminal.indexOf("ERR:hello-shell"),
 			);
 			expect(terminal.match(/ERR:hello-shell/g)).toHaveLength(1);
-			expect(stderr).toContain("ERR:hello-shell");
-			expect(stderr).not.toContain("OUT:hello-shell");
-			expect(await shell.wait()).toBe(0);
+			// Like a Linux PTY, fd 1 and fd 2 share one terminal stream. Only
+			// non-PTY runtime diagnostics can reach the separate stderr tap.
+			expect(stderr).toBe("");
 		} finally {
 			await kernel.dispose();
 		}

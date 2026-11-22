@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 
 for (const maximum of [2, 4])
-	test(`protocol capacity ${maximum} remains enforced for real parked guest reads`, async () => {
+	test(`parked guest reads complete through bounded protocol admission at capacity ${maximum}`, async () => {
 		const sidecar = await AgentOs.createSidecar({
 			runtime: {
 				protocol: {
@@ -52,12 +52,10 @@ for (const maximum of [2, 4])
 				{ ok: true, body: "done" },
 				{ ok: true, body: "done" },
 			]);
-			if (maximum === 2)
-				expect(results[2]).toMatchObject({
-					ok: false,
-					error: expect.stringMatching(/IN_FLIGHT_REQUEST_LIMIT/),
-				});
-			else expect(results[2], stderr).toEqual({ ok: true, body: "done" });
+			// A full active lane now queues the third request within the sidecar's
+			// bounded FIFO. Native transport controls separately prove queue overflow
+			// and deadline rejection; ordinary temporary contention is not an error.
+			expect(results[2], stderr).toEqual({ ok: true, body: "done" });
 			for (const connection of connections) await connection.close();
 			connections.length = 0;
 			await vm.process.kill(proc.pid);

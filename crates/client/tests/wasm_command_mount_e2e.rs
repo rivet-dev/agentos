@@ -45,22 +45,27 @@ async fn wasm_command_software_mounts_into_vm() {
 }
 
 #[tokio::test]
-async fn every_public_wasm_backend_selector_executes_projected_commands() {
-    if !common::require_sidecar("every_public_wasm_backend_selector_executes_projected_commands") {
+async fn configured_wasm_backend_selectors_execute_projected_commands() {
+    if !common::require_sidecar("configured_wasm_backend_selectors_execute_projected_commands") {
         return;
     }
     let Some(package_dir) = common::coreutils_package_dir() else {
         eprintln!(
-            "skipping every_public_wasm_backend_selector_executes_projected_commands: coreutils package artifacts absent"
+            "skipping configured_wasm_backend_selectors_execute_projected_commands: coreutils package artifacts absent"
         );
         return;
     };
 
-    for backend in [
-        StandaloneWasmBackend::V8,
-        StandaloneWasmBackend::Wasmtime,
-        StandaloneWasmBackend::WasmtimeThreads,
-    ] {
+    // The normal sidecar contains V8 only. Optional Wasmtime qualification
+    // selects its separately built sidecar through the same suite environment.
+    let backends = match common::test_wasm_backend().unwrap_or(StandaloneWasmBackend::V8) {
+        StandaloneWasmBackend::V8 => vec![StandaloneWasmBackend::V8],
+        StandaloneWasmBackend::Wasmtime | StandaloneWasmBackend::WasmtimeThreads => vec![
+            StandaloneWasmBackend::Wasmtime,
+            StandaloneWasmBackend::WasmtimeThreads,
+        ],
+    };
+    for backend in backends {
         let os = AgentOs::create(AgentOsConfig {
             packages: vec![PackageRef {
                 path: package_dir.to_string_lossy().into_owned(),

@@ -3487,9 +3487,11 @@ fn python_javascript_sync_rpc_action(
             let digest = format!("{:x}", Sha256::digest(&contents));
             if bundled_pyodide_file_sha256(file_name) != Some(digest.as_str()) {
                 return Ok(Some(PythonJavascriptSyncRpcAction::Error {
-                    code: "EIO",
+                    // Integrity failures are not POSIX I/O failures. Preserve
+                    // their diagnostic through Node's filesystem error adapter.
+                    code: "ERR_AGENTOS_PYODIDE_INTEGRITY",
                     message: format!(
-                        "EIO: {file_name} does not match the sha256 pinned in pyodide-lock.json, write '{path}'"
+                        "ERR_AGENTOS_PYODIDE_INTEGRITY: {file_name} does not match the sha256 pinned in pyodide-lock.json, write '{path}'"
                     ),
                 }));
             }
@@ -4436,7 +4438,7 @@ mod tests {
         assert!(matches!(
             python_javascript_sync_rpc_action(&PyodidePaths::for_dist(&pyodide), &mut PythonManagedHostFiles::default(), &request)
                 .expect("route cache write"),
-            Some(PythonJavascriptSyncRpcAction::Error { code: "EIO", message })
+            Some(PythonJavascriptSyncRpcAction::Error { code: "ERR_AGENTOS_PYODIDE_INTEGRITY", message })
                 if message.contains("sha256 pinned in pyodide-lock.json")
         ));
         assert!(!super::pyodide_cache_path(&pyodide).join(file_name).exists());

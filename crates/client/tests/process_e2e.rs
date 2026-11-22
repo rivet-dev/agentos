@@ -1011,8 +1011,8 @@ async fn stdin_written_right_after_spawn_arrives_in_order() {
 }
 
 /// A language process that exits while another process floods stdout reports its real exit status
-/// when the VM is disposed. Its exit event queues behind the flood on the event lane, so only the
-/// dispose response's list of finished executions can deliver it.
+/// when the VM is disposed. Observe authoritative termination before disposal: a host sleep does
+/// not prove the guest timer has run while another process floods the event lane.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_process_that_exits_behind_an_output_flood_reports_its_exit_status_on_shutdown() {
     const TEST: &str =
@@ -1023,7 +1023,7 @@ async fn a_process_that_exits_behind_an_output_flood_reports_its_exit_status_on_
     let os = common::new_vm().await;
     let flood = os
         .spawn_javascript(
-            "for (let i = 0; i < 50000; i++) console.log('flood ' + i); setInterval(() => {}, 1000)",
+            "process.on('SIGTERM', () => {}); require('node:fs').writeFileSync('/tmp/flood-ready', '1'); for (let i = 0; i < 50000; i++) console.log('flood ' + i); setInterval(() => {}, 1000)",
             agentos_client::LanguageSpawnOptions::default(),
         )
         .await
@@ -1032,6 +1032,17 @@ async fn a_process_that_exits_behind_an_output_flood_reports_its_exit_status_on_
         let os = os.clone();
         tokio::spawn(async move { os.wait_process(flood.pid).await })
     };
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !os
+            .exists("/tmp/flood-ready")
+            .await
+            .expect("flood readiness")
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("flood installed its SIGTERM handler before disposal");
     let exits = os
         .spawn_javascript(
             "setTimeout(() => process.exit(3), 100)",
@@ -1043,8 +1054,29 @@ async fn a_process_that_exits_behind_an_output_flood_reports_its_exit_status_on_
         let os = os.clone();
         tokio::spawn(async move { os.wait_process(exits.pid).await })
     };
-    // Dispose once the exit is due, before the host drains the flood ahead of it.
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // Keep the flood running, but prove the other process really exited before
+    // initiating disposal. A fixed host sleep can kill a guest whose timer has
+    // not run yet and cannot establish the exit-status preservation contract.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if os
+                .all_processes()
+                .await
+                .expect("kernel process snapshot")
+                .iter()
+                .any(|process| {
+                    process.pid == exits.pid
+                        && process.status == agentos_client::ProcessStatus::Exited
+                        && process.exit_code == Some(3)
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("guest exit must be confirmed while the flood is still running");
     tokio::time::timeout(std::time::Duration::from_secs(30), os.shutdown())
         .await
         .expect("bounded VM cleanup")
@@ -1057,7 +1089,7 @@ async fn a_process_that_exits_behind_an_output_flood_reports_its_exit_status_on_
         matches!(exit, Ok(3)),
         "a process that exited with 3 just before dispose reported {exit:?}"
     );
-    // The flood was still running, so the dispose killed it: SIGKILL is exit status 137.
+    // The flood explicitly ignores SIGTERM, so disposal must escalate to SIGKILL (137).
     let flood_exit = tokio::time::timeout(std::time::Duration::from_secs(10), flood_waiter)
         .await
         .expect("the flood's wait settles once the VM is disposed")

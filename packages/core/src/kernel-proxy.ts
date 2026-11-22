@@ -1162,8 +1162,8 @@ export class SidecarKernelProxy {
 				}
 			},
 			onStderr: (chunk) => {
-				// `onData` is the ordered PTY rendering stream. `onStderr` remains an
-				// optional channel-specific diagnostic tap and must not also be rendered.
+				// Guest fd 1 and fd 2 share the ordered PTY stream. Non-PTY runtime
+				// diagnostics can still arrive here; do not render the tap a second time.
 				for (const handler of terminalHandlers) {
 					handler(chunk);
 				}

@@ -31,7 +31,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-const hasWasmDuckDB = existsSync(resolve(C_BUILD_DIR, 'duckdb'));
+const hasWasmDuckDB = [COMMANDS_DIR, C_BUILD_DIR].some(directory => existsSync(resolve(directory, 'duckdb')));
 const hasWasmCurl =
   (existsSync(resolve(COMMANDS_DIR, 'curl')) || existsSync(resolve(C_BUILD_DIR, 'curl')));
 

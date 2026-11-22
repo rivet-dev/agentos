@@ -5280,6 +5280,9 @@ where
                 continue;
             };
             if child_path.is_empty() {
+                // Adopted children no longer pass through the ordinary root pump.
+                // Service their parked reads/polls on the same readiness wake.
+                self.recheck_root_deferred_operations(vm_id, &root_process_id, false)?;
                 loop {
                     if host_services
                         .len()
@@ -5354,14 +5357,15 @@ where
                         normalize_child_public_event(process, event)?
                     };
                     match event {
-                        ActiveExecutionEvent::Stdout(chunk) => {
+                        event @ (ActiveExecutionEvent::Stdout(_)
+                        | ActiveExecutionEvent::RoutedStdout(_)) => {
                             let envelope = ProcessEventEnvelope {
                                 connection_id,
                                 session_id,
                                 vm_id: vm_id.to_owned(),
                                 child_path: Vec::new(),
                                 process_id: detached_process_id.clone(),
-                                event: ActiveExecutionEvent::Stdout(chunk),
+                                event,
                             };
                             if let ProcessEventOffer::Paused(envelope) =
                                 self.offer_pending_process_event(envelope)?
@@ -5386,14 +5390,15 @@ where
                             drop(reservation);
                             emitted_any = true;
                         }
-                        ActiveExecutionEvent::Stderr(chunk) => {
+                        event @ (ActiveExecutionEvent::Stderr(_)
+                        | ActiveExecutionEvent::RoutedStderr(_)) => {
                             let envelope = ProcessEventEnvelope {
                                 connection_id,
                                 session_id,
                                 vm_id: vm_id.to_owned(),
                                 child_path: Vec::new(),
                                 process_id: detached_process_id.clone(),
-                                event: ActiveExecutionEvent::Stderr(chunk),
+                                event,
                             };
                             if let ProcessEventOffer::Paused(envelope) =
                                 self.offer_pending_process_event(envelope)?
@@ -14196,6 +14201,218 @@ pub(super) mod child_event_claim_tests {
                     }),
                     "the exit may be claimed only after the stdout relay releases"
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adopted_detached_child_keeps_inflight_completion_locator() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) = sidecar_with_test_vm(4).await;
+                let id = "root/detached".to_owned();
+                let (connection_id, session_id) = {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    let child =
+                        host_function_process(&mut vm, "detached", None).with_detached(true);
+                    vm.active_processes.insert(id.clone(), child);
+                    vm.detached_child_processes.insert(id.clone());
+                    (vm.connection_id.clone(), vm.session_id.clone())
+                };
+                let envelope = ProcessEventEnvelope {
+                    connection_id,
+                    session_id,
+                    vm_id: vm_id.clone(),
+                    process_id: "root".into(),
+                    child_path: vec!["detached".into()],
+                    event: ActiveExecutionEvent::DeferredPosixPollWake,
+                };
+                assert!(sidecar
+                    .route_received_internal_process_event(envelope)
+                    .unwrap()
+                    .is_none());
+                let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                let child = vm.active_processes.get_mut(&id).unwrap();
+                let queued = child
+                    .lease_pending_execution_event()
+                    .expect("completion follows adopted owner");
+                assert!(matches!(
+                    queued.event(),
+                    ActiveExecutionEvent::DeferredPosixPollWake
+                ));
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn detached_rpc_prepared_before_adoption_uses_current_owner() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) = sidecar_with_test_vm(4).await;
+                let (generation, pid) = {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    let mut parent = host_function_process(&mut vm, "parent", None);
+                    let child = host_function_process(&mut vm, "detached", Some(parent.kernel_pid))
+                        .with_detached(true);
+                    let identity = (vm.generation, child.kernel_pid);
+                    parent.child_processes.insert("child".into(), child);
+                    vm.active_processes.insert("parent".into(), parent);
+                    identity
+                };
+                let reply = DirectHostReplyHandle::new(
+                    HostCallIdentity {
+                        generation,
+                        pid,
+                        call_id: 1,
+                    },
+                    Arc::new(TestReply),
+                    1024,
+                )
+                .unwrap();
+                let vm_handle = sidecar.vms.handle(&vm_id).unwrap();
+                let work = sidecar.prepare_owned_host_rpc(
+                    &vm_id,
+                    "parent",
+                    &["child".into()],
+                    vm_handle,
+                    ExecutionHostCall {
+                        request: HostRpcRequest {
+                            id: 1,
+                            method: "fs.writeFileSync".into(),
+                            args: vec![json!("/rpc-survived"), host_bytes_value(b"alive")],
+                            raw_bytes_args: Default::default(),
+                        },
+                        reply: reply.clone(),
+                    },
+                );
+                // The service has admission but has not been polled when the parent exits.
+                {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    let mut parent = vm.active_processes.remove("parent").unwrap();
+                    for (id, child) in VmManager::<LocalBridge>::adopt_detached_child_processes(
+                        "parent",
+                        &mut parent,
+                    ) {
+                        vm.detached_child_processes.insert(id.clone());
+                        vm.active_processes.insert(id, child);
+                    }
+                }
+                work.await.unwrap();
+                assert!(reply.is_terminal());
+                let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                assert_eq!(
+                    vm.kernel
+                        .read_file_for_process(EXECUTION_DRIVER_NAME, pid, "/rpc-survived")
+                        .unwrap(),
+                    b"alive"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn output_envelope_chunks_preserve_bytes_and_backpressure() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) = sidecar_with_test_vm(1).await;
+                let (connection_id, session_id) = {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    vm.limits.process.pending_event_bytes = 1024;
+                    (vm.connection_id.clone(), vm.session_id.clone())
+                };
+                let data = (0..4096).map(|i| (i % 251) as u8).collect::<Vec<_>>();
+                let mut next = Some(ProcessEventEnvelope {
+                    connection_id,
+                    session_id,
+                    vm_id: vm_id.clone(),
+                    process_id: "root".into(),
+                    child_path: Vec::new(),
+                    event: ActiveExecutionEvent::RoutedStdout(data.clone()),
+                });
+                let mut received = Vec::new();
+                while let Some(event) = next.take() {
+                    next = match sidecar.offer_pending_process_event(event).unwrap() {
+                        ProcessEventOffer::Queued => None,
+                        ProcessEventOffer::Paused(tail) => Some(*tail),
+                    };
+                    if let Some(tail) = next.take() {
+                        next = match sidecar.offer_pending_process_event(tail).unwrap() {
+                            ProcessEventOffer::Paused(tail) => Some(*tail),
+                            ProcessEventOffer::Queued => {
+                                panic!("full queue must retain the suffix")
+                            }
+                        };
+                    }
+                    let event = sidecar.pending_process_events.take_next(|_| true).unwrap();
+                    assert!(event.retained_bytes() <= 1024);
+                    match event.event {
+                        ActiveExecutionEvent::RoutedStdout(bytes) => received.extend(bytes),
+                        _ => panic!("output kind changed"),
+                    }
+                    sidecar.observe_pending_process_event_depth();
+                }
+                assert_eq!(received, data);
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adopted_detached_output_stays_public_and_ordered_under_backpressure() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) = sidecar_with_test_vm(1).await;
+                let id = "root/detached".to_owned();
+                {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    let mut child =
+                        host_function_process(&mut vm, "detached", None).with_detached(true);
+                    for event in [
+                        ActiveExecutionEvent::RoutedStdout(b"out".to_vec()),
+                        ActiveExecutionEvent::RoutedStderr(b"err".to_vec()),
+                        ActiveExecutionEvent::Exited(0),
+                    ] {
+                        child.queue_pending_execution_event(event).unwrap();
+                    }
+                    vm.active_processes.insert(id.clone(), child);
+                    vm.detached_child_processes.insert(id.clone());
+                }
+                let mut services = Vec::new();
+                let mut relays = Vec::new();
+                for phase in 0..3 {
+                    sidecar
+                        .pump_detached_child_process_events_nowait(
+                            &vm_id,
+                            &mut services,
+                            &mut relays,
+                            1,
+                        )
+                        .unwrap();
+                    assert!(
+                        services.is_empty(),
+                        "public output must never become an internal host service"
+                    );
+                    assert!(relays.is_empty());
+                    // With the one-slot public queue occupied, the next event stays at its source.
+                    sidecar
+                        .pump_detached_child_process_events_nowait(
+                            &vm_id,
+                            &mut services,
+                            &mut relays,
+                            1,
+                        )
+                        .unwrap();
+                    assert!(services.is_empty());
+                    assert_eq!(sidecar.pending_process_events.len(), 1);
+                    let event = sidecar.pending_process_events.take_next(|_| true).unwrap();
+                    assert_eq!(event.process_id, id);
+                    match (phase, event.event) {
+                        (0, ActiveExecutionEvent::RoutedStdout(bytes)) => assert_eq!(bytes, b"out"),
+                        (1, ActiveExecutionEvent::RoutedStderr(bytes)) => assert_eq!(bytes, b"err"),
+                        (2, ActiveExecutionEvent::Exited(0)) => {}
+                        (_, other) => panic!("unexpected detached event: {other:?}"),
+                    }
+                    sidecar.observe_pending_process_event_depth();
+                }
             })
             .await;
     }

@@ -11,9 +11,9 @@
 //! the wire, while the public boundary keeps the synthetic `shell-N` id.
 //!
 //! Stream routing mirrors the TS PTY path: the public `data` stream (`on_shell_data`) carries stdout
-//! and stderr in the order received from the sidecar. stderr is also delivered on an optional
-//! channel-specific diagnostic tap (`on_shell_stderr` + [`OpenShellOptions::on_stderr`]); terminal
-//! renderers consume only `data` so prompts and control sequences are neither reordered nor doubled.
+//! and stderr merged by the PTY. The optional diagnostic tap (`on_shell_stderr` +
+//! [`OpenShellOptions::on_stderr`]) receives only explicitly stderr-labelled sidecar events;
+//! it cannot recover descriptor identity from merged PTY bytes. Renderers consume only `data`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -381,8 +381,8 @@ impl AgentOs {
     /// pending-shell-exit set so `dispose` can drain it (two-phase teardown).
     ///
     /// Stdout and stderr are fanned into the shell's ordered `data` broadcast (`on_shell_data`).
-    /// Stderr is also fanned into a dedicated diagnostic broadcast (`on_shell_stderr` and the
-    /// [`OpenShellOptions::on_stderr`] callback); terminal renderers should consume only `data`.
+    /// The PTY merges both descriptors. Only explicitly stderr-labelled sidecar events also reach
+    /// `on_shell_stderr` and [`OpenShellOptions::on_stderr`]; renderers should consume only `data`.
     pub fn open_shell(&self, mut options: OpenShellOptions) -> Result<ShellHandle> {
         let inner = self.inner();
         if inner.disposed.load(Ordering::SeqCst) {
@@ -556,7 +556,7 @@ impl AgentOs {
                         // control sequences retain their original stdout/stderr order.
                         let _ = data_tx.send(output.chunk.clone());
                         if output.channel == StreamChannel::Stderr {
-                            // Channel identity remains available as an optional diagnostic tap.
+                            // Forward only explicit diagnostic events, never guess from PTY bytes.
                             let _ = stderr_tx.send(output.chunk);
                         }
                     }
@@ -1073,7 +1073,7 @@ impl AgentOs {
 
     /// Subscribe to a shell's stderr. SYNC register; multi-handler; dropping the returned stream is
     /// the unsubscribe. This is the optional diagnostic channel backing the TS `onStderr` option;
-    /// stderr is also present once in ordered `on_shell_data`. Errors with
+    /// the PTY normally merges stderr into `on_shell_data`, leaving this tap empty. Errors with
     /// [`ClientError::ShellNotFound`].
     pub fn on_shell_stderr(
         &self,

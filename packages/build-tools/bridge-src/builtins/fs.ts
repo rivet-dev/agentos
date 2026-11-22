@@ -554,6 +554,7 @@ var FileHandle = class _FileHandle {
 			throwIfAborted(signal);
 			const chunk = import_buffer.Buffer.alloc(FILE_HANDLE_READ_CHUNK_BYTES);
 			const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, null);
+			throwIfAborted(signal);
 			if (bytesRead === 0) {
 				break;
 			}
@@ -2695,12 +2696,16 @@ function toNodeFsError(err, syscall, path) {
 	const description =
 		POSIX_ERROR_DESCRIPTIONS[code] ?? code.slice(1).toLowerCase();
 	const target = typeof path === "string" ? ` '${path}'` : "";
-	return createFsError(
+	const error = createFsError(
 		code,
 		`${code}: ${description}, ${syscall}${target}`,
 		syscall,
 		typeof path === "string" ? path : undefined,
 	);
+	// Preserve the kernel diagnostic (including configured resource limits)
+	// while exposing Node-compatible errno, syscall and path fields.
+	error.cause = err;
+	return error;
 }
 // Like Node, `filter(src, dest)` runs before the pair is validated, and a false
 // result skips that path and everything under it.

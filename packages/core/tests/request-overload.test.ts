@@ -169,7 +169,7 @@ test("dispose with a running process completes while held requests fill every in
 	]);
 	// Settles during dispose, so capture the outcome before anything awaits it.
 	const workerExit = target.process.wait(worker.pid).then(
-		() => null,
+		(exit) => exit,
 		(error: unknown) => error,
 	);
 
@@ -197,8 +197,14 @@ test("dispose with a running process completes while held requests fill every in
 	vms.splice(vms.indexOf(target), 1);
 
 	expect(disposedAt).toBeLessThan(firstHeldResponseAt);
-	// The worker's wait settles with the disposal instead of hanging.
-	expect(String(await workerExit)).toMatch(/VM disposed/);
+	// Disposal preserves the sidecar's observed terminal status, even while
+	// ordinary request slots are full; it must not invent a wait failure.
+	expect(await workerExit).toMatchObject({
+		pid: worker.pid,
+		outcome: "signalled",
+		exitCode: 143,
+		exitSignal: 15,
+	});
 	const results = await held;
 	expect(results.map((result) => result.status)).toEqual(
 		results.map(() => "fulfilled"),

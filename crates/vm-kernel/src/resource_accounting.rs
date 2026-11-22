@@ -781,7 +781,7 @@ impl ResourceAccountant {
         if let Some(limit) = self.limits.max_recursive_fs_entries {
             if entries > limit {
                 return Err(ResourceError::out_of_memory(format!(
-                    "recursive filesystem operation with {entries} entries exceeds configured limit {limit}"
+                    "recursive filesystem operation with {entries} entries exceeds configured limit {limit}; raise limits.resources.maxRecursiveFsEntries when creating the VM"
                 )));
             }
         }

@@ -57,6 +57,14 @@ import { brotliCompressSync, gzipSync, zstdCompressSync } from 'node:zlib';
 // The Rust fallback in COMMANDS_DIR supports a smaller flag surface.
 const hasHttpGetTest = hasWasmBinaries && existsSync(resolve(C_BUILD_DIR, 'http_get_test'));
 const CURL_BIN_DIR = resolve(import.meta.dirname, '../bin');
+const toolchainMakefile = readFileSync(resolve(import.meta.dirname, '../../../toolchain/c/Makefile'), 'utf8');
+function pinnedToolVersion(name: string): string {
+  const version = toolchainMakefile.match(new RegExp(`^${name} := ([0-9.]+)$`, 'm'))?.[1];
+  if (!version) throw new Error(`Missing toolchain version pin: ${name}`);
+  return version;
+}
+const CURL_RELEASE_VERSION = pinnedToolVersion('CURL_RELEASE_VERSION');
+const OPENSSL_VERSION = pinnedToolVersion('OPENSSL_VERSION');
 const hasCurl = hasCWasmBinaries('curl') || existsSync(resolve(CURL_BIN_DIR, 'curl'));
 const runExternalNetwork = process.env.AGENTOS_E2E_NETWORK === '1';
 const EXTERNAL_HOST = 'example.com';
@@ -651,7 +659,7 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
     await createKernelWithNet();
     const result = await kernel.exec('curl --version');
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('curl 8.11.1');
+    expect(result.stdout).toContain(`curl ${CURL_RELEASE_VERSION}`);
     expect(result.stdout).toMatch(/Protocols:/);
   }, CURL_TEST_TIMEOUT_MS);
 
@@ -850,13 +858,13 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
     expect(Date.now() - startedAt).toBeLessThan(CURL_PROMPT_EXIT_BOUND_MS);
   }, CURL_TEST_TIMEOUT_MS);
 
-  itIf(hasCurl, 'curl --version reports the mbedTLS backend', async () => {
+  itIf(hasCurl, 'curl --version reports the pinned OpenSSL backend', async () => {
     await createKernelWithNet();
     const result = await kernel.exec('curl --version');
     expect(result.exitCode).toBe(0);
-    // Real in-guest TLS: the SSL version line must name mbedTLS, and the
+    // Real in-guest TLS: the SSL version line must name the pinned OpenSSL backend, and the
     // retired host shim string must be gone.
-    expect(result.stdout).toMatch(/mbedTLS/i);
+    expect(result.stdout).toContain(`OpenSSL/${OPENSSL_VERSION}`);
     expect(result.stdout).not.toMatch(/WASI-TLS|wasi-tls/i);
     expect(result.stdout).toMatch(/^Features:.*\bSSL\b/m);
     expect(result.stdout).toMatch(/^Features:.*\bbrotli\b/m);

@@ -177,12 +177,14 @@ describe("process-tree identity", () => {
 			client,
 			session: {},
 			vm: {},
+			processSnapshotRefresh: null,
+			sidecarProcessSnapshot: [],
 			trackedProcesses: new Map([[tracked.pid, tracked]]),
 			trackedProcessesById: new Map([[tracked.processId, tracked]]),
 			observedProcessStartTimes: new Map(),
 			processes: new Map(),
 		});
-		const records = await proxy.snapshotProcessTopology();
+		const records = await proxy.currentProcessTopology();
 		expect(records).toHaveLength(2);
 		expect(records.map((record) => record.info.pid)).toEqual([
 			1_000_000, 1_000_000,
@@ -259,31 +261,26 @@ it.each([
 		code: "ERR_AGENTOS_VM_LIFECYCLE_CONFLICT",
 		retryable: true,
 		errno: "EAGAIN",
-		retry: true,
 	},
 	{
 		code: "ERR_AGENTOS_VM_LIFECYCLE_CONFLICT",
 		retryable: false,
 		errno: "EAGAIN",
-		retry: false,
 	},
 	{
 		code: "ERR_AGENTOS_OTHER_FAILURE",
 		retryable: true,
 		errno: "EAGAIN",
-		retry: false,
 	},
 	{
 		code: "ERR_AGENTOS_VM_LIFECYCLE_CONFLICT",
 		retryable: true,
 		errno: "EIO",
-		retry: false,
 	},
-])("process exit observation retries only explicit lifecycle backpressure ($code,$retryable,$errno)", async ({
+])("event-driven process wait preserves typed failures without polling ($code,$retryable,$errno)", async ({
 	code,
 	retryable,
 	errno,
-	retry,
 }) => {
 	vi.useFakeTimers();
 	try {
@@ -310,8 +307,8 @@ it.each([
 			started: true,
 			exitCode: null as number | null,
 			waitError: null as unknown,
-			waitWithFallbackPromise: null,
-			wakeWait: null,
+			waitPromise: null,
+			wakeWait: null as (() => void) | null,
 			hostExitObservedAt: null,
 			confirmExit(code: number) {
 				this.exitCode = code;
@@ -349,20 +346,87 @@ it.each([
 			(code: number) => ({ code }),
 			(error: unknown) => ({ error }),
 		);
-		await vi.advanceTimersByTimeAsync(50);
-		if (!retry) {
-			expect(await outcome).toEqual({ error: blocked });
-			expect(handleBackgroundProcessError).toHaveBeenCalledWith(entry, blocked);
-			expect(getProcessSnapshot).toHaveBeenCalledTimes(1);
-			expect(finishProcess).not.toHaveBeenCalled();
-			return;
-		}
+		await vi.advanceTimersByTimeAsync(500);
+		expect(getProcessSnapshot).not.toHaveBeenCalled();
 		expect(entry.waitError).toBeNull();
-		expect(handleBackgroundProcessError).not.toHaveBeenCalled();
-		await vi.advanceTimersByTimeAsync(50);
-		expect(await outcome).toEqual({ code: 23 });
-		expect(getProcessSnapshot).toHaveBeenCalledTimes(2);
-		expect(finishProcess).toHaveBeenCalledWith(entry, 23, null);
+		entry.waitError = blocked;
+		entry.wakeWait?.();
+		expect(await outcome).toEqual({ error: blocked });
+		expect(getProcessSnapshot).not.toHaveBeenCalled();
+		expect(finishProcess).not.toHaveBeenCalled();
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+it("process wait coalesces until the ordered exit event without snapshot polling", async () => {
+	const entry = {
+		exitCode: null as number | null,
+		waitError: null,
+		waitPromise: null,
+		wakeWait: null as (() => void) | null,
+	};
+	const getProcessSnapshot = vi.fn();
+	const proxy = Object.assign(Object.create(SidecarKernelProxy.prototype), {
+		disposed: false,
+		disposing: false,
+		client: { getProcessSnapshot },
+	});
+	const first = proxy.waitForTrackedProcess(entry);
+	expect(proxy.waitForTrackedProcess(entry)).toBe(first);
+	let settled = false;
+	void first.then(() => {
+		settled = true;
+	});
+	await Promise.resolve();
+	expect(settled).toBe(false);
+	expect(getProcessSnapshot).not.toHaveBeenCalled();
+	entry.exitCode = 23;
+	entry.wakeWait?.();
+	expect(await first).toBe(23);
+});
+
+it.each([
+	true,
+	false,
+])("process wait lets bounded disposal finish before deciding exit proof (%s)", async (confirmed) => {
+	vi.useFakeTimers();
+	try {
+		const entry = {
+			pid: 1,
+			exitCode: null as number | null,
+			waitError: null as Error | null,
+			waitPromise: null,
+			wakeWait: null as (() => void) | null,
+		};
+		const proxy = Object.assign(Object.create(SidecarKernelProxy.prototype), {
+			disposed: false,
+			disposing: false,
+		});
+		const wait = proxy.waitForTrackedProcess(entry);
+		let settled = false;
+		const result = wait.then(
+			(code: number) => {
+				settled = true;
+				return { code };
+			},
+			(error: Error) => {
+				settled = true;
+				return { error };
+			},
+		);
+		proxy.disposed = true;
+		proxy.disposing = true;
+		entry.wakeWait?.();
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(settled).toBe(false);
+		proxy.disposing = false;
+		if (confirmed) entry.exitCode = 143;
+		else entry.waitError = new Error("termination unconfirmed");
+		entry.wakeWait?.();
+		expect(await result).toEqual(
+			confirmed ? { code: 143 } : { error: entry.waitError },
+		);
 	} finally {
 		vi.useRealTimers();
 	}

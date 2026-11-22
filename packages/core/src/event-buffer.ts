@@ -142,17 +142,31 @@ export class SidecarEventBuffer<TEvent extends LiveSidecarEventFrame> {
 	}
 
 	buffer(event: TEvent): SidecarEventBufferOverflow | null {
-		// `disposed` is the last event the sidecar emits for a VM. Nothing can
-		// claim that VM's unclaimed events afterwards, so release them instead of
-		// holding them for the sidecar's lifetime.
 		if (
 			event.payload.type === "vm_lifecycle" &&
 			event.payload.state === "disposed" &&
 			event.ownership.scope === "vm"
 		) {
-			this.releaseOwner(event.ownership);
-			return null;
+			let hasPendingData = false;
+			for (const [id, record] of this.bufferedEvents) {
+				if (
+					!ownershipMatchesSelector(event.ownership, record.event.ownership)
+				) {
+					continue;
+				}
+				if (record.event.payload.type === "vm_lifecycle") {
+					this.remove(id);
+				} else {
+					hasPendingData = true;
+				}
+			}
+			// Unclaimed lifecycle-only history ends here. A pending data backlog
+			// still needs the terminal marker after its output/completion events.
+			if (!hasPendingData) return null;
 		}
+		// A terminal event can arrive in the same transport turn as final output
+		// and exit. Keep the ordered backlog until its consumer drains it; receipt
+		// of `disposed` does not mean the consumer has observed those events.
 		if (this.bufferedEvents.size >= this.capacity) {
 			return new SidecarEventBufferOverflow({
 				capacity: this.capacity,
@@ -196,22 +210,6 @@ export class SidecarEventBuffer<TEvent extends LiveSidecarEventFrame> {
 			return this.remove(eventId);
 		}
 		return null;
-	}
-
-	private releaseOwner(ownership: LiveOwnershipScope): void {
-		const queue = this.bufferedEventQueues.get(ANY_BUFFERED_EVENT_KEY);
-		if (!queue) {
-			return;
-		}
-		for (const eventId of [...queue]) {
-			const record = this.bufferedEvents.get(eventId);
-			if (
-				record &&
-				ownershipMatchesSelector(ownership, record.event.ownership)
-			) {
-				this.remove(eventId);
-			}
-		}
 	}
 
 	private takeFromKey(key: string): TEvent | null {

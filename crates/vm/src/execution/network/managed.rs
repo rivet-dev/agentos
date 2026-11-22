@@ -75,9 +75,10 @@ pub(in crate::execution) fn service_managed_network_operation(
             socket_id,
             options_json,
         } => managed_tls_upgrade(context, socket_id.as_str(), options_json.as_str()),
-        crate::executor::host::NetworkOperation::ManagedCloseListener { listener_id } => {
-            managed_close_listener(context, listener_id.as_str())
-        }
+        crate::executor::host::NetworkOperation::ManagedCloseListener {
+            listener_id,
+            unlink_path,
+        } => managed_close_listener(context, listener_id.as_str(), unlink_path),
         crate::executor::host::NetworkOperation::ManagedAccept { listener_id } => {
             managed_accept(context, listener_id.as_str())
         }
@@ -361,6 +362,7 @@ fn managed_tls_upgrade(
 fn managed_close_listener(
     context: ManagedNetworkServiceContext<'_>,
     listener_id: &str,
+    unlink_path: bool,
 ) -> Result<HostServiceResponse, VmError> {
     if let Some(listener) = context.process.tcp_listeners.remove(listener_id) {
         release_tcp_listener_handle(
@@ -401,6 +403,15 @@ fn managed_close_listener(
         &context.socket_paths.unix_bound_addresses,
         &listener.registry_binding_id,
     )?;
+    if unlink_path {
+        if let Some(path) = listener.guest_node_path.as_deref() {
+            match context.kernel.remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.code() == "ENOENT" => {}
+                Err(error) => return Err(kernel_error(error)),
+            }
+        }
+    }
     let completion = listener.close();
     let deadline = reactor_io_limits(&context.process.limits).operation_deadline;
     let listener_id = listener_id.to_owned();

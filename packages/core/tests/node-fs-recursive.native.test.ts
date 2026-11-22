@@ -25,7 +25,7 @@ async function run(limits: Record<string, number> = {}, denied = false) {
 			});
 		let stdout = "",
 			stderr = "";
-		const source = `const fs=require('node:fs');(async()=>{const opts={recursive:true,withFileTypes:true};const rows=e=>e.filter(x=>x.isFile()).map(x=>x.parentPath.replace('/tmp/tree','')+'/'+x.name).sort();try{console.log(JSON.stringify({sync:rows(fs.readdirSync('/tmp/tree',opts)),async:rows(await fs.promises.readdir('/tmp/tree',opts)),names:fs.readdirSync('/tmp/tree',{recursive:true}).sort()}));}catch(e){console.log(JSON.stringify({code:e.code,message:e.message}));}})();`;
+		const source = `const fs=require('node:fs');(async()=>{const opts={recursive:true,withFileTypes:true};const rows=e=>e.filter(x=>x.isFile()).map(x=>x.parentPath.replace('/tmp/tree','')+'/'+x.name).sort();try{console.log(JSON.stringify({sync:rows(fs.readdirSync('/tmp/tree',opts)),async:rows(await fs.promises.readdir('/tmp/tree',opts)),names:fs.readdirSync('/tmp/tree',{recursive:true}).sort()}));}catch(e){console.log(JSON.stringify({code:e.code,message:e.message,cause:e.cause?.message}));}})();`;
 		const p = await vm.process.spawn("node", ["-e", source], {
 			timeoutMs: 10000,
 			onStdout: (b) => (stdout += Buffer.from(b).toString()),
@@ -46,7 +46,9 @@ test("recursive directory reads include nested names and correct Dirent parents 
 	});
 }, 15000);
 test("recursive directory reads retain the configured traversal quota", async () => {
-	expect((await run({ maxRecursiveFsEntries: 2 })).message).toMatch(
+	const result = await run({ maxRecursiveFsEntries: 2 });
+	expect(result.code).toBe("ENOMEM");
+	expect(result.cause).toMatch(
 		/maxRecursiveFsEntries|recursive.*entries|limit/i,
 	);
 }, 15000);

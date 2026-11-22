@@ -10,6 +10,9 @@ function isExpectedTeardownError(message: string): boolean {
 	const normalized = message.toLowerCase();
 	return (
 		normalized.includes("err_agentos_request_admission_closed") ||
+		normalized.includes("err_agentos_coordinator_not_found") ||
+		normalized.includes("err_agentos_coordinator_closing") ||
+		normalized.includes("err_agentos_coordinator_cancelled") ||
 		normalized.includes("unknown sidecar vm") ||
 		normalized.includes("already been disposed") ||
 		normalized.includes("sidecar disposed") ||

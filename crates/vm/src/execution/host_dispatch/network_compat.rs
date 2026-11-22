@@ -1289,6 +1289,7 @@ fn retire_managed_description_routes<B>(
                             continue;
                         }
                     },
+                    unlink_path: false,
                 },
             ),
             ManagedHostNetRoute::UdpSocket(socket_id) => service_managed_udp_operation(
@@ -1677,6 +1678,7 @@ pub(super) fn decode_managed(
         },
         "net.server_close" => NetworkOperation::ManagedCloseListener {
             listener_id: id(0, "listener id")?,
+            unlink_path: optional_bool(request, 1, "unlink pathname")?,
         },
         "net.socket_upgrade_tls" => {
             let options = javascript_sync_rpc_arg_str(&request.args, 1, "TLS options")?;
@@ -5786,6 +5788,22 @@ mod managed_tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn managed_listener_close_preserves_explicit_path_unlink() {
+        for flag in [None, Some(false), Some(true)] {
+            let mut close = request("net.server_close");
+            if let Some(flag) = flag {
+                close.args.push(json!(flag));
+            }
+            assert!(matches!(decode_managed(&close, 1024).unwrap(),
+                Some(NetworkOperation::ManagedCloseListener { unlink_path, .. })
+                    if unlink_path == flag.unwrap_or(false)));
+        }
+        let mut close = request("net.server_close");
+        close.args.push(json!("true"));
+        assert!(decode_managed(&close, 1024).is_err());
     }
 
     #[test]

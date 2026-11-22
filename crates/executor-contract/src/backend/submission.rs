@@ -108,6 +108,11 @@ impl fmt::Debug for ExecutionEventSubmitHandle {
 }
 
 impl ExecutionEventSubmitHandle {
+    /// Fixed retained-byte ceiling for one admitted request, not current free capacity.
+    pub fn request_byte_limit(&self) -> usize {
+        self.queue.retained_bytes.limit.maximum()
+    }
+
     pub fn process(&self) -> HostProcessContext {
         self.process
     }

@@ -2916,6 +2916,12 @@ fn start_wasm_javascript_execution(
         guest_runtime.kernel_stdio = false;
         guest_runtime.kernel_ipc = false;
     }
+    // Restricted WASM processes cannot use process IPC. Do not probe that
+    // capability from the JavaScript host shim before the WASM entrypoint.
+    // The host dispatcher still enforces the permission tier on every call.
+    if request.permission_tier != WasmPermissionTier::Full {
+        guest_runtime.kernel_ipc = false;
+    }
 
     let inline_code = match snapshot_mode {
         WasmSnapshotRunnerMode::Off => {

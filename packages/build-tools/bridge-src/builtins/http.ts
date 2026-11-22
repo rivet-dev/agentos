@@ -5280,6 +5280,12 @@ function attachHttpServerSocket(server, socket) {
 			badBody();
 			return;
 		}
+		// Node HTTP does not keep the writable half open after the peer's EOF.
+		// A response waiting on application work must not retain a dead client.
+		if (current?.bodyDone && !server.httpAllowHalfOpen) {
+			finishSocket();
+			return;
+		}
 		scheduleDispatch();
 	};
 	const onClose = () => {
@@ -5417,7 +5423,10 @@ function attachHttpServerSocket(server, socket) {
 		while (!detached && !socket.destroyed) {
 			if (current) {
 				feedBody();
-				if (current.bodyDone && !current.responseDone) socket.pause();
+				// Pause pipelined bytes, not an empty socket: an empty paused
+				// reader cannot observe cancellation while the response is held.
+				if (current.bodyDone && !current.responseDone && buffer.length > 0)
+					socket.pause();
 				if (!current.bodyDone || !current.responseDone || detached) return;
 				current = null;
 				if (ended && !buffer.length) {

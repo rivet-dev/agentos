@@ -172,6 +172,10 @@ where
         let vm_id = vm_id.to_owned();
         let root_id = root_id.to_owned();
         let path = path.to_vec();
+        let target_label = Self::child_process_path_label(
+            &root_id,
+            &path.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
         let notify = Arc::clone(&self.process_event_notify);
         let sender = self.process_event_sender.clone();
         Box::pin(async move {
@@ -182,6 +186,8 @@ where
                 vm.resources.buffered_bytes_release_generation()
             })?;
             let response = vm.try_command("service admitted compatibility RPC", |vm| {
+                let (root_id, path) = Self::resolve_detached_child_process_path(vm, &target_label)
+                    .ok_or_else(|| VmError::host("ESTALE", "compatibility RPC caller exited"))?;
                 // No `fs.*` method reads the socket path context; skip copying
                 // the mount table and scanning processes on every file call.
                 let socket_paths = if call.request.method.starts_with("fs.") {
@@ -210,6 +216,10 @@ where
                 let root = active_processes.get_mut(&root_id).ok_or_else(|| missing_process_error(&vm_id, &root_id))?;
                 let refs = path.iter().map(String::as_str).collect::<Vec<_>>();
                 let process = Self::active_process_by_path_mut(root, &refs).ok_or_else(|| VmError::host("ESTALE", "compatibility RPC caller exited"))?;
+                let identity = call.reply.identity();
+                if identity.generation != vm.generation || identity.pid != process.kernel_pid {
+                    return Err(VmError::host("ESTALE", "compatibility RPC identity changed before dispatch"));
+                }
                 let mut future = Box::pin(service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
                     bridge: &bridge, vm_id: &vm_id, dns: &dns, socket_paths: socket_paths.as_ref(),
                     kernel, kernel_readiness, process, sync_request: &call.request,
@@ -225,6 +235,9 @@ where
             }).and_then(|response| response);
             let response = if call.request.method == "net.write" {
                 match vm.try_command("route socket write backpressure", |vm| {
+                    let (root_id, path) =
+                        Self::resolve_detached_child_process_path(vm, &target_label)
+                            .ok_or_else(|| VmError::host("ESTALE", "socket write caller exited"))?;
                     route_javascript_net_write_result(
                         vm,
                         sender.clone(),
@@ -297,6 +310,15 @@ where
                 // process-owned socket/capability before replying to the guest,
                 // using the same settlement path as admitted managed calls.
                 vm.try_command("settle compatibility RPC completion", |vm| {
+                    let (root_id, path) =
+                        Self::resolve_detached_child_process_path(vm, &target_label).ok_or_else(
+                            || {
+                                VmError::host(
+                                    "ESTALE",
+                                    "compatibility RPC caller exited before completion",
+                                )
+                            },
+                        )?;
                     let generation = vm.generation;
                     let readiness = Arc::clone(&vm.kernel_socket_readiness);
                     let unix_addresses = Arc::clone(&vm.unix_address_registry);

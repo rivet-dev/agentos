@@ -17,7 +17,7 @@ use agentos_client::AgentOs;
 
 static INIT: Once = Once::new();
 
-fn test_wasm_backend() -> Option<agentos_client::StandaloneWasmBackend> {
+pub fn test_wasm_backend() -> Option<agentos_client::StandaloneWasmBackend> {
     match std::env::var("AGENTOS_TEST_WASM_BACKEND").as_deref() {
         Ok("v8") => Some(agentos_client::StandaloneWasmBackend::V8),
         Ok("wasmtime") => Some(agentos_client::StandaloneWasmBackend::Wasmtime),

@@ -199,6 +199,8 @@ pub enum NetworkOperation {
     },
     ManagedCloseListener {
         listener_id: BoundedString,
+        /// Node closes also remove the guest pathname; POSIX descriptor close does not.
+        unlink_path: bool,
     },
     ManagedTlsUpgrade {
         socket_id: BoundedString,

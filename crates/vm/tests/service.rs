@@ -647,6 +647,33 @@ ykAheWCsAteSEWVc0w==\n\
             }
         }
 
+        fn owned_test_process_events(
+            sidecar: &mut VmManager<RecordingBridge>,
+        ) -> impl Fn(usize) -> ProcessEventEnvelope {
+            let (connection_id, session_id) =
+                authenticate_and_open_session(sidecar).expect("authenticate event owner");
+            let vm_id = create_vm_with_metadata(
+                sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+                BTreeMap::from([(
+                    String::from("limits.process.pendingEventCount"),
+                    MAX_PROCESS_EVENT_QUEUE.to_string(),
+                )]),
+            )
+            .expect("create event owner");
+            move |index| ProcessEventEnvelope {
+                connection_id: connection_id.clone(),
+                session_id: session_id.clone(),
+                vm_id: vm_id.clone(),
+                // Exercise total capacity, including slots reserved for control
+                // events. Output-only admission has its own smaller pool.
+                event: ActiveExecutionEvent::Exited(0),
+                ..test_process_event(index)
+            }
+        }
+
         fn process_event_target_label(envelope: &ProcessEventEnvelope) -> String {
             if envelope.child_path.is_empty() {
                 envelope.process_id.clone()
@@ -883,6 +910,7 @@ ykAheWCsAteSEWVc0w==\n\
                 ..agentos_driver_tokio::DriverProtocolConfig::default()
             };
             let mut sidecar = create_test_sidecar_with_protocol_limits(protocol);
+            let test_process_event = owned_test_process_events(&mut sidecar);
 
             assert_eq!(sidecar.pending_process_events_gauge.capacity(), 2);
             assert_eq!(sidecar.outbound_sidecar_requests_gauge.capacity(), 2);
@@ -960,6 +988,7 @@ ykAheWCsAteSEWVc0w==\n\
 
         fn pending_process_events_are_bounded() {
             let mut sidecar = create_test_sidecar();
+            let test_process_event = owned_test_process_events(&mut sidecar);
 
             for index in 0..MAX_PROCESS_EVENT_QUEUE {
                 sidecar
@@ -978,6 +1007,7 @@ ykAheWCsAteSEWVc0w==\n\
 
         fn process_event_receiver_overflow_preserves_queued_event() {
             let mut sidecar = create_test_sidecar();
+            let test_process_event = owned_test_process_events(&mut sidecar);
 
             for index in 0..MAX_PROCESS_EVENT_QUEUE {
                 sidecar
@@ -992,7 +1022,10 @@ ykAheWCsAteSEWVc0w==\n\
                 .expect("queue process event behind full pending queue");
 
             let error = sidecar
-                .take_matching_process_event_envelope("vm-queue", &expected_process_id)
+                .take_matching_process_event_envelope(
+                    &test_process_event(0).vm_id,
+                    &expected_process_id,
+                )
                 .expect_err("receiver drain should reject overflow before consuming event");
             assert!(
                 error.to_string().contains("process event queue exceeded"),
@@ -1775,6 +1808,7 @@ ykAheWCsAteSEWVc0w==\n\
             )
             .expect("create vm");
             insert_host_function_process(&mut sidecar, &vm_id, "proc-exit");
+            let test_process_event = owned_test_process_events(&mut sidecar);
 
             for index in 0..(MAX_PROCESS_EVENT_QUEUE - 1) {
                 sidecar
@@ -4335,7 +4369,18 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 let Some(event) = next_event else {
                     panic!("process {process_id} disappeared before writing {needle:?}");
                 };
-                if let ActiveExecutionEvent::Stdout(chunk) = &event {
+                let chunk = match &event {
+                    ActiveExecutionEvent::Stdout(chunk)
+                    | ActiveExecutionEvent::RoutedStdout(chunk) => Some(chunk.as_slice()),
+                    ActiveExecutionEvent::Common(
+                        agentos_vm::executor::backend::ExecutionEvent::Output {
+                            stream: agentos_vm::executor::backend::OutputStream::Stdout,
+                            bytes,
+                        },
+                    ) => Some(bytes.as_slice()),
+                    _ => None,
+                };
+                if let Some(chunk) = chunk {
                     append_process_stream_chunk(&mut stdout, chunk, process_id, "stdout");
                     if process_stream_to_string(&stdout).contains(needle) {
                         block_on_sidecar!(
@@ -4497,6 +4542,13 @@ console.log(JSON.stringify({ status: "ok", summary }));
       )
       (then unreachable)
     )
+    ;; Keep the descriptors alive until the host finishes inspecting them.
+    (i32.store (i32.const 48) (i32.const 72))
+    (i32.store (i32.const 52) (i32.const 1))
+    (if (i32.ne
+      (call $fd_read (i32.const 0) (i32.const 48) (i32.const 1) (i32.const 60))
+      (i32.const 0)) (then unreachable))
+    (if (i32.ne (i32.load (i32.const 60)) (i32.const 0)) (then unreachable))
   )
 )
 "#,
@@ -4727,6 +4779,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
             };
 
             let mut vm = sidecar.vms.get_mut(vm_id).expect("javascript vm");
+            let stdin_budget = Arc::clone(&vm.pending_stdin_bytes_budget);
+            let event_budget = Arc::clone(&vm.pending_event_bytes_budget);
             vm.active_processes.insert(
                 process_id.to_owned(),
                 active_process_for_tests(
@@ -4735,6 +4789,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     GuestRuntimeKind::JavaScript,
                     ActiveExecution::HostFunction(HostFunctionExecution::default()),
                 )
+                .with_vm_pending_byte_budgets(stdin_budget, event_budget)
                 .with_env(guest_env)
                 .with_host_cwd(cwd.to_path_buf()),
             );
@@ -6160,12 +6215,16 @@ console.log(JSON.stringify({ status: "ok", summary }));
             drop(payload);
             assert!(tls_resources.is_zero());
 
+            let datagram_metadata = agentos_vm_kernel::socket_table::DATAGRAM_METADATA_BYTES;
             let udp_resources = ResourceLedger::root(
                 "udp-small-limit",
                 [
                     (
                         ResourceClass::BufferedBytes,
-                        ResourceLimit::new(8, "limits.resources.maxSocketBufferedBytes"),
+                        ResourceLimit::new(
+                            8 + 2 * datagram_metadata,
+                            "limits.resources.maxSocketBufferedBytes",
+                        ),
                     ),
                     (
                         ResourceClass::Datagrams,
@@ -6173,7 +6232,10 @@ console.log(JSON.stringify({ status: "ok", summary }));
                     ),
                     (
                         ResourceClass::UdpBytes,
-                        ResourceLimit::new(4, "limits.udp.maxBufferedBytes"),
+                        ResourceLimit::new(
+                            4 + 2 * datagram_metadata,
+                            "limits.udp.maxBufferedBytes",
+                        ),
                     ),
                     (
                         ResourceClass::UdpDatagrams,
@@ -6186,9 +6248,15 @@ console.log(JSON.stringify({ status: "ok", summary }));
             let error = crate::execution::reserve_udp_receive_buffer(&udp_resources, 1)
                 .expect_err("UDP datagram sublimit must apply backpressure");
             assert!(error.to_string().contains("resource=udpDatagrams"));
-            assert_eq!(udp_resources.usage(ResourceClass::BufferedBytes).used, 3);
+            assert_eq!(
+                udp_resources.usage(ResourceClass::BufferedBytes).used,
+                3 + datagram_metadata
+            );
             assert_eq!(udp_resources.usage(ResourceClass::Datagrams).used, 1);
-            assert_eq!(udp_resources.usage(ResourceClass::UdpBytes).used, 3);
+            assert_eq!(
+                udp_resources.usage(ResourceClass::UdpBytes).used,
+                3 + datagram_metadata
+            );
             assert_eq!(udp_resources.usage(ResourceClass::UdpDatagrams).used, 1);
             let runtime_context = agentos_driver_tokio::TokioDriver::process(
                 &agentos_driver_tokio::DriverConfig::default(),
@@ -9960,7 +10028,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 let call_args: Value =
                     serde_json::from_str(&call.args).expect("js bridge args json");
                 let path = call_args.get("path").and_then(Value::as_str);
-                if path == Some("/") {
+                if matches!(path, Some("/" | "/output.txt" | "/a.txt" | "/b.txt")) {
                     return match call.operation.as_str() {
                         "exists" => js_bridge_result(request, Some(Value::Bool(true)), None),
                         "stat" | "lstat" => js_bridge_result(
@@ -9971,7 +10039,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                                 blocks: 0,
                                 dev: 1,
                                 rdev: 0,
-                                is_directory: true,
+                                is_directory: path == Some("/"),
                                 is_symbolic_link: false,
                                 atime_ms: 0,
                                 atime_nsec: 0,
@@ -9991,7 +10059,9 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         "readDirWithTypes" => {
                             js_bridge_result(request, Some(Value::Array(Vec::new())), None)
                         }
-                        "realpath" => js_bridge_result(request, Some(json!("/")), None),
+                        "realpath" => js_bridge_result(request, Some(json!(path)), None),
+                        "writeFile" => js_bridge_result(request, None, Some("permission denied")),
+                        "rename" => js_bridge_result(request, None, Some("already exists")),
                         _ => js_bridge_result(request, None, None),
                     };
                 }
@@ -10061,7 +10131,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 .filesystem_mut()
                 .write_file("/workspace/output.txt", b"blocked".to_vec())
                 .expect_err("write should fail");
-            assert_eq!(write_error.code(), "EACCES");
+            assert_eq!(write_error.code(), "EACCES", "{write_error}");
 
             let rename_error = vm
                 .kernel
@@ -11096,6 +11166,21 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         }),
                     ))
                     .expect("start backend policy fixture");
+                if expected_backend == agentos_vm::executor::StandaloneWasmBackend::Wasmtime
+                    && !cfg!(feature = "wasm-wasmtime")
+                {
+                    let ResponsePayload::Rejected(rejected) = started.response.payload else {
+                        panic!("uncompiled Wasmtime must be rejected");
+                    };
+                    assert_eq!(rejected.code, "ERR_AGENTOS_EXECUTOR_UNAVAILABLE");
+                    assert!(!sidecar
+                        .vms
+                        .get(&vm_id)
+                        .expect("VM")
+                        .active_processes
+                        .contains_key(process_id));
+                    continue;
+                }
                 assert!(matches!(
                     started.response.payload,
                     ResponsePayload::ProcessStarted(_)
@@ -11273,7 +11358,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 .filesystem_mut()
                 .write_file("/blocked.txt", b"nope".to_vec())
                 .expect_err("write should be denied after failed rollback");
-            assert_eq!(write_error.code(), "EACCES");
+            assert_eq!(write_error.code(), "EACCES", "{write_error}");
             let permission_check_count_after_write = sidecar
                 .with_bridge_mut(|bridge| bridge.permission_checks.len())
                 .expect("read bridge permission checks");
@@ -12848,6 +12933,15 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 );
             }
 
+            sidecar
+                .dispatch_blocking(request(
+                    7,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::CloseStdin(CloseStdinRequest {
+                        process_id: String::from("proc-managed-wasm-kernel-pipe"),
+                    }),
+                ))
+                .expect("release the live descriptor inspection barrier");
             let (stdout, stderr, exit_code) =
                 drain_process_output(&mut sidecar, &vm_id, "proc-managed-wasm-kernel-pipe");
             assert_eq!(exit_code, Some(0), "stdout: {stdout} stderr: {stderr}");
@@ -14320,7 +14414,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                 "posix-spawnp-parent",
             );
 
-            let (nested_handle, nested_env) = {
+            let (nested_handle, nested_env, nested_stdin_budget, nested_event_budget) = {
                 let mut vm = sidecar.vms.get_mut(&vm_id).expect("created vm");
                 let root_pid = vm
                     .active_processes
@@ -14340,7 +14434,12 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         },
                     )
                     .expect("spawn nested kernel parent");
-                (handle, vm.guest_env.clone())
+                (
+                    handle,
+                    vm.guest_env.clone(),
+                    Arc::clone(&vm.pending_stdin_bytes_budget),
+                    Arc::clone(&vm.pending_event_bytes_budget),
+                )
             };
             let nested_pid = nested_handle.pid();
             sidecar
@@ -14360,6 +14459,7 @@ process.stdout.write(`${JSON.stringify(snapshot)}\n`);
                         ActiveExecution::HostFunction(HostFunctionExecution::default()),
                     )
                     .with_guest_cwd(String::from("/"))
+                    .with_vm_pending_byte_budgets(nested_stdin_budget, nested_event_budget)
                     .with_env(nested_env)
                     .with_host_cwd(host_cwd),
                 );
@@ -18559,6 +18659,14 @@ await new Promise(() => {});
                         *observed_rpc_methods
                             .entry(request.method.clone())
                             .or_default() += 1;
+                        if request.method == "fs.readSync" && !saw_read_batch {
+                            assert_eq!(
+                                observed_rpc_methods.get("fs.openSync"),
+                                Some(&10),
+                                "all readFile calls must open before the first payload read"
+                            );
+                            saw_read_batch = true;
+                        }
                         if !request.method.starts_with("fs.promises.") {
                             block_on_sidecar!(
                                 sidecar,
@@ -18574,13 +18682,11 @@ await new Promise(() => {});
 
                         pending_requests.push(request);
 
-                        let expected_method = if !saw_write_batch {
-                            "fs.promises.writeFile"
-                        } else if !saw_read_batch {
-                            "fs.promises.readFile"
-                        } else {
-                            panic!("received unexpected extra fs.promises request batch");
-                        };
+                        assert!(
+                            !saw_write_batch,
+                            "unexpected extra fs.promises request batch"
+                        );
+                        let expected_method = "fs.promises.writeFile";
 
                         if pending_requests.len() == 10 {
                             assert!(
@@ -18606,11 +18712,7 @@ await new Promise(() => {});
                                 .expect("handle batched javascript promises rpc event");
                             }
 
-                            if !saw_write_batch {
-                                saw_write_batch = true;
-                            } else {
-                                saw_read_batch = true;
-                            }
+                            saw_write_batch = true;
                         }
                     }
                     ActiveExecutionEvent::Stdout(chunk)
@@ -18688,7 +18790,7 @@ await new Promise(() => {});
             );
             assert!(
                 saw_read_batch,
-                "expected Promise.all(readFile) to issue a full batch before the first response; pending methods={:?}, rpc_methods={observed_rpc_methods:?}, exit={held_exit:?}, stdout={observed_stdout:?}, stderr={observed_stderr:?}, other_events={observed_other_events:?}",
+                "expected Promise.all(readFile) to admit all files before reading bounded payloads; pending methods={:?}, rpc_methods={observed_rpc_methods:?}, exit={held_exit:?}, stdout={observed_stdout:?}, stderr={observed_stderr:?}, other_events={observed_other_events:?}",
                 pending_requests
                     .iter()
                     .map(|request| request.method.as_str())

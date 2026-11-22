@@ -3,11 +3,13 @@ import { createBridgeSyncFacade } from "./fs.js";
 const nativeEncoding = createBridgeSyncFacade("uint8array.encode");
 
 // `Uint8Array` hex and base64 methods from tc39/proposal-arraybuffer-base64.
-// Keep native methods when available, except setFromBase64: V8 15.8 still
+// Keep native decoders when available, except setFromBase64: V8 15.8 still
 // validates trailing input after filling the destination and overcounts trailing
 // whitespace. Retain our bounded decoder until native behavior matches
 // https://tc39.es/proposal-arraybuffer-base64/spec/#sec-frombase64.
 //
+// Encoders retain the owning pre-allocation memory check even when V8 supplies
+// native methods; native string allocation alone does not enforce that bound.
 // These act as built-ins, so they read the view through captured intrinsics.
 // A subclass's `length`, or a guest patch of `slice` or `Buffer`, cannot change
 // the bytes they see or the type they return.
@@ -379,7 +381,12 @@ function decodeHexInto(target, string, maxLength) {
 
 function installEncodingMethods(target, methods) {
 	for (const [name, value] of Object.entries(methods)) {
-		if (name !== "setFromBase64" && typeof target[name] === "function")
+		if (
+			name !== "setFromBase64" &&
+			name !== "toHex" &&
+			name !== "toBase64" &&
+			typeof target[name] === "function"
+		)
 			continue;
 		Object.defineProperty(target, name, {
 			configurable: true,

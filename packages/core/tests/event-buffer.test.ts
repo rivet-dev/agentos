@@ -27,6 +27,76 @@ const vmReadyEvent: LiveSidecarEventFrame = {
 };
 
 describe("event buffer helpers", () => {
+	it("retires lifecycle-only history without removing another VM's output", () => {
+		const buffer = new SidecarEventBuffer<LiveSidecarEventFrame>(4);
+		const output: LiveSidecarEventFrame = {
+			ownership: {
+				scope: "vm",
+				connection_id: "conn",
+				session_id: "session",
+				vm_id: "other",
+			},
+			payload: {
+				type: "process_output",
+				process_id: "proc-1",
+				channel: "stdout",
+				chunk: new Uint8Array([42]),
+			},
+		};
+		expect(buffer.buffer(output)).toBe(null);
+		for (let cycle = 0; cycle < 16; cycle++) {
+			expect(buffer.buffer(vmReadyEvent)).toBe(null);
+			expect(
+				buffer.buffer({
+					...vmReadyEvent,
+					payload: { type: "vm_lifecycle", state: "disposing" },
+				}),
+			).toBe(null);
+			expect(
+				buffer.buffer({
+					...vmReadyEvent,
+					payload: { type: "vm_lifecycle", state: "disposed" },
+				}),
+			).toBe(null);
+			expect(buffer.size).toBe(1);
+		}
+		expect(buffer.take(normalizeSidecarEventMatcher({ any: true }))).toBe(
+			output,
+		);
+	});
+
+	it("preserves terminal output and exit until the consumer drains disposal", () => {
+		const buffer = new SidecarEventBuffer<LiveSidecarEventFrame>(4);
+		const events: LiveSidecarEventFrame[] = [
+			{
+				...vmReadyEvent,
+				payload: {
+					type: "process_output",
+					process_id: "proc-1",
+					channel: "stdout",
+					chunk: new Uint8Array([42]),
+				},
+			},
+			{
+				...vmReadyEvent,
+				payload: {
+					type: "process_exited",
+					process_id: "proc-1",
+					exit_code: 143,
+					exit_signal: 15,
+				},
+			},
+			{ ...vmReadyEvent, payload: { type: "vm_lifecycle", state: "disposed" } },
+		];
+		for (const event of events) expect(buffer.buffer(event)).toBe(null);
+		const matcher = normalizeSidecarEventMatcher<LiveSidecarEventFrame>(
+			(event) =>
+				event.ownership.scope === "vm" && event.ownership.vm_id === "vm",
+		);
+		for (const event of events) expect(buffer.take(matcher)).toBe(event);
+		expect(buffer.size).toBe(0);
+	});
+
 	it("reports bounded event buffer overflows", () => {
 		const error = new SidecarEventBufferOverflow({
 			capacity: 4,

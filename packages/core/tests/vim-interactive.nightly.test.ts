@@ -255,7 +255,7 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 			expect(fileContent).toBe("hello world\n");
 
 			offData();
-			void __disposeAllSharedSidecarsForTesting().catch(() => {});
+			await __disposeAllSharedSidecarsForTesting();
 			vm = undefined;
 		},
 		TEST_TIMEOUT_MS,
@@ -331,7 +331,7 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 			await sleep(1_000);
 
 			offData();
-			void __disposeAllSharedSidecarsForTesting().catch(() => {});
+			await __disposeAllSharedSidecarsForTesting();
 			vm = undefined;
 		},
 		TEST_TIMEOUT_MS,

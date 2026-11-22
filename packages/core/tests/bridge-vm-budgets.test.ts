@@ -217,6 +217,8 @@ test("actual paused HTTP response budget rejects finite overflow and raised poli
 					return error;
 				},
 			);
+		// The parser first resumes transport after installing its listeners.
+		expect(o.socket.resumes).toBe(1);
 		o.socket.emit(
 			"data",
 			Buffer.from("HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nA"),
@@ -227,7 +229,7 @@ test("actual paused HTTP response budget rejects finite overflow and raised poli
 			o.response().allow = true;
 			o.response().resume();
 			await Promise.resolve();
-			expect(o.socket.resumes).toBe(1);
+			expect(o.socket.resumes).toBe(2);
 			o.socket.emit("data", Buffer.from("FGH"));
 			expect(await done).toBeNull();
 			expect(Buffer.concat(o.response().chunks).toString()).toBe("ABCDEFGH");
