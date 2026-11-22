@@ -1,21 +1,19 @@
 # Standalone WebAssembly executors
 
-AgentOS has two maintained native standalone-WebAssembly engines: V8-WASM and
-Wasmtime. Wasmtime has separate single-threaded and threaded execution
-profiles. JavaScript always remains in V8; the selector described here only
-chooses the engine/profile for a standalone WASM command. The engines do not
-share guest memory and there is no V8-to-Wasmtime bridge.
+The shipped sidecar runs every WebAssembly command on V8, the same engine that
+runs guest JavaScript. Each WASM guest gets its own V8 isolate, and its host
+imports are native Rust callbacks; no JavaScript runs in the WASM guest path.
 
-## Production decision
+Wasmtime is a second, opt-in engine for Rust embedders of `agentos-vm`. It is
+not compiled into the published sidecar. Build it in with the `wasm-wasmtime`
+Cargo feature on `agentos-sidecar` or `agentos-vm`; the threaded profile also
+needs the executor's `threads` feature. The engines do not share guest memory
+and there is no V8-to-Wasmtime bridge.
 
-Omitting the selector currently chooses **V8**. Wasmtime is explicitly
-selectable. The September 26, 2026 integrated-tree comparison passed
-correctness and retained RSS/PSS gates, but failed cold-start p95 and
-throughput/admission gates. Warm module-cache hits were much faster in the
-measured workloads; evaluate explicit Wasmtime selection against your own
-module mix and concurrency requirements. V8 remains the default.
+## Selecting an engine
 
-Select a backend per execution:
+Omit `wasmBackend` to use the sidecar default, V8. Clients must not invent
+another default. A build that includes Wasmtime can select it per execution:
 
 ```ts
 await vm.execCommand("ls", ["-la"], { wasmBackend: "wasmtime" });
@@ -25,19 +23,17 @@ await vm.execCommand("threaded-tool", [], {
 await vm.execCommand("ls", ["-la"], { wasmBackend: "v8" });
 ```
 
-The selector is sealed to `"wasmtime" | "wasmtime-threads" | "v8"`.
-`"wasmtime"` remains the exact single-threaded profile and rejects shared
-memory, atomics, and the AgentOS thread-spawn import. Omission is the
-sidecar-owned default; clients must not invent another default. The immediate
-rollback for a Wasmtime workload is an explicit `wasmBackend: "v8"`. A fleet
-rollback is to omit Wasmtime overrides; no code, cache, or data migration is
-required.
+The selector is sealed to `"wasmtime" | "wasmtime-threads" | "v8"`. Selecting
+an engine the sidecar was built without fails with
+`ERR_AGENTOS_EXECUTOR_UNAVAILABLE`. `"wasmtime"` is the exact single-threaded
+profile and rejects shared memory, atomics, and the agentOS thread-spawn
+import; so does `"v8"`. Child processes inherit their parent's engine.
 
 ## Shared host behavior and safety
 
 Both executors use the same sidecar-owned kernel, VFS, process table, fd and
 socket tables, signal broker, permissions, and resource ledger. They also share
-one implementation of the AgentOS-owned Preview1/POSIX ABI: the host imports in
+one implementation of the agentOS-owned Preview1/POSIX ABI: the host imports in
 `agentos-executor-wasm-host` are Rust handlers that each engine binds to its
 own guest. V8 instantiates the module from Rust in a per-guest isolate and
 calls the handlers from native import callbacks, so no JavaScript runs in the
@@ -59,7 +55,7 @@ the parent. A bounded typed protocol carries owned host-operation values over
 stdio. The child receives no ambient host capability, and guest memory is
 never mapped into the parent as an IPC shortcut.
 
-Both engines run the same cross-engine parity and safety suites. AgentOS never
+Both engines run the same cross-engine parity and safety suites. agentOS never
 shadow-runs a side-effecting command through both engines.
 
 ## Metrics and warnings
@@ -113,7 +109,7 @@ The production configuration uses on-demand linear-memory allocation and
 Wasmtime's eligible copy-on-write module-memory initialization. It does **not**
 use pooling allocation, AOT deserialization, Wizer, or a live Store/Instance
 snapshot. Wasmtime does not provide a general live-process snapshot/fork for
-AgentOS: copying linear memory alone would omit kernel process, fd, socket,
+agentOS: copying linear memory alone would omit kernel process, fd, socket,
 signal, waiter, and thread state. V8's JavaScript heap snapshot remains a
 JavaScript startup optimization and is not a cross-engine WASM snapshot.
 
@@ -132,47 +128,15 @@ Memory figures must be kept separate:
   admitted guest thread. This overhead is intentionally not conflated with the
   ordinary single-thread Wasmtime RSS numbers below.
 
-## Canonical benchmark and rollback criteria
+## Benchmarks
 
-The current raw release result is
-[`packages/benchmarks/results/wasm-backend-comparison.json`](../../packages/benchmarks/results/wasm-backend-comparison.json),
-recorded September 26, 2026 from source snapshot
-`d6591c0f41fdd19243b570edc66af1182d7a2a0c` with Wasmtime 48.0.3. It uses
-identical hashed source modules and host-service paths on one x86-64 machine,
-five fresh processes per backend, and five samples per workload. Cold and
-warm samples are reported separately. V8 adds its memory-maximum rewrite
-before compilation; phase diagnostics retain both source and transformed
-byte counts.
-
-The nine workloads cover trivial, coreutils, shell pipeline, loopback curl,
-sqlite, Vim, large-module git, compute-heavy SHA-256, and host-call-heavy
-filesystem work. Separate checks cover repeated/diverse concurrency at
-1/10/50/100/200, permission denial, cancellation, and CPU limits.
-
-| Gate | Result | Evidence |
-| --- | --- | --- |
-| Correctness and safety | Pass | Workload validation and denial, cancellation, and CPU-limit checks passed. |
-| Geometric-mean p50 | Pass | Wasmtime/V8 ratio `0.236617`. |
-| Individual p95 | **Fail** | Cold shell p95: Wasmtime 2,657 ms versus V8 327 ms. |
-| Throughput/admission | **Fail** | Wasmtime admitted 20/50 and 20/100 requested executions; V8 admitted 50/50 and 100/100. |
-| Retained RSS | Pass | V8 `526,983,168` bytes; Wasmtime `523,018,240` bytes. |
-| Retained PSS | Pass | V8 `524,635,136` bytes; Wasmtime `520,773,632` bytes. |
-
-At concurrency 1 and 10, both engines admitted all requested work and Wasmtime
-throughput was 2.5–16.0× V8's across repeated/diverse rows. Rows with different
-admission counts cannot establish an equal-load throughput win. Warm shell
-p50 was 48.0 ms versus 306.8 ms; warm host-call-heavy filesystem p50 was
-39.0 ms versus 172.2 ms. The latter measures a complete workload, not isolated
-host-call binding latency.
-
-Retained RSS/PSS are medians of absolute process-tree memory after VM disposal,
-including retained runtime and compiled-module state. The historical
-[phase-4 result](../../packages/benchmarks/results/wasm-backend-comparison-phase4.json)
-used sidecar-only deltas above baseline and is not directly comparable.
-The failed cold-tail and throughput/admission gates keep V8 as the default.
-
-Run it from the repository root with a release sidecar and rebuilt canonical
-commands:
+Current V8 and Wasmtime measurements, including first and warm runs,
+concurrency, memory, and the per-syscall latency matrix, are in
+[`docs/design/v8-native-wasm-imports.md`](../design/v8-native-wasm-imports.md)
+with raw medians in
+[`packages/benchmarks/results/v8-native-wasm-imports-20261122.json`](../../packages/benchmarks/results/v8-native-wasm-imports-20261122.json).
+Run the engine comparison from the repository root with a release sidecar built
+with `--features wasm-wasmtime` and rebuilt canonical commands:
 
 ```bash
 AGENTOS_SIDECAR_BIN=/absolute/path/to/release/agentos-sidecar \
@@ -180,26 +144,12 @@ AGENTOS_WASM_COMMANDS_DIR=/absolute/path/to/packages/core/commands \
 pnpm --dir packages/benchmarks bench:wasm-backends
 ```
 
-Wasmtime may become the omission default only when the same canonical run has
-zero correctness/safety regressions and passes every locked threshold:
-
-- geometric-mean p50 no more than 10% slower;
-- no individual p95 more than 20% slower;
-- throughput no more than 10% lower with no reduction in admitted work;
-- retained RSS and PSS no more than the greater of 10% or 4 MiB above V8.
-
-Keep or restore V8 as the default when any threshold fails, a stable typed
-outcome diverges, cache misses become the dominant traffic shape, Store/kernel
-resources do not drain, or Wasmtime causes a production safety regression.
-An individual workload can still opt into Wasmtime when its own warm-cache and
-memory evidence supports that choice.
-
 ## Threads
 
 Shared WebAssembly memory and pthreads are enabled only by the explicit
-`"wasmtime-threads"` profile. AgentOS does not rely on shared memory between V8
+`"wasmtime-threads"` profile. agentOS does not rely on shared memory between V8
 isolates, and no memory is shared between V8 and Wasmtime. Threaded programs use
-the owned AgentOS sysroot/libc and import `wasi.thread-spawn`; each pthread gets
+the owned agentOS sysroot/libc and import `wasi.thread-spawn`; each pthread gets
 its own Wasmtime Store and Instance over one group-owned `SharedMemory`.
 
 Before any guest code runs, admission transactionally reserves the configured

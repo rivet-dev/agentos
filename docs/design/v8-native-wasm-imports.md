@@ -54,8 +54,8 @@ The comparison ran 14 real agentOS command binaries to completion through one
 Rust host implementation bound to each engine, plus heavy workloads over
 50,000 files, a packed git repository, and DuckDB. Every engine produced
 identical output. Wasmtime started from precompiled code and V8 from a warm
-isolate where noted. The harness and raw results are in the standalone
-`v8-wasm` research repository, not in agentOS.
+isolate where noted. These came from a standalone research harness outside
+agentOS; the in-tree results are under Results below.
 
 | What | V8 | Wasmtime |
 | --- | --- | --- |
