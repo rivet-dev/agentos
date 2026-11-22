@@ -15,11 +15,28 @@ ARG CLANG=aarch64-apple-darwin20.4
 ARG BUILD_PROFILE=debug
 ARG CACHE_PLATFORM=darwin-arm64
 ARG RUST_TOOLCHAIN=1.95.0
+ARG DARWIN_LLVM_VERSION=21
 
 ENV SDK=/root/osxcross/target/SDK/MacOSX11.3.sdk \
     RUSTC_WRAPPER=sccache \
     SCCACHE_DIR=/root/.cache/sccache \
     SCCACHE_IDLE_TIMEOUT=0
+
+# V8's public headers and agentOS C++ shims require a C++23 compiler.
+# Keep the osxcross SDK/linker wrappers, but select the modern host compiler.
+RUN set -eux; \
+    . /etc/os-release; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
+    curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+      | gpg --dearmor > /etc/apt/trusted.gpg.d/llvm-snapshot.gpg; \
+    echo "deb https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-${DARWIN_LLVM_VERSION} main" \
+      > /etc/apt/sources.list.d/agentos-llvm.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends "clang-${DARWIN_LLVM_VERSION}"; \
+    rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/root/osxcross/target/bin:/usr/lib/llvm-${DARWIN_LLVM_VERSION}/bin:${PATH}"
 
 WORKDIR /build
 COPY scripts/ci/v8 /build/scripts/ci/v8

@@ -3489,6 +3489,7 @@ var NetServer = class extends (eventsStdlibModuleNs.EventEmitter ??
 	_handleRefId = null;
 	_connections = /* @__PURE__ */ new Set();
 	_closePending = false;
+	_closeAsyncContextFrame = undefined;
 	_closeQueued = false;
 	_pendingTransportCloses = 0;
 	_pendingRelisten = null;
@@ -3650,6 +3651,9 @@ var NetServer = class extends (eventsStdlibModuleNs.EventEmitter ??
 		return this;
 	}
 	close(callback) {
+		if (!this._closePending) {
+			this._closeAsyncContextFrame = getAsyncContextFrame();
+		}
 		countNetBridgeMetric("serverCloseCalls");
 		countNetBridgeMetric(
 			"serverCloseConnectionsAtCall",
@@ -3736,7 +3740,9 @@ var NetServer = class extends (eventsStdlibModuleNs.EventEmitter ??
 			this._closeQueued = false;
 			this._closePending = false;
 			countNetBridgeMetric("serverCloseEmits");
-			this._emit("close");
+			const frame = this._closeAsyncContextFrame;
+			this._closeAsyncContextFrame = undefined;
+			runInAsyncContextFrame(frame, this._emit, this, ["close"]);
 		});
 	}
 	address() {
