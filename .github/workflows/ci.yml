@@ -798,7 +798,7 @@ jobs:
           "$fixture_dir/curl" --version | grep -w HTTP3
           "$fixture_dir/nghttpx" --version
           printf 'AGENTOS_NATIVE_HTTP3_CURL=%s/curl\nAGENTOS_NGHTTPX_HTTP3_SERVER=%s/nghttpx\n' "$fixture_dir" "$fixture_dir" >> "$GITHUB_ENV"
-          printf 'SSHD=/usr/sbin/sshd\nAGENTOS_NATIVE_SSH_CURL=/usr/bin/curl\n' >> "$GITHUB_ENV"
+          printf 'SSHD=/usr/sbin/sshd\n' >> "$GITHUB_ENV"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-commands
