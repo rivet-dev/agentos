@@ -27,7 +27,7 @@ serde_bytes = "0.11"
 serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["io-util", "process", "rt", "sync", "time"] }
-wasmtime = { version = "=48.0.3", default-features = false, features = ["async", "cranelift", "gc", "gc-drc", "runtime", "std", "threads"] }
+wasmtime = { version = "=48.0.7", default-features = false, features = ["async", "cranelift", "gc", "gc-drc", "runtime", "std", "threads"] }
 
 [dev-dependencies]
 wat = "1"

@@ -75,7 +75,7 @@ vbare-compiler = { package = "rivet-vbare-compiler", version = "0.0.5" }
 
 # Keep parallel-compilation disabled: Wasmtime implements it with Rayon's
 # host-sized global pool, outside AgentOS's fixed reviewed thread census.
-wasmtime = { version = "=48.0.3", default-features = false, features = [
+wasmtime = { version = "=48.0.7", default-features = false, features = [
     "async",
     "cranelift",
     "gc",

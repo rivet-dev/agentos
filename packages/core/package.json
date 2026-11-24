@@ -196,7 +196,7 @@
 		"@types/node": "^22.10.2",
 		"sandbox-agent": "^0.4.2",
 		"typescript": "^5.7.2",
-		"vitest": "^2.1.8",
+		"vitest": "^4.1.12",
 		"ws": "^8.18.0",
 		"zod3": "npm:zod@^3.25.76",
 		"@bare-ts/tools": "0.15.0"

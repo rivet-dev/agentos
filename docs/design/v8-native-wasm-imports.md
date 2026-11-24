@@ -235,7 +235,7 @@ exits. This affects every engine and every command, including JavaScript.
   first threaded package ships, route threaded modules to the threaded executor
   automatically, then consider native V8 threads with each thread group in its
   own process, since shared memory gives a guest a high-resolution timer.
-- The Wasmtime executor pins 48.0.3, which predates the fix for a critical
-  Cranelift sandbox escape on AArch64
-  ([GHSA-mghf-wjfp-p5xm](https://github.com/bytecodealliance/wasmtime/security/advisories/GHSA-mghf-wjfp-p5xm),
-  fixed in 48.0.7). Move the opt-in executor to the latest 48.x release.
+- The Wasmtime executor pins 48.0.7, which fixes a critical Cranelift
+  sandbox escape on AArch64
+  ([GHSA-mghf-wjfp-p5xm](https://github.com/bytecodealliance/wasmtime/security/advisories/GHSA-mghf-wjfp-p5xm)).
+  Keep the opt-in executor on the latest 48.x release.
