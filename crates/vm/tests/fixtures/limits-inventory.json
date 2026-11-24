@@ -3500,6 +3500,12 @@
 		"rationale": "Process-wide FIFO entry cap for admitted V8 WebAssembly images (compiled module plus import facts); eviction only costs a re-admission, not a guest-visible behavior."
 	},
 	{
+		"name": "ADMITTED_IMAGE_CACHE_MAX_BYTES",
+		"path": "crates/executor-wasm-v8/src/native/module.rs",
+		"class": "invariant",
+		"rationale": "Process-wide byte cap on admitted V8 WebAssembly images, so guest-written images cannot pin unbounded module and code memory; eviction only costs a re-admission, not a guest-visible behavior."
+	},
+	{
 		"name": "MAX_WARM_ISOLATES",
 		"path": "crates/executor-wasm-v8/src/native/pool.rs",
 		"class": "invariant",
