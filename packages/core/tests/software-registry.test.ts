@@ -159,6 +159,15 @@ describe("resolveRegistrySoftware", () => {
 		});
 	});
 
+	it("checks transport security when resolving each artifact URL", async () => {
+		const release = manifest(["git"]);
+		release.artifacts[0].path = "http://registry.gameinc.io/git.aospkg";
+		serve("latest", release);
+		await expect(
+			resolveRegistrySoftware("git", { registry: { url: registry.url } }),
+		).rejects.toThrow("artifact URL must use https");
+	});
+
 	it("reads an explicit version, which wins over the registry default", async () => {
 		serve("0.4.2", manifest(["git"]));
 		serve("0.4.1", manifest(["git"]));
@@ -242,7 +251,7 @@ describe("resolveRegistrySoftware", () => {
 		);
 		await expect(
 			resolveRegistrySoftware("zzzzzz", { registry: { url: registry.url } }),
-		).rejects.toThrow("browse https://rivet.dev/agentos/docs/registry");
+		).rejects.toThrow("browse https://agentos-sdk.dev/agentos/docs/software");
 	});
 
 	it("reports a release that does not exist", async () => {

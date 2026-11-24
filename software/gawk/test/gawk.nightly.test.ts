@@ -8,7 +8,7 @@ import {
 	NodeFileSystem,
 	createKernel,
 	createWasmVmRuntime,
-	describeIf,
+	describeIf, wasmBackendTestTimeout,
 } from "@rivet-dev/agentos-test-harness";
 import type { Kernel } from "@rivet-dev/agentos-test-harness";
 import { afterEach, expect, it } from "vitest";
@@ -51,7 +51,7 @@ function lines(stdout: string): string[] {
 	return stdout.split("\n").filter((line) => line.length > 0);
 }
 
-describeIf(hasAwkPackageBinary, "awk command", { timeout: 10_000 }, () => {
+describeIf(hasAwkPackageBinary, "awk command", { timeout: wasmBackendTestTimeout(10_000, 30_000) }, () => {
 	let kernel: Kernel | undefined;
 
 	afterEach(async () => {
@@ -85,6 +85,21 @@ describeIf(hasAwkPackageBinary, "awk command", { timeout: 10_000 }, () => {
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		return { stdout, stderr, exitCode };
 	}
+
+	it("exits a BEGIN-only program while stdin remains open", async () => {
+		await mountFixture();
+		// runAwk deliberately does not write or close this process's stdin.
+		const result = await runAwk(['BEGIN { print "AWK" }']);
+		expect(result.exitCode, result.stderr).toBe(0);
+		expect(result.stdout).toBe("AWK\n");
+	});
+
+	it("does not open input operands for a BEGIN-only program", async () => {
+		await mountFixture();
+		const result = await runAwk(['BEGIN { print "x" }', "/nonexistent/input"]);
+		expect(result.exitCode, result.stderr).toBe(0);
+		expect(result.stdout).toBe("x\n");
+	});
 
 	it("extracts fields from a file", async () => {
 		await mountFixture();

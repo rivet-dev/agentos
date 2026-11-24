@@ -16,7 +16,8 @@ publisher at <https://www.npmjs.com/package/secure-exec/access>:
 - Allowed actions: enable direct `npm publish`
 
 The existing `publish-npm` job uses a GitHub-hosted runner, Node.js 24, and
-`id-token: write`. npm automatically exchanges the job's OIDC token; no
+`id-token: write`. npm automatically exchanges the job's OIDC token. The preparation job builds and packs the packages before the publish job
+validates and publishes the tarballs with lifecycle scripts disabled. No
 `NPM_TOKEN` or interactive npm login is needed in CI. Trusted publisher settings
 live on npm and cannot be enabled by committing a workflow alone.
 

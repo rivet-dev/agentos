@@ -61,7 +61,10 @@ export function stage(options: StageOptions): StageResult {
 			process.stdout.write(
 				`stage: commands dir not found (${commandsDir}) — leaving bin/ unstaged (placeholder package)\n`,
 			);
-			return { staged: [], missing: [...commands, ...stubs, ...Object.keys(aliases)] };
+			return {
+				staged: [],
+				missing: [...commands, ...stubs, ...Object.keys(aliases)],
+			};
 		}
 		throw new Error(`stage: commands dir not found: ${commandsDir}`);
 	}
@@ -116,8 +119,6 @@ export function stage(options: StageOptions): StageResult {
 		}
 		process.stdout.write(`stage: WARN ${detail}\n`);
 	}
-	process.stdout.write(
-		`staged ${staged.length} command(s) into ${binDir}\n`,
-	);
+	process.stdout.write(`staged ${staged.length} command(s) into ${binDir}\n`);
 	return { staged, missing };
 }

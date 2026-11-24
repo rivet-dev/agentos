@@ -8,32 +8,150 @@ skill: true
 agentOS is in beta and is still undergoing security review.
 </Warning>
 
-agentOS runs untrusted guest code on behalf of a trusted host application. Each VM has a
+agentOS runs untrusted guest code on behalf of a trusted client. Each VM has a
 kernel-owned filesystem, process table, socket table, pipes, PTYs, permission
 policy, and language runtimes. Guest JavaScript executes in V8; WASM and Python
 use their managed executors. Guest operations reach the host only through the
 sidecar's policy-enforcing interfaces.
 
+<svg viewBox="0 0 640 398" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="agentOS trust model. Your trusted application holds configuration, credentials, and host function handlers, and controls the agentOS sidecar over stdio and a Unix socket or over HTTP. Inside the sidecar, the trusted kernel enforces permissions and limits and owns the filesystem and socket tables. Below a security boundary, untrusted guest code runs in V8 isolates, WebAssembly, and third-party packages, and reaches the kernel only through syscalls. Host resources are off by default: host directories are reachable only through mounts, the internet and DNS only through network rules, and your backend only through host functions." style="width:100%;max-width:640px;height:auto;display:block;margin:2rem auto;font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="security-model-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2E4034"/></marker>
+  </defs>
+
+  <rect x="40" y="14" width="340" height="48" rx="7" fill="#ffffff" stroke="#1b1916" stroke-width="1.3"/>
+  <text x="56" y="34" font-size="13" font-weight="600" fill="#1b1916">Your application</text>
+  <text x="364" y="34" text-anchor="end" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#2E4034">TRUSTED</text>
+  <text x="56" y="51" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">config, credentials, host functions</text>
+
+  <line x1="210" y1="62" x2="210" y2="96" stroke="#2E4034" stroke-width="1.3" marker-start="url(#security-model-arrow)" marker-end="url(#security-model-arrow)"/>
+  <text x="218" y="83" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">stdio + Unix socket, or HTTP</text>
+
+  <rect x="10" y="98" width="400" height="288" rx="10" fill="#faf8f3" stroke="#2E4034" stroke-width="1.3" stroke-dasharray="6 5"/>
+  <text x="30" y="116" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.14em" fill="#2E4034">AGENTOS SIDECAR PROCESS</text>
+
+  <rect x="30" y="128" width="360" height="112" rx="8" fill="#e7ece7" stroke="#1b1916" stroke-width="1.3"/>
+  <text x="46" y="151" font-size="13" font-weight="600" fill="#1b1916">Kernel</text>
+  <text x="374" y="150" text-anchor="end" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#2E4034">ENFORCEMENT POINT</text>
+  <g fill="#ffffff" stroke="#1b1916" stroke-width="1.1">
+    <rect x="46" y="166" width="76" height="34" rx="5"/>
+    <rect x="130" y="166" width="76" height="34" rx="5"/>
+    <rect x="214" y="166" width="76" height="34" rx="5"/>
+    <rect x="298" y="166" width="76" height="34" rx="5"/>
+  </g>
+  <g text-anchor="middle" font-size="10.5" fill="#1b1916">
+    <text x="84" y="187">Permissions</text>
+    <text x="168" y="187">Limits</text>
+    <text x="252" y="187">Filesystem</text>
+    <text x="336" y="187">Sockets</text>
+  </g>
+  <text x="46" y="222" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">every guest operation is checked here</text>
+
+  <text x="30" y="263" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#d63e00">SECURITY BOUNDARY</text>
+  <line x1="30" y1="268" x2="390" y2="268" stroke="#d63e00" stroke-width="1.3" stroke-dasharray="4 4"/>
+  <text x="218" y="263" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">syscalls</text>
+  <line x1="210" y1="242" x2="210" y2="284" stroke="#2E4034" stroke-width="1.3" marker-start="url(#security-model-arrow)" marker-end="url(#security-model-arrow)"/>
+
+  <rect x="30" y="286" width="360" height="84" rx="8" fill="#ffffff" stroke="#1b1916" stroke-width="1.3"/>
+  <text x="46" y="309" font-size="13" font-weight="600" fill="#1b1916">Guest code</text>
+  <text x="374" y="308" text-anchor="end" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#d63e00">UNTRUSTED</text>
+  <g fill="#faf8f3" stroke="#1b1916" stroke-width="1.1">
+    <rect x="46" y="320" width="104" height="38" rx="5"/>
+    <rect x="158" y="320" width="104" height="38" rx="5"/>
+    <rect x="270" y="320" width="104" height="38" rx="5"/>
+  </g>
+  <g text-anchor="middle" font-size="11.5" font-weight="600" fill="#1b1916">
+    <text x="98" y="336">V8 isolates</text>
+    <text x="210" y="336">WebAssembly</text>
+    <text x="322" y="336">Packages</text>
+  </g>
+  <g text-anchor="middle" font-size="9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">
+    <text x="98" y="350">JS, TypeScript</text>
+    <text x="210" y="350">shell, Python</text>
+    <text x="322" y="350">npm, pip</text>
+  </g>
+
+  <text x="450" y="116" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.14em" fill="#2E4034">HOST RESOURCES</text>
+  <g fill="#ffffff" stroke="#1b1916" stroke-width="1.3">
+    <rect x="450" y="124" width="180" height="36" rx="6"/>
+    <rect x="450" y="166" width="180" height="36" rx="6"/>
+    <rect x="450" y="208" width="180" height="36" rx="6"/>
+  </g>
+  <g font-size="12" font-weight="600" fill="#1b1916">
+    <text x="464" y="139">Host directories</text>
+    <text x="464" y="181">Internet and DNS</text>
+    <text x="464" y="223">Your backend</text>
+  </g>
+  <g font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">
+    <text x="464" y="152">via mounts</text>
+    <text x="464" y="194">via network rules</text>
+    <text x="464" y="236">via host functions</text>
+  </g>
+  <g stroke="#2E4034" stroke-width="1.3" stroke-dasharray="3 3" marker-end="url(#security-model-arrow)">
+    <line x1="391" y1="142" x2="447" y2="142"/>
+    <line x1="391" y1="184" x2="447" y2="184"/>
+    <line x1="391" y1="226" x2="447" y2="226"/>
+  </g>
+  <text x="450" y="262" font-size="9.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.12em" fill="#d63e00">OFF BY DEFAULT</text>
+</svg>
+
+
 ## Trust boundary
 
 | Component | Trust | Responsibility |
 | --- | --- | --- |
-| Host application | Trusted, except for submitted guest code and data | Chooses configuration, permissions, software sources, host functions, mounts, and credentials |
+| Client | Trusted, except for submitted guest code and data | Chooses configuration, permissions, software URLs, and credentials |
 | Sidecar, kernel, and VFS | Trusted enforcement point | Applies limits and permissions; owns processes, filesystems, sockets, and mounts |
 | Executor | Untrusted | Runs guest JavaScript, Python, WASM, and third-party code |
 
 The security boundary is **sidecar/runtime to executor**. A guest bypassing an
 applied permission, mount boundary, egress rule, or resource limit is in scope.
-A trusted host deliberately choosing a permissive configuration or unsafe
+A trusted client deliberately choosing a permissive configuration or unsafe
 credential is not a runtime escape.
+
+The sidecar runs in its own process, separate from your application. Guest code
+and its memory never enter your application's process.
+
+## What a VM can reach by default
+
+A new VM behaves like a Docker container with no host mounts and no published
+ports. Everything inside the VM works. Nothing crosses the VM boundary until you grant it.
+
+| Resource | Default | How to grant access |
+| --- | --- | --- |
+| VM filesystem, guest processes, guest environment | Allowed | Restrict with the `fs`, `childProcess`, `process`, and `env` [permission](/agentos/docs/permissions) scopes |
+| Guest listeners and loopback | Allowed, never bound on the host | Reach them from the host with `fetch`, `httpRequest`, or [previews](/agentos/docs/networking) |
+| Host loopback services | Unreachable. Guest `127.0.0.1` is the VM's own loopback. | `loopbackExemptPorts`, one port at a time |
+| Host files | Unreachable | [Mounts](/agentos/docs/filesystem#mounts), or copy files in |
+| Host environment variables | Unreachable | The `environment` option |
+| Host processes | Unreachable | None. Guest processes never become host processes. |
+| Outbound network and DNS | Denied | [Network permissions](/agentos/docs/permissions#network). |
+| Your backend and credentials | Unreachable | [Host functions](/agentos/docs/host-functions) you register, library only. Restrict them with the `hostFunction` scope. |
+
+## Deny by default
+
+Every operation that crosses the VM boundary needs explicit configuration:
+external network access needs a network rule, host files need a mount, and
+your backend needs a registered host function. Filesystem, process, and
+environment scopes default to allow because they only reach the VM's own
+namespace. The `hostFunction` scope also defaults to allow, so every host
+function you register is callable until you restrict it. A scope can be
+`"allow"`, `"deny"`, or a rule set that matches the operation and target.
+
+<CodeSnippet file="examples/embedded/permissions.ts" />
 
 ## Host capabilities
 
-Core runs inside the trusted application process, so the host may explicitly
-give a VM access to host resources: host functions, host-backed mounts, external
+Library VMs run under a trusted application, so the host may explicitly give a
+VM access to host resources: host functions, host-backed mounts, external
 sandboxes, and local software paths. Each of these runs with the host's
 privileges. Expose them deliberately, and never pass guest-controlled values
 into their configuration.
+
+Host functions let a guest use a credential without seeing it. The handler runs
+in your process with the secret, and the guest receives only the result. Treat
+each host function as a public API: validate its input and authorize the call
+inside the handler.
 
 If your application lets untrusted users configure VMs, accept only
 serializable configuration from them and resolve it against your own allowlist
@@ -46,20 +164,29 @@ filesystem descriptors are resolved through a fixed registry, and software
 installation accepts only remote HTTPS `.aospkg` sources. It cannot receive:
 
 - a host filesystem path or host-directory mount;
-- a host function callback, closure, or arbitrary host object;
+- a host-function callback, closure, or arbitrary host object;
 - a custom filesystem or software resolver;
 - an unregistered actor implementation or lifecycle hook.
 
-Use [scoped JWTs](/docs/jwt) to give an untrusted client access to exactly one
-hosted VM.
+Embedded Core runs inside a trusted application process and may explicitly
+configure host functions, host-backed mounts, and local software paths. Those are
+embedded capabilities, not actor capabilities.
 
 ## Isolation guarantees
 
-- Guest processes are kernel-managed and never become host processes.
+- Guest processes are kernel-managed and never become host processes. Guest JavaScript runs inside V8; Python and WebAssembly use
+  their configured executors, never a host Node.js process.
+- Guest Node.js builtins such as `fs`, `net`, and `child_process` are
+  implemented on the kernel. Guest code never reaches a real host builtin, and
+  denied builtins throw `ERR_ACCESS_DENIED`.
 - Guest sockets pass through the kernel socket table and applied network policy.
+  Every address a hostname resolves to is checked against the policy, and a
+  DNS answer that mixes allowed and blocked addresses fails as a whole.
 - Trusted VM setup can update mounts and command stubs without relaxing guest
   filesystem permissions, including while a VM is running.
-- Each VM's filesystem, process table, and runtime state are isolated from other VMs.
+- Each VM's filesystem, process table, and runtime state are isolated from other
+  VMs on the same sidecar. Handles are scoped to their VM, so a guest can't use
+  another VM's sockets or capabilities, and each VM has its own quotas.
 - Host-backed embedded mounts are confined to the configured root on every
   operation, including symlink and `..` resolution.
 - Resource limits bound process count, descriptors, sockets, filesystem bytes,
@@ -67,25 +194,32 @@ hosted VM.
 - Limit pressure is logged or emitted as a structured warning; exhaustion fails
   with a typed error naming the limit and how to raise it.
 
-## Deny by default
-
-Network access and host capabilities require explicit policy. Filesystem and
-guest process capabilities operate only within the VM-owned namespace. A scope
-can be `"allow"`, `"deny"`, or a rule set that matches the operation and target.
-
-<CodeSnippet file="examples/embedded/permissions.ts" />
-
 ## Operator responsibilities
 
-- Authenticate and authorize users before they can reach a VM.
-- Keep object-store credentials and package-download settings out of
-  configuration that guest code or untrusted users can read.
+- Authenticate and authorize clients before they receive an actor connection.
+- Keep object-store credentials and operator package-download settings outside
+  actor-readable durable configuration.
 - Choose permissions and resource limits for the workload.
 - Treat software URLs and config as trusted control-plane input, while treating
   the downloaded bytes and executed code as hostile.
-- Harden the host/container that runs the trusted sidecar.
-- Prefer a distinct VM identity for mutually untrusted tenants.
+- Set timeouts and CPU limits on code you did not write.
+- Harden the host or container that runs the sidecar, and run it as a non-root
+  user. Rivet Cloud runs the sidecar unprivileged under gVisor.
+- Give mutually untrusted tenants separate VMs and dedicated sidecar processes
+  when they require OS-level memory isolation. V8 isolates on a shared sidecar
+  share its address space. The embedded V8 build disables the V8 Sandbox.
+  Use a separate `AgentOs.createSidecar()` per trust domain in the
+  [embedded client](/agentos/docs/quickstart-embedded).
 
 See [Permissions](/agentos/docs/permissions),
 [Resource Limits](/agentos/docs/resource-limits), and
 [Filesystem](/agentos/docs/filesystem) for the public configuration surfaces.
+
+## Embedded API
+
+Pass limits to `AgentOs.create()` alongside permissions. `onLimitWarning`
+surfaces near-limit pressure to your process.
+
+<CodeSnippet file="examples/embedded/limits.ts" />
+
+Read more in the [embedded API quickstart](/agentos/docs/quickstart-embedded).

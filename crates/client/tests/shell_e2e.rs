@@ -1,4 +1,4 @@
-//! Shell / PTY e2e against a real `agentos-native-sidecar`.
+//! Shell / PTY e2e against a real `agentos-sidecar`.
 //!
 //! `open_shell` spawns a PTY-backed process through the real sidecar. The ordered-stream assertion
 //! uses guest Node so stdout and stderr remain distinct wire channels; separate package coverage
@@ -149,7 +149,7 @@ async fn shell_surface_open_write_data_resize_close() {
             let _ = data_tx.send(event.data);
         })
         .expect("on_shell_data for live shell");
-    // Stderr remains available as a channel-specific diagnostic tap.
+    // A PTY merges fd 1 and fd 2; no separate stderr event should be invented.
     let (stderr_tx, mut stderr_rx) = tokio::sync::mpsc::unbounded_channel();
     let _stderr = os
         .on_shell_stderr(&shell.shell_id, move |event| {
@@ -160,7 +160,7 @@ async fn shell_surface_open_write_data_resize_close() {
     // --- write_shell: prove execution and stdout/stderr ordering on the PTY stream ----------------
     // Neither output marker occurs in the input, so PTY input echo alone cannot satisfy this
     // assertion. The process writes stdout before stderr, proving the combined stream retains wire
-    // order while the stderr bytes remain available through the diagnostic tap.
+    // order after the PTY merges both descriptors.
     os.write_shell(
         &shell.shell_id,
         StdinInput::Text("hello-shell\n".to_string()),
@@ -192,22 +192,24 @@ async fn shell_surface_open_write_data_resize_close() {
         "combined PTY stream reordered stdout/stderr: {ordered_output:?}"
     );
 
-    let diagnostic_saw_stderr = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        let mut acc = Vec::<u8>::new();
-        while let Some(chunk) = stderr_rx.recv().await {
-            acc.extend_from_slice(&chunk);
-            if String::from_utf8_lossy(&acc).contains("ERR:hello-shell") {
-                return true;
-            }
-        }
-        false
-    })
-    .await
-    .unwrap_or(false);
     assert!(
-        diagnostic_saw_stderr,
-        "stderr diagnostic stream should retain the executed stderr output"
+        matches!(
+            stderr_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ),
+        "a PTY must not duplicate merged output on the stderr tap"
     );
+    // Pipe execution retains separate descriptors, unlike the PTY above.
+    let piped = os
+        .exec_process(
+            "printf pipe-out; printf pipe-err >&2",
+            agentos_client::ExecOptions::default(),
+        )
+        .await
+        .expect("execute with separate pipes");
+    assert_eq!(piped.exit_code, 0);
+    assert_eq!(piped.stdout, "pipe-out");
+    assert_eq!(piped.stderr, "pipe-err");
 
     // --- resize_shell: validates existence and forwards the native PTY resize ----------------------
     os.resize_shell(&shell.shell_id, 120, 40)

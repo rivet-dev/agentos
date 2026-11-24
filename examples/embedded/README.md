@@ -5,7 +5,7 @@ category: "Reference"
 order: 1
 ---
 
-Use `@rivet-dev/agentos-core` to boot and control a VM directly from a trusted
+Use `@rivet-dev/agentos` to boot and control a VM directly from a trusted
 Node.js application. The embedded API covers files, processes, terminals,
 language execution, networking, command scheduling, software, permissions,
 limits, host functions, and trusted host-backed mounts.

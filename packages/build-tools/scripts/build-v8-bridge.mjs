@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { withOwnedEsbuild } from "./with-owned-esbuild.mjs";
 import { createRequire } from "node:module";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import stdLibBrowser from "node-stdlib-browser";
@@ -9,6 +10,8 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(scriptDir, "..");
 const workspaceRoot = path.resolve(packageRoot, "..", "..");
 const require = createRequire(import.meta.url);
+
+await withOwnedEsbuild(require.resolve("esbuild"), async () => {
 
 function parseArgs(argv) {
 	const options = {};
@@ -29,25 +32,30 @@ function parseArgs(argv) {
 
 const options = parseArgs(process.argv.slice(2));
 const bridgeEntry = path.join(packageRoot, "bridge-src", "index.ts");
-const bridgeAssetsDir = path.join(workspaceRoot, "crates", "execution", "assets");
+const bridgeAssetsDir = path.join(
+	workspaceRoot,
+	"crates",
+	"executor-v8-runtime",
+	"assets",
+);
 const bridgeSeamSourcefile = path.join(bridgeAssetsDir, "v8-bridge.generated-seam.js");
 const bridgeContract = path.join(
 	workspaceRoot,
 	"crates",
-	"bridge",
-	"bridge-contract.json",
+	"vm-host-interface",
+	"vm-host-interface.json",
 );
 const defaultBridgeOutput = path.join(
 	workspaceRoot,
 	"crates",
-	"execution",
+	"executor-v8-runtime",
 	"assets",
 	"v8-bridge.js",
 );
 const defaultZlibBridgeOutput = path.join(
 	workspaceRoot,
 	"crates",
-	"execution",
+	"executor-v8-runtime",
 	"assets",
 	"v8-bridge-zlib.js",
 );
@@ -67,7 +75,7 @@ const zlibBridgeTempOutput = `${zlibBridgeOutput}${tempSuffix}`;
 const undiciShimDir = path.join(
 	workspaceRoot,
 	"crates",
-	"execution",
+	"executor-v8-runtime",
 	"assets",
 	"undici-shims",
 );
@@ -199,15 +207,19 @@ bridgeSourceText = bridgeSourceText
 	.replace(/entry\.classification === "hardened"/g, 'entry.c==="h"')
 	.replace(/entry\.classification === "mutable-runtime-state"/g, 'entry.c==="m"');
 
+// The embedded V8 supports ES2022. Keeping class fields native avoids per-instance
+// dictionary/WeakMap allocation from lowering them in either bridge build pass.
 async function generateBridgeSeamText() {
 	const result = await build({
 		entryPoints: [bridgeEntry],
 		outfile: bridgeSeamSourcefile,
+		// Preserve upstream readline notices through both bundle passes.
+		legalComments: "inline",
 		bundle: true,
 		minify: false,
 		format: "esm",
 		platform: "neutral",
-		target: "es2020",
+		target: "es2022",
 		// Keep native class fields (do not lower to __publicField helpers) so the
 		// seam preserves readable `static builtinModules = [...]` etc. that the
 		// downstream text-consumers grep for.
@@ -222,7 +234,7 @@ async function generateBridgeSeamText() {
 		packages: "external",
 		plugins: [
 			{
-				name: "agentos-bridge-source-externals",
+				name: "agentos-vm-host-interface-source-externals",
 				setup(pluginBuild) {
 					// node: builtins stay as import specifiers.
 					pluginBuild.onResolve({ filter: /^node:/ }, () => ({
@@ -249,13 +261,30 @@ async function validateBridgeContractGlobals(sourceText) {
 		"_processConfig",
 		"__agentOsHrNowUs",
 		"__agentOsRequireEsmSync",
+		"__agentOsCompileCommonjsWrapper",
+		// Pure URL bootstrap parser retained in the isolate; no host RPC.
+		"__agentOsDomainToASCII",
 		"_osConfig",
 		"bridge",
 		"_registerHandle",
 		"_unregisterHandle",
 		"_waitForActiveHandles",
 		"_releaseLeftoverHandles",
+		// Bridge-local stdin pump lifecycle hook; it never invokes a host RPC.
+		"_retireStdinOperation",
+		// Bridge-local Promise rejection delivery; no host RPC or permission entry.
+		"_dispatchPromiseRejection",
+		// Bridge-local synchronous guest exception delivery; no host RPC.
+		"_dispatchUncaughtException",
+		"__runtimeResetProcessExitState",
+		"__runtimeFinalizeNaturalProcessExit",
+		"__agentOsReportTerminalCallback",
+		"__agentOsRequestProcessExit",
+		"__agentOsAddProtectedEventListener",
+		"__agentOsGetEventTargetListeners",
+		"__agentOSNextTickHooks",
 		"_getActiveHandles",
+		"_processExitRequested",
 		"_childProcessDispatch",
 		"_childProcessModule",
 		"_osModule",
@@ -296,6 +325,7 @@ async function validateBridgeContractGlobals(sourceText) {
 		"exports",
 		"__filename",
 		"__dirname",
+		"gc",
 		"fetch",
 		"Headers",
 		"Request",
@@ -349,7 +379,7 @@ async function validateBridgeContractGlobals(sourceText) {
 	const errors = [];
 	if (duplicateContractNames.size > 0) {
 		errors.push(
-			`duplicate names in bridge-contract.json: ${[...duplicateContractNames].sort().join(", ")}`,
+			`duplicate names in vm-host-interface.json: ${[...duplicateContractNames].sort().join(", ")}`,
 		);
 	}
 	if (duplicateInventoryNames.size > 0) {
@@ -364,7 +394,7 @@ async function validateBridgeContractGlobals(sourceText) {
 	}
 	if (unexpectedInventoryNames.length > 0) {
 		errors.push(
-			`NODE_CUSTOM_GLOBAL_INVENTORY names missing from bridge-contract.json or the runtime-only allowlist: ${unexpectedInventoryNames.sort().join(", ")}`,
+			`NODE_CUSTOM_GLOBAL_INVENTORY names missing from vm-host-interface.json or the runtime-only allowlist: ${unexpectedInventoryNames.sort().join(", ")}`,
 		);
 	}
 	if (staleRuntimeOnlyNames.length > 0) {
@@ -436,6 +466,28 @@ async function rewriteUnsupportedUtilTypesBundle(
 	await writeFile(bundlePath, patched);
 }
 
+// Keep the clock closures and Performance object across snapshot restore.
+// The execution shim refreshes their epoch before the entry module loads.
+const performancePrelude = `
+if (typeof globalThis.performance === "undefined") {
+  const dateNow = Date.now;
+  const bootstrapOrigin = dateNow();
+  const timeOrigin = () => globalThis._processConfig?.performanceTimeOrigin ?? bootstrapOrigin;
+  globalThis.performance = {
+    now() {
+      return typeof globalThis.__agentOsHrNowUs === "function"
+        ? globalThis.__agentOsHrNowUs() / 1000
+        : dateNow() - timeOrigin();
+    },
+    get timeOrigin() { return timeOrigin(); },
+    toJSON() { return { timeOrigin: this.timeOrigin }; },
+  };
+}
+if (typeof globalThis.performance.markResourceTiming !== "function") {
+  globalThis.performance.markResourceTiming = () => {};
+}
+`;
+
 async function buildWebStreamsPrelude() {
 	const preludeResult = await build({
 		stdin: {
@@ -444,6 +496,10 @@ async function buildWebStreamsPrelude() {
 				'  ReadableStream,',
 				'  WritableStream,',
 				'  TransformStream,',
+				'  ByteLengthQueuingStrategy, CountQueuingStrategy,',
+				'  ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamBYOBRequest,',
+				'  ReadableStreamDefaultController, ReadableByteStreamController,',
+				'  WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStreamDefaultController,',
 				'} from "web-streams-polyfill";',
 				'import { TextDecoder as AgentOSTextDecoder, TextDecoderStream as AgentOSTextDecoderStream, TextEncoder2 as AgentOSTextEncoder, TextEncoderStream as AgentOSTextEncoderStream } from "agentos-text-encoding-polyfill";',
 				'import { Blob as AgentOSBlob, File as AgentOSFile } from "agentos-blob-file-polyfill";',
@@ -463,8 +519,11 @@ async function buildWebStreamsPrelude() {
 				"  globalThis.TransformStream = TransformStream;",
 				"}",
 				"globalThis.TextEncoderStream = AgentOSTextEncoderStream;",
+				"Object.assign(globalThis, { ByteLengthQueuingStrategy, CountQueuingStrategy, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamBYOBRequest, ReadableStreamDefaultController, ReadableByteStreamController, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStreamDefaultController });",
 				"globalThis.TextDecoderStream = AgentOSTextDecoderStream;",
 				"globalThis.Blob = AgentOSBlob;",
+				'Object.defineProperty(AgentOSBlob, "name", { value: "Blob", configurable: true });',
+				'Object.defineProperty(AgentOSFile, "name", { value: "File", configurable: true });',
 				"globalThis.File = AgentOSFile;",
 				'if (typeof globalThis.MessagePort === "undefined") {',
 				"  globalThis.MessagePort = class MessagePortStub {",
@@ -484,20 +543,7 @@ async function buildWebStreamsPrelude() {
 				"    }",
 				"  };",
 				"}",
-				'if (typeof globalThis.performance === "undefined") {',
-				"  const performanceStart = Date.now();",
-				"  globalThis.performance = {",
-				"    now() {",
-				'      if (typeof globalThis.__agentOsHrNowUs === "function") {',
-				"        return globalThis.__agentOsHrNowUs() / 1000;",
-				"      }",
-				"      return Date.now() - performanceStart;",
-				"    },",
-				"  };",
-				"}",
-				'if (typeof globalThis.performance.markResourceTiming !== "function") {',
-				"  globalThis.performance.markResourceTiming = () => {};",
-				"}",
+				performancePrelude,
 			].join("\n"),
 			resolveDir: bridgeAssetsDir,
 			sourcefile: "v8-bridge-web-streams.entry.js",
@@ -507,7 +553,7 @@ async function buildWebStreamsPrelude() {
 		write: false,
 		format: "iife",
 		platform: "browser",
-		target: "es2020",
+		target: "es2022",
 		minify: true,
 		alias,
 		plugins: createUndiciBuildPlugins(),
@@ -533,8 +579,9 @@ async function buildUrlPrelude() {
 	const urlPreludeResult = await build({
 		stdin: {
 			contents: [
-				'import { installWhatwgUrlGlobals } from "agentos-whatwg-url-polyfill";',
+				'import { installWhatwgUrlGlobals, parseDomainASCII } from "agentos-whatwg-url-polyfill";',
 				"installWhatwgUrlGlobals(globalThis);",
+				'Object.defineProperty(globalThis, "__agentOsDomainToASCII", {value: parseDomainASCII, writable: false, configurable: false});',
 				'if (globalThis.SharedArrayBuffer?.__agentOSBootstrapStub === true) {',
 				"  delete globalThis.SharedArrayBuffer;",
 				"}",
@@ -547,7 +594,7 @@ async function buildUrlPrelude() {
 		write: false,
 		format: "iife",
 		platform: "browser",
-		target: "es2020",
+		target: "es2022",
 		minify: true,
 		alias,
 		plugins: createUndiciBuildPlugins(),
@@ -568,13 +615,15 @@ async function buildEventAbortPrelude() {
 	const eventAbortPreludeResult = await build({
 		stdin: {
 			contents: [
-				'import { Event, CustomEvent, EventTarget } from "agentos-dom-events-polyfill";',
+				'import { Event, CustomEvent, EventTarget, addProtectedEventListener, getEventTargetListeners } from "agentos-dom-events-polyfill";',
 				'import { AbortController, AbortSignal } from "agentos-abort-polyfill";',
 				"globalThis.Event = Event;",
 				"globalThis.CustomEvent = CustomEvent;",
 				"globalThis.EventTarget = EventTarget;",
 				"globalThis.AbortSignal = AbortSignal;",
 				"globalThis.AbortController = AbortController;",
+				"globalThis.__agentOsAddProtectedEventListener = addProtectedEventListener;",
+				"globalThis.__agentOsGetEventTargetListeners = getEventTargetListeners;",
 			].join("\n"),
 			resolveDir: bridgeAssetsDir,
 			sourcefile: "v8-bridge-event-abort.entry.js",
@@ -584,7 +633,7 @@ async function buildEventAbortPrelude() {
 		write: false,
 		format: "iife",
 		platform: "browser",
-		target: "es2020",
+		target: "es2022",
 		minify: true,
 		alias,
 		plugins: createUndiciBuildPlugins(),
@@ -734,10 +783,12 @@ const result = await build({
 	},
 	bundle: true,
 	outfile: bridgeTempOutput,
+	footer: { js: "//# sourceURL=node:agentos-bridge" },
+	legalComments: "inline",
 	write: true,
 	format: "iife",
 	platform: "browser",
-	target: "es2020",
+	target: "es2022",
 	minify: true,
 	metafile: true,
 	alias: mainBundleAlias,
@@ -754,7 +805,7 @@ const result = await build({
 				`if(typeof globalThis.TextDecoder==="undefined"){globalThis.TextDecoder=class{decode(value=new Uint8Array()){const view=value instanceof Uint8Array?value:ArrayBuffer.isView(value)?new Uint8Array(value.buffer,value.byteOffset,value.byteLength):value instanceof ArrayBuffer?new Uint8Array(value):new Uint8Array(0);let binary="";for(let i=0;i<view.length;i++){binary+=String.fromCharCode(view[i]);}return decodeURIComponent(escape(binary));}};}`,
 				`if(typeof globalThis.Buffer==="undefined"){const __agentOsTe=typeof TextEncoder==="function"?new TextEncoder():null;const __agentOsTd=typeof TextDecoder==="function"?new TextDecoder():null;class __AgentOsEarlyBuffer extends Uint8Array{static from(value,encoding="utf8"){if(value instanceof ArrayBuffer){return new __AgentOsEarlyBuffer(value);}if(ArrayBuffer.isView(value)){return new __AgentOsEarlyBuffer(value.buffer.slice(value.byteOffset,value.byteOffset+value.byteLength));}if(Array.isArray(value)){return new __AgentOsEarlyBuffer(value);}const stringValue=String(value??"");if(encoding==="base64"&&typeof atob==="function"){const binary=atob(stringValue);const out=new __AgentOsEarlyBuffer(binary.length);for(let i=0;i<binary.length;i++){out[i]=binary.charCodeAt(i);}return out;}if(encoding==="binary"||encoding==="latin1"){const out=new __AgentOsEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}if(__agentOsTe){return new __AgentOsEarlyBuffer(__agentOsTe.encode(stringValue));}const out=new __AgentOsEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}static alloc(size){return new __AgentOsEarlyBuffer(Number(size)||0);}static concat(list,totalLength){const length=totalLength??list.reduce((sum,item)=>sum+(item?.length??0),0);const out=new __AgentOsEarlyBuffer(length);let offset=0;for(const item of list){const chunk=item instanceof Uint8Array?item:__AgentOsEarlyBuffer.from(item);out.set(chunk,offset);offset+=chunk.length;}return out;}static isBuffer(value){return value instanceof Uint8Array;}static byteLength(value,encoding="utf8"){return __AgentOsEarlyBuffer.from(value,encoding).byteLength;}toString(encoding="utf8"){if(encoding==="base64"&&typeof btoa==="function"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return btoa(binary);}if(encoding==="binary"||encoding==="latin1"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return binary;}if(__agentOsTd){return __agentOsTd.decode(this);}return Array.from(this,byte=>String.fromCharCode(byte)).join("");}}globalThis.Buffer=__AgentOsEarlyBuffer;}`,
 				'if(typeof globalThis.Buffer.allocUnsafe!=="function"){globalThis.Buffer.allocUnsafe=globalThis.Buffer.alloc;}if(typeof globalThis.Buffer.allocUnsafeSlow!=="function"){globalThis.Buffer.allocUnsafeSlow=globalThis.Buffer.alloc;}',
-				'if(typeof globalThis.performance==="undefined"){const __agentOsPerformanceStart=Date.now();globalThis.performance={now(){if(typeof globalThis.__agentOsHrNowUs==="function"){return globalThis.__agentOsHrNowUs()/1000;}return Date.now()-__agentOsPerformanceStart;}};}if(typeof globalThis.performance.markResourceTiming!=="function"){globalThis.performance.markResourceTiming=()=>{};}',
+				performancePrelude,
 				'if(typeof TextEncoder==="undefined"&&typeof globalThis.TextEncoder!=="undefined"){var TextEncoder=globalThis.TextEncoder;}if(typeof TextDecoder==="undefined"&&typeof globalThis.TextDecoder!=="undefined"){var TextDecoder=globalThis.TextDecoder;}if(typeof Buffer==="undefined"&&typeof globalThis.Buffer!=="undefined"){var Buffer=globalThis.Buffer;}',
 			].join(""),
 	},
@@ -764,6 +815,7 @@ const result = await build({
 const zlibResult = await build({
 	stdin: {
 		contents: [
+			`import { installBrotli } from ${JSON.stringify(path.join(undiciShimDir, "brotli.js"))};`,
 			'import * as assertStdlibModuleNs from "node:assert";',
 			'import { Buffer as zlibBuffer } from "node:buffer";',
 			'import * as utilStdlibModuleNs from "node:util";',
@@ -774,6 +826,7 @@ const zlibResult = await build({
 			"const zlibModule = zlibStdlibModuleNs.default ?? zlibStdlibModuleNs;",
 			'const zlibConstants = typeof zlibModule.constants === "object" && zlibModule.constants !== null ? zlibModule.constants : Object.fromEntries(Object.entries(zlibModule).filter(([key, value]) => /^[A-Z0-9_]+$/.test(key) && typeof value === "number"));',
 			'if(typeof zlibModule.constants === "undefined"){zlibModule.constants = zlibConstants;}',
+			"installBrotli(zlibModule, zlibBuffer);",
 			'const normalizeZlibInput = (value) => { if (typeof value === "string" || zlibBuffer.isBuffer(value)) return value; if (value instanceof ArrayBuffer) return zlibBuffer.from(value); if (ArrayBuffer.isView(value)) return zlibBuffer.from(value.buffer, value.byteOffset, value.byteLength); return value; };',
 			'for (const name of ["deflate", "deflateSync", "gzip", "gzipSync", "deflateRaw", "deflateRawSync", "unzip", "unzipSync", "inflate", "inflateSync", "gunzip", "gunzipSync", "inflateRaw", "inflateRawSync"]) { const original = zlibModule[name]; if (typeof original === "function") zlibModule[name] = function(input, ...args) { return original.call(this, normalizeZlibInput(input), ...args); }; }',
 			'if(typeof utilModule.TextEncoder==="undefined"&&typeof globalThis.TextEncoder==="function"){utilModule.TextEncoder=globalThis.TextEncoder;}',
@@ -782,7 +835,7 @@ const zlibResult = await build({
 			"globalThis.__agentOsBuiltinUtilModule = utilModule;",
 			"globalThis.__agentOsBuiltinZlibModule = zlibModule;",
 			"const AgentOSWebSocket = wsModule?.WebSocket ?? wsModule?.default?.WebSocket ?? wsModule?.default ?? wsModule;",
-			'if(typeof AgentOSWebSocket === "function"){Object.defineProperty(globalThis,"WebSocket",{value:AgentOSWebSocket,writable:false,configurable:false,enumerable:true});}',
+			'if(typeof AgentOSWebSocket === "function"){Object.defineProperty(globalThis,"WebSocket",{value:AgentOSWebSocket,writable:true,configurable:true,enumerable:false});}',
 		].join("\n"),
 		resolveDir: bridgeAssetsDir,
 		sourcefile: "v8-bridge-zlib.entry.js",
@@ -810,7 +863,7 @@ const zlibResult = await build({
 				`if(typeof globalThis.TextDecoder==="undefined"){globalThis.TextDecoder=class{decode(value=new Uint8Array()){const view=value instanceof Uint8Array?value:ArrayBuffer.isView(value)?new Uint8Array(value.buffer,value.byteOffset,value.byteLength):value instanceof ArrayBuffer?new Uint8Array(value):new Uint8Array(0);let binary="";for(let i=0;i<view.length;i++){binary+=String.fromCharCode(view[i]);}return decodeURIComponent(escape(binary));}};}`,
 				`if(typeof globalThis.Buffer==="undefined"){const __agentOsTe=typeof TextEncoder==="function"?new TextEncoder():null;const __agentOsTd=typeof TextDecoder==="function"?new TextDecoder():null;class __AgentOsEarlyBuffer extends Uint8Array{static from(value,encoding="utf8"){if(value instanceof ArrayBuffer){return new __AgentOsEarlyBuffer(value);}if(ArrayBuffer.isView(value)){return new __AgentOsEarlyBuffer(value.buffer.slice(value.byteOffset,value.byteOffset+value.byteLength));}if(Array.isArray(value)){return new __AgentOsEarlyBuffer(value);}const stringValue=String(value??"");if(encoding==="base64"&&typeof atob==="function"){const binary=atob(stringValue);const out=new __AgentOsEarlyBuffer(binary.length);for(let i=0;i<binary.length;i++){out[i]=binary.charCodeAt(i);}return out;}if(encoding==="binary"||encoding==="latin1"){const out=new __AgentOsEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}if(__agentOsTe){return new __AgentOsEarlyBuffer(__agentOsTe.encode(stringValue));}const out=new __AgentOsEarlyBuffer(stringValue.length);for(let i=0;i<stringValue.length;i++){out[i]=stringValue.charCodeAt(i)&255;}return out;}static alloc(size){return new __AgentOsEarlyBuffer(Number(size)||0);}static concat(list,totalLength){const length=totalLength??list.reduce((sum,item)=>sum+(item?.length??0),0);const out=new __AgentOsEarlyBuffer(length);let offset=0;for(const item of list){const chunk=item instanceof Uint8Array?item:__AgentOsEarlyBuffer.from(item);out.set(chunk,offset);offset+=chunk.length;}return out;}static isBuffer(value){return value instanceof Uint8Array;}static byteLength(value,encoding="utf8"){return __AgentOsEarlyBuffer.from(value,encoding).byteLength;}toString(encoding="utf8"){if(encoding==="base64"&&typeof btoa==="function"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return btoa(binary);}if(encoding==="binary"||encoding==="latin1"){let binary="";for(const byte of this){binary+=String.fromCharCode(byte);}return binary;}if(__agentOsTd){return __agentOsTd.decode(this);}return Array.from(this,byte=>String.fromCharCode(byte)).join("");}}globalThis.Buffer=__AgentOsEarlyBuffer;}`,
 				'if(typeof globalThis.Buffer.allocUnsafe!=="function"){globalThis.Buffer.allocUnsafe=globalThis.Buffer.alloc;}if(typeof globalThis.Buffer.allocUnsafeSlow!=="function"){globalThis.Buffer.allocUnsafeSlow=globalThis.Buffer.alloc;}',
-				'if(typeof globalThis.performance==="undefined"){const __agentOsPerformanceStart=Date.now();globalThis.performance={now(){if(typeof globalThis.__agentOsHrNowUs==="function"){return globalThis.__agentOsHrNowUs()/1000;}return Date.now()-__agentOsPerformanceStart;}};}if(typeof globalThis.performance.markResourceTiming!=="function"){globalThis.performance.markResourceTiming=()=>{};}',
+				performancePrelude,
 				'if(typeof TextEncoder==="undefined"&&typeof globalThis.TextEncoder!=="undefined"){var TextEncoder=globalThis.TextEncoder;}if(typeof TextDecoder==="undefined"&&typeof globalThis.TextDecoder!=="undefined"){var TextDecoder=globalThis.TextDecoder;}if(typeof Buffer==="undefined"&&typeof globalThis.Buffer!=="undefined"){var Buffer=globalThis.Buffer;}',
 			].join(""),
 	},
@@ -855,3 +908,5 @@ await rename(zlibBridgeTempOutput, zlibBridgeOutput);
 console.log(
 	`Built ${path.relative(workspaceRoot, bridgeOutput)} (${result.outputFiles?.[0]?.text?.length ?? "written"} bytes)`,
 );
+
+});

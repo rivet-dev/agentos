@@ -11,6 +11,7 @@ import wget from "@agentos-software/wget";
 import duckdb from "@agentos-software/duckdb";
 import envsubst from "@agentos-software/envsubst";
 import git from "@agentos-software/git";
+import ssh from "@agentos-software/ssh";
 import sqlite3 from "@agentos-software/sqlite3";
 import vim from "@agentos-software/vim";
 import zip from "@agentos-software/zip";
@@ -36,6 +37,7 @@ const everything = [
 	duckdb,
 	envsubst,
 	git,
+	ssh,
 	sqlite3,
 	vim,
 	zip,
@@ -63,6 +65,7 @@ export {
 	duckdb,
 	envsubst,
 	git,
+	ssh,
 	sqlite3,
 	vim,
 	zip,

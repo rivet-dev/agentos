@@ -4,6 +4,13 @@ set -euo pipefail
 test -n "${CI_CACHE_ROOT:-}"
 test -n "${GITHUB_ENV:-}"
 scope=$(printf '%s' "$GITHUB_REPOSITORY/$GITHUB_WORKFLOW/$GITHUB_JOB" | sha256sum | cut -c1-20)
+docker_scope=$CI_SLOT
+if [[ ${GITHUB_REF:-} == refs/pull/*/merge ]]; then
+  pr=${GITHUB_REF#refs/pull/}
+  pr=${pr%/merge}
+  scope="$scope-pr-$pr"
+  docker_scope="$CI_SLOT-pr-$pr"
+fi
 cache="$CI_CACHE_ROOT/$scope"
 mkdir -p "$cache"
 touch "$cache"
@@ -51,7 +58,7 @@ docker buildx inspect incus >/dev/null 2>&1 ||\
   echo "npm_config_store_dir=$cache/pnpm-store"
   echo "DOCKER_CONFIG=$DOCKER_CONFIG"
   echo 'BUILDX_BUILDER=incus'
-  echo "CI_CACHE_SCOPE=$CI_SLOT"
+  echo "CI_CACHE_SCOPE=$docker_scope"
   echo "CI_SLOT=$CI_SLOT"
   echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-2}"
 } >> "$GITHUB_ENV"

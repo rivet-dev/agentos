@@ -24,3 +24,9 @@ test("rejects invalid release artifact namespaces", () => {
 		/invalid RELEASE_ARTIFACT_NAMESPACE/,
 	);
 });
+
+test("artifact coordinates each occupy exactly one key segment", () => {
+	assert.equal(releaseArtifactPrefix({ ref: "1.2.3+build", name: "sidecar" }, {}), "agent-os/1.2.3+build/sidecar/");
+	assert.throws(() => releaseArtifactPrefix({ ref: "", name: "sidecar" }, {}), /artifact ref/);
+	assert.throws(() => releaseArtifactPrefix({ ref: "1.2.3", name: "sidecar/linux" }, {}), /artifact name/);
+});

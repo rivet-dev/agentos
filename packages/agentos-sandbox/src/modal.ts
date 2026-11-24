@@ -1,4 +1,4 @@
-import type { AgentOsSandboxProvider } from "@rivet-dev/agentos-core";
+import type { AgentOsSandboxProvider } from "@rivet-dev/agentos";
 import type { ModalProviderOptions } from "sandbox-agent/modal";
 import { modal as sandboxAgentModal } from "sandbox-agent/modal";
 import { sandboxAgentProvider } from "./provider.js";

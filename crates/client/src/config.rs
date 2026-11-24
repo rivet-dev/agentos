@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::fs::VirtualFileSystem;
 pub use agentos_vm_config::{
-    VmGroupConfig, VmSqliteCallbackRequest, VmSqliteCallbackResponse, VmSqliteDescriptor,
-    VmSqliteQueryResult, VmSqliteStatement, VmSqliteValue, VmUserAccountConfig, VmUserConfig,
-    VM_SQLITE_CALLBACK_NAMESPACE,
+    ReactorLimitsConfig as ReactorLimits, VmGroupConfig, VmSqliteCallbackRequest,
+    VmSqliteCallbackResponse, VmSqliteDescriptor, VmSqliteQueryResult, VmSqliteStatement,
+    VmSqliteValue, VmUserAccountConfig, VmUserConfig, VM_SQLITE_CALLBACK_NAMESPACE,
 };
 
 pub type SidecarSqliteCallback = Arc<
@@ -34,6 +34,10 @@ pub type SidecarSqliteCallback = Arc<
 /// and `packages/core/src/options-schema.ts::agentOsOptionsSchema`.
 #[derive(Default)]
 pub struct AgentOsConfig {
+    /// Selects sidecar-owned VM defaults. Omitted selects the agentOS profile.
+    pub defaults_profile: Option<agentos_vm_config::VmDefaultsProfile>,
+    /// Default engine for standalone WebAssembly processes.
+    pub wasm_backend: Option<crate::process::StandaloneWasmBackend>,
     /// VM-scoped SQLite backend shared by VFS metadata/storage and agentOS
     /// durable state.
     pub database: Option<agentos_vm_config::VmSqliteDescriptor>,
@@ -71,6 +75,9 @@ pub struct AgentOsConfig {
     /// Opt in to a high-resolution monotonic clock for guest JavaScript.
     /// `None` selects the hardened millisecond-resolution default.
     pub high_resolution_time: Option<bool>,
+    /// Guest entrypoints that boot from a V8 startup snapshot with their
+    /// static imports already evaluated (= TS `snapshotEntrypoints`).
+    pub snapshot_entrypoints: Option<Vec<String>>,
     /// Root filesystem configuration. Default: overlay + bundled base snapshot.
     pub root_filesystem: RootFilesystemConfig,
     /// Additional mounts.
@@ -87,9 +94,9 @@ pub struct AgentOsConfig {
     pub limits: Option<AgentOsLimits>,
     /// Sidecar placement/config. Default: shared `default` pool.
     pub sidecar: Option<AgentOsSidecarConfig>,
-    /// Absolute path to the `agentos-native-sidecar` binary, resolved from the npm
+    /// Absolute path to the `agentos-sidecar` binary, resolved from the npm
     /// package on the TypeScript side. Threaded to `SidecarProcess::spawn`
-    /// instead of relying on the
+    /// (mirroring rivetkit's `engine_binary_path`) instead of relying on the
     /// `AGENTOS_SIDECAR_BIN` env var. `None` falls back to env, then `PATH`.
     pub sidecar_binary_path: Option<String>,
 }
@@ -103,6 +110,11 @@ pub struct AgentOsConfigBuilder {
 impl AgentOsConfigBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn defaults_profile(mut self, profile: agentos_vm_config::VmDefaultsProfile) -> Self {
+        self.config.defaults_profile = Some(profile);
+        self
     }
 
     pub fn database(mut self, database: agentos_vm_config::VmSqliteDescriptor) -> Self {
@@ -156,6 +168,11 @@ impl AgentOsConfigBuilder {
         self
     }
 
+    pub fn wasm_backend(mut self, backend: crate::process::StandaloneWasmBackend) -> Self {
+        self.config.wasm_backend = Some(backend);
+        self
+    }
+
     pub fn user(mut self, user: VmUserConfig) -> Self {
         self.config.user = Some(user);
         self
@@ -168,6 +185,11 @@ impl AgentOsConfigBuilder {
 
     pub fn high_resolution_time(mut self, enabled: bool) -> Self {
         self.config.high_resolution_time = Some(enabled);
+        self
+    }
+
+    pub fn snapshot_entrypoints(mut self, entrypoints: Vec<String>) -> Self {
+        self.config.snapshot_entrypoints = Some(entrypoints);
         self
     }
 
@@ -242,7 +264,7 @@ pub enum SoftwareKind {
     /// sidecar's command discovery can resolve guest commands (`echo`, `sh`, `grep`, ...).
     #[default]
     WasmCommands,
-    /// A host-function package. Not mounted as a command directory.
+    /// A host-binding package. Not mounted as a command directory.
     HostFunction,
 }
 
@@ -292,9 +314,9 @@ pub struct SidecarJsBridgeCall {
 
 /// Host-side handler for sidecar `JsBridgeCallRequest` payloads.
 ///
-/// This is Rust-only and intentionally not JSON-serializable. Managed services
-/// use it to bind native sidecar storage to their durable database without
-/// teaching agentOS about the hosting framework.
+/// This is Rust-only and intentionally not JSON-serializable. RivetKit uses it to bind a native
+/// sidecar root filesystem to actor-owned SQLite (`ctx.db_*`) without teaching agentos about
+/// Rivet actors.
 pub type SidecarJsBridgeCallback = Arc<
     dyn Fn(
             SidecarJsBridgeCall,
@@ -465,6 +487,9 @@ pub struct AgentOsLimits {
     #[cfg_attr(feature = "contract", ts(optional))]
     pub agentos_packages: Option<AgentOsPackageLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "contract", ts(optional))]
+    pub reactor: Option<ReactorLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<HttpLimits>,
@@ -601,12 +626,6 @@ pub struct ResourceLimits {
     pub max_readdir_entries: Option<u64>,
     #[serde(
         default,
-        rename = "maxWasmFuel",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub max_wasm_fuel: Option<u64>,
-    #[serde(
-        default,
         rename = "maxWasmMemoryBytes",
         skip_serializing_if = "Option::is_none"
     )]
@@ -624,6 +643,19 @@ pub struct ResourceLimits {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpLimits {
+    #[serde(
+        default,
+        rename = "maxChunkSizeLineBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_chunk_size_line_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPendingResponseBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_pending_response_bytes: Option<u64>,
+
     #[serde(
         default,
         rename = "maxFetchResponseBytes",
@@ -754,10 +786,29 @@ pub struct SqliteLimits {
 pub struct JsRuntimeLimits {
     #[serde(
         default,
+        rename = "maxReadlineHistoryEntries",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_readline_history_entries: Option<u64>,
+
+    #[serde(
+        default,
         rename = "v8HeapLimitMb",
         skip_serializing_if = "Option::is_none"
     )]
     pub v8_heap_limit_mb: Option<u64>,
+    #[serde(
+        default,
+        rename = "v8SerializationLimitBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub v8_serialization_limit_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxBlobBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_blob_bytes: Option<u64>,
     #[serde(
         default,
         rename = "syncRpcWaitTimeoutMs",
@@ -876,10 +927,34 @@ pub struct WasmLimits {
     pub runner_heap_limit_mb: Option<u64>,
     #[serde(
         default,
-        rename = "runnerCpuTimeLimitMs",
+        rename = "activeCpuTimeLimitMs",
         skip_serializing_if = "Option::is_none"
     )]
-    pub runner_cpu_time_limit_ms: Option<u64>,
+    pub active_cpu_time_limit_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "wallClockLimitMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wall_clock_limit_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "deterministicFuel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deterministic_fuel: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxThreads",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_threads: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxConcurrentThreads",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_concurrent_threads: Option<u64>,
 }
 
 #[cfg_attr(feature = "contract", derive(ts_rs::TS))]
@@ -917,6 +992,18 @@ pub struct ProcessLimits {
         skip_serializing_if = "Option::is_none"
     )]
     pub pending_event_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPendingChildSyncCount",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_pending_child_sync_count: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPendingChildSyncBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_pending_child_sync_bytes: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1246,7 +1333,7 @@ impl TimerScheduleDriver {
         let parsed = match crate::cron::parse_schedule(&entry.schedule) {
             Ok(parsed) => parsed,
             Err(_) => {
-                let _ = timers.remove(&entry.id);
+                let _ = timers.remove_sync(&entry.id);
                 return;
             }
         };
@@ -1255,7 +1342,7 @@ impl TimerScheduleDriver {
             Some(next) => next,
             None => {
                 // No upcoming run (one-shot in the past, or exhausted cron).
-                let _ = timers.remove(&entry.id);
+                let _ = timers.remove_sync(&entry.id);
                 return;
             }
         };
@@ -1275,10 +1362,10 @@ impl TimerScheduleDriver {
             // The driver is fire-and-forget; errors are the caller's responsibility.
             (entry.callback)().await;
 
-            if is_cron && timers.contains(&entry.id) {
+            if is_cron && timers.contains_sync(&entry.id) {
                 Self::schedule_next(Arc::clone(&timers), entry, cancel);
             } else {
-                let _ = timers.remove(&entry.id);
+                let _ = timers.remove_sync(&entry.id);
             }
         });
     }
@@ -1289,10 +1376,10 @@ impl ScheduleDriver for TimerScheduleDriver {
         let id = entry.id.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         // Replace any existing timer for this id, cancelling it first.
-        if let Some((_, old)) = self.timers.remove(&id) {
+        if let Some((_, old)) = self.timers.remove_sync(&id) {
             old.cancel();
         }
-        let _ = self.timers.insert(id.clone(), cancel.clone());
+        let _ = self.timers.insert_sync(id.clone(), cancel.clone());
 
         Self::schedule_next(Arc::clone(&self.timers), entry, cancel);
 
@@ -1300,13 +1387,16 @@ impl ScheduleDriver for TimerScheduleDriver {
     }
 
     fn cancel(&self, handle: &ScheduleHandle) {
-        if let Some((_, cancel)) = self.timers.remove(&handle.id) {
+        if let Some((_, cancel)) = self.timers.remove_sync(&handle.id) {
             cancel.cancel();
         }
     }
 
     fn dispose(&self) {
-        self.timers.scan(|_, cancel| cancel.cancel());
-        self.timers.clear();
+        self.timers.iter_sync(|_, cancel| {
+            cancel.cancel();
+            true
+        });
+        self.timers.clear_sync();
     }
 }

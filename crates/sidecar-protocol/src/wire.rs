@@ -17,6 +17,7 @@ pub use crate::generated_protocol::v1::*;
 impl Copy for crate::generated_protocol::v1::GuestFilesystemOperation {}
 impl Copy for crate::generated_protocol::v1::RootFilesystemMode {}
 impl Copy for crate::generated_protocol::v1::WasmPermissionTier {}
+impl Copy for crate::generated_protocol::v1::StandaloneWasmBackend {}
 
 // `derive(Default)` cannot be added: these are foreign generated types, so the
 // `Default` impl must be written by hand here (orphan rule).
@@ -233,6 +234,70 @@ fn legacy_root_entry_config(
     }
 }
 
+/// Convert the canonical configuration policy into the existing BARE scope
+/// unions. The trusted client uses this for live permission replacement.
+pub fn permissions_policy_config_to_wire(
+    policy: agentos_vm_config::PermissionsPolicy,
+) -> PermissionsPolicy {
+    fn mode(value: agentos_vm_config::PermissionMode) -> PermissionMode {
+        match value {
+            agentos_vm_config::PermissionMode::Allow => PermissionMode::Allow,
+            agentos_vm_config::PermissionMode::Deny => PermissionMode::Deny,
+            agentos_vm_config::PermissionMode::Ask => PermissionMode::Ask,
+        }
+    }
+    fn pattern(value: agentos_vm_config::PatternPermissionScope) -> PatternPermissionScope {
+        match value {
+            agentos_vm_config::PatternPermissionScope::Mode(value) => {
+                PatternPermissionScope::PermissionMode(mode(value))
+            }
+            agentos_vm_config::PatternPermissionScope::Rules(value) => {
+                PatternPermissionScope::PatternPermissionRuleSet(PatternPermissionRuleSet {
+                    default: value.default.map(mode),
+                    rules: value
+                        .rules
+                        .into_iter()
+                        .map(|rule| PatternPermissionRule {
+                            mode: mode(rule.mode),
+                            operations: rule.operations,
+                            patterns: rule.patterns,
+                        })
+                        .collect(),
+                })
+            }
+        }
+    }
+    fn fs(value: agentos_vm_config::FsPermissionScope) -> FsPermissionScope {
+        match value {
+            agentos_vm_config::FsPermissionScope::Mode(value) => {
+                FsPermissionScope::PermissionMode(mode(value))
+            }
+            agentos_vm_config::FsPermissionScope::Rules(value) => {
+                FsPermissionScope::FsPermissionRuleSet(FsPermissionRuleSet {
+                    default: value.default.map(mode),
+                    rules: value
+                        .rules
+                        .into_iter()
+                        .map(|rule| FsPermissionRule {
+                            mode: mode(rule.mode),
+                            operations: rule.operations,
+                            paths: rule.paths,
+                        })
+                        .collect(),
+                })
+            }
+        }
+    }
+    PermissionsPolicy {
+        fs: policy.fs.map(fs),
+        network: policy.network.map(pattern),
+        child_process: policy.child_process.map(pattern),
+        process: policy.process.map(pattern),
+        env: policy.env.map(pattern),
+        host_function: policy.host_function.map(pattern),
+    }
+}
+
 pub fn permissions_policy_config_from_wire(
     permissions: crate::generated_protocol::v1::PermissionsPolicy,
 ) -> agentos_vm_config::PermissionsPolicy {
@@ -441,12 +506,13 @@ fn legacy_limits_config(
         max_readdir_entries: legacy_u64(metadata, "resource.max_readdir_entries"),
         max_recursive_fs_depth: legacy_u64(metadata, "resource.max_recursive_fs_depth"),
         max_recursive_fs_entries: legacy_u64(metadata, "resource.max_recursive_fs_entries"),
-        max_wasm_fuel: legacy_u64(metadata, "resource.max_wasm_fuel"),
         max_wasm_memory_bytes: legacy_u64(metadata, "resource.max_wasm_memory_bytes"),
         max_wasm_stack_bytes: legacy_u64(metadata, "resource.max_wasm_stack_bytes"),
     };
     let http = agentos_vm_config::HttpLimitsConfig {
         max_fetch_response_bytes: legacy_u64(metadata, "limits.http.max_fetch_response_bytes"),
+        max_chunk_size_line_bytes: legacy_u64(metadata, "limits.http.max_chunk_size_line_bytes"),
+        max_pending_response_bytes: legacy_u64(metadata, "limits.http.max_pending_response_bytes"),
     };
     let host_functions = agentos_vm_config::HostFunctionLimitsConfig {
         default_timeout_ms: legacy_u64(metadata, "limits.host_functions.default_timeout_ms"),
@@ -487,7 +553,16 @@ fn legacy_limits_config(
         max_result_bytes: legacy_u64(metadata, "limits.sqlite.max_result_bytes"),
     };
     let js_runtime = agentos_vm_config::JsRuntimeLimitsConfig {
+        max_readline_history_entries: legacy_u64(
+            metadata,
+            "limits.js_runtime.max_readline_history_entries",
+        ),
         v8_heap_limit_mb: legacy_u64(metadata, "limits.js_runtime.v8_heap_limit_mb"),
+        v8_serialization_limit_bytes: legacy_u64(
+            metadata,
+            "limits.js_runtime.v8_serialization_limit_bytes",
+        ),
+        max_blob_bytes: legacy_u64(metadata, "limits.js_runtime.max_blob_bytes"),
         sync_rpc_wait_timeout_ms: legacy_u64(
             metadata,
             "limits.js_runtime.sync_rpc_wait_timeout_ms",
@@ -528,7 +603,11 @@ fn legacy_limits_config(
         sync_read_limit_bytes: legacy_u64(metadata, "limits.wasm.sync_read_limit_bytes"),
         prewarm_timeout_ms: legacy_u64(metadata, "limits.wasm.prewarm_timeout_ms"),
         runner_heap_limit_mb: legacy_u64(metadata, "limits.wasm.runner_heap_limit_mb"),
-        runner_cpu_time_limit_ms: legacy_u64(metadata, "limits.wasm.runner_cpu_time_limit_ms"),
+        active_cpu_time_limit_ms: legacy_u64(metadata, "limits.wasm.active_cpu_time_limit_ms"),
+        wall_clock_limit_ms: legacy_u64(metadata, "limits.wasm.wall_clock_limit_ms"),
+        deterministic_fuel: legacy_u64(metadata, "limits.wasm.deterministic_fuel"),
+        max_threads: legacy_u64(metadata, "limits.wasm.max_threads"),
+        max_concurrent_threads: legacy_u64(metadata, "limits.wasm.max_concurrent_threads"),
     };
     let execution = agentos_vm_config::ExecutionLimitsConfig {
         completed_ttl_ms: legacy_u64(metadata, "limits.execution.completed_ttl_ms"),
@@ -554,12 +633,24 @@ fn legacy_limits_config(
         output_replay_page_events: legacy_u64(metadata, "limits.process.output_replay_page_events"),
         output_replay_page_bytes: legacy_u64(metadata, "limits.process.output_replay_page_bytes"),
         max_output_replays: legacy_u64(metadata, "limits.process.max_output_replays"),
+
+        max_pending_child_sync_count: legacy_u64(
+            metadata,
+            "limits.process.max_pending_child_sync_count",
+        ),
+        max_pending_child_sync_bytes: legacy_u64(
+            metadata,
+            "limits.process.max_pending_child_sync_bytes",
+        ),
     };
 
     let config = agentos_vm_config::VmLimitsConfig {
         reactor: None,
         resources: legacy_has_resource_limits(&resources).then_some(resources),
-        http: http.max_fetch_response_bytes.is_some().then_some(http),
+        http: (http.max_fetch_response_bytes.is_some()
+            || http.max_chunk_size_line_bytes.is_some()
+            || http.max_pending_response_bytes.is_some())
+        .then_some(http),
         udp: None,
         tls: None,
         http2: None,
@@ -620,7 +711,6 @@ fn legacy_has_resource_limits(config: &agentos_vm_config::ResourceLimitsConfig) 
         || config.max_process_argv_bytes.is_some()
         || config.max_process_env_bytes.is_some()
         || config.max_readdir_entries.is_some()
-        || config.max_wasm_fuel.is_some()
         || config.max_wasm_memory_bytes.is_some()
         || config.max_wasm_stack_bytes.is_some()
 }
@@ -642,7 +732,10 @@ fn legacy_has_plugin_limits(config: &agentos_vm_config::PluginLimitsConfig) -> b
 }
 
 fn legacy_has_js_runtime_limits(config: &agentos_vm_config::JsRuntimeLimitsConfig) -> bool {
-    config.v8_heap_limit_mb.is_some()
+    config.max_readline_history_entries.is_some()
+        || config.v8_heap_limit_mb.is_some()
+        || config.v8_serialization_limit_bytes.is_some()
+        || config.max_blob_bytes.is_some()
         || config.sync_rpc_wait_timeout_ms.is_some()
         || config.cpu_time_limit_ms.is_some()
         || config.wall_clock_limit_ms.is_some()
@@ -667,7 +760,11 @@ fn legacy_has_wasm_limits(config: &agentos_vm_config::WasmLimitsConfig) -> bool 
         || config.sync_read_limit_bytes.is_some()
         || config.prewarm_timeout_ms.is_some()
         || config.runner_heap_limit_mb.is_some()
-        || config.runner_cpu_time_limit_ms.is_some()
+        || config.active_cpu_time_limit_ms.is_some()
+        || config.wall_clock_limit_ms.is_some()
+        || config.deterministic_fuel.is_some()
+        || config.max_threads.is_some()
+        || config.max_concurrent_threads.is_some()
 }
 
 fn legacy_has_process_limits(config: &agentos_vm_config::ProcessLimitsConfig) -> bool {
@@ -676,6 +773,13 @@ fn legacy_has_process_limits(config: &agentos_vm_config::ProcessLimitsConfig) ->
         || config.pending_stdin_bytes.is_some()
         || config.pending_event_count.is_some()
         || config.pending_event_bytes.is_some()
+        || config.max_pending_child_sync_count.is_some()
+        || config.max_pending_child_sync_bytes.is_some()
+        || config.output_replay_events.is_some()
+        || config.output_replay_bytes.is_some()
+        || config.output_replay_page_events.is_some()
+        || config.output_replay_page_bytes.is_some()
+        || config.max_output_replays.is_some()
 }
 
 // Ownership-scope constructor ergonomics. The generated BARE union exposes only the
@@ -710,11 +814,18 @@ impl crate::generated_protocol::v1::OwnershipScope {
     }
 }
 
-pub const PROTOCOL_NAME: &str = "agentos-native-sidecar";
-pub const PROTOCOL_VERSION: u16 = 11;
+pub const PROTOCOL_NAME: &str = "agentos-sidecar";
+pub const PROTOCOL_VERSION: u16 = 12;
 // 16 MiB: large enough to carry a trusted-client CreateVm config that inlines an
 // entire base-filesystem snapshot, while still bounding a single frame.
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+/// Most entries one `GuestFilesystemWriteFilesRequest` may carry. The sidecar
+/// advertises it as `AuthenticatedResponse.max_write_files_entries`; clients
+/// split by that value. Total bytes are bounded by the negotiated `max_frame_bytes`.
+/// A batch runs in one critical section on the shared sidecar task set, so this
+/// stays small: a larger batch would stall every other VM on the sidecar until it ends.
+pub const MAX_GUEST_FILESYSTEM_WRITE_FILES_ENTRIES: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolCodecError {
@@ -1245,6 +1356,33 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn legacy_metadata_preserves_each_bridge_budget_without_other_group_fields() {
+        for (key, field) in [
+            (
+                "limits.http.max_chunk_size_line_bytes",
+                "maxChunkSizeLineBytes",
+            ),
+            (
+                "limits.http.max_pending_response_bytes",
+                "maxPendingResponseBytes",
+            ),
+            (
+                "limits.js_runtime.max_readline_history_entries",
+                "maxReadlineHistoryEntries",
+            ),
+        ] {
+            let metadata = BTreeMap::from([(key.to_string(), "2048".to_string())]);
+            let config = serde_json::to_value(legacy_limits_config(&metadata).unwrap()).unwrap();
+            let group = if key.contains(".http.") {
+                "http"
+            } else {
+                "jsRuntime"
+            };
+            assert_eq!(config[group][field], serde_json::json!(2048));
+        }
+    }
+
+    #[test]
     fn legacy_metadata_preserves_js_runtime_limits_with_only_new_fields() {
         let metadata = BTreeMap::from([(
             String::from("limits.js_runtime.cpu_time_limit_ms"),
@@ -1284,16 +1422,28 @@ mod tests {
     }
 
     #[test]
-    fn legacy_metadata_preserves_wasm_runner_cpu_limit_as_only_new_field() {
-        let metadata = BTreeMap::from([(
-            String::from("limits.wasm.runner_cpu_time_limit_ms"),
-            String::from("987"),
-        )]);
+    fn legacy_metadata_preserves_wasm_cpu_fields() {
+        let metadata = BTreeMap::from([
+            (
+                String::from("limits.wasm.active_cpu_time_limit_ms"),
+                String::from("987"),
+            ),
+            (
+                String::from("limits.wasm.wall_clock_limit_ms"),
+                String::from("654"),
+            ),
+            (
+                String::from("limits.wasm.deterministic_fuel"),
+                String::from("321"),
+            ),
+        ]);
 
         let config = legacy_limits_config(&metadata).expect("limits config");
         let wasm = config.wasm.expect("wasm limits");
 
-        assert_eq!(wasm.runner_cpu_time_limit_ms, Some(987));
+        assert_eq!(wasm.active_cpu_time_limit_ms, Some(987));
+        assert_eq!(wasm.wall_clock_limit_ms, Some(654));
+        assert_eq!(wasm.deterministic_fuel, Some(321));
     }
 
     #[test]
@@ -1392,6 +1542,7 @@ mod tests {
                 advisory: true,
                 timeout_ms: Some(250),
                 max_package_bytes: None,
+                max_source_url_bytes: Some(8192),
                 download_timeout_ms: None,
                 connect_timeout_ms: None,
                 max_redirects: None,
@@ -1447,6 +1598,7 @@ mod tests {
                         advisory: false,
                         timeout_ms: Some(250),
                         max_package_bytes: None,
+                        max_source_url_bytes: None,
                         download_timeout_ms: None,
                         connect_timeout_ms: None,
                         max_redirects: None,
@@ -1470,6 +1622,83 @@ mod tests {
         for frame in frames {
             let encoded = codec.encode(&frame).expect("encode frame");
             assert_eq!(codec.decode(&encoded).expect("decode frame"), frame);
+        }
+    }
+    #[test]
+    fn write_files_capabilities_are_required_and_typed_on_wire() {
+        let valid = serde_json::json!({ "sidecar_id": "synthetic", "connection_id": "conn", "max_frame_bytes": 4096, "max_write_files_entries": 3 });
+        let parsed: AuthenticatedResponse = serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(parsed.max_frame_bytes, 4096);
+        assert_eq!(parsed.max_write_files_entries, 3);
+        for name in ["max_frame_bytes", "max_write_files_entries"] {
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(name);
+            assert!(serde_json::from_value::<AuthenticatedResponse>(missing).is_err());
+            for value in [
+                serde_json::json!(-1),
+                serde_json::json!(1.5),
+                serde_json::json!(4294967296u64),
+            ] {
+                let mut malformed = valid.clone();
+                malformed[name] = value;
+                assert!(serde_json::from_value::<AuthenticatedResponse>(malformed).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn write_files_data_bytes_have_identical_bare_layout_and_json_shape() {
+        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+        struct LegacyData {
+            path: String,
+            content: Vec<u8>,
+        }
+        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+        struct LegacyOptionalData {
+            content: Option<Vec<u8>>,
+        }
+        let content = vec![0, 1, 127, 128, 255];
+        let entry = GuestFilesystemWriteFileEntry {
+            path: "/tmp/bytes".into(),
+            content: content.clone(),
+        };
+        let legacy = LegacyData {
+            path: entry.path.clone(),
+            content,
+        };
+        let encoded = serde_bare::to_vec(&entry).unwrap();
+        assert_eq!(encoded, serde_bare::to_vec(&legacy).unwrap());
+        assert_eq!(
+            serde_bare::from_slice::<GuestFilesystemWriteFileEntry>(&encoded).unwrap(),
+            entry
+        );
+        assert_eq!(
+            serde_json::to_value(&entry).unwrap(),
+            serde_json::to_value(&legacy).unwrap()
+        );
+        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+        struct FastOptionalData {
+            #[serde(with = "serde_bytes")]
+            content: Option<Vec<u8>>,
+        }
+        for content in [None, Some(Vec::new()), Some(vec![0, 128, 255])] {
+            let old = LegacyOptionalData {
+                content: content.clone(),
+            };
+            let new = FastOptionalData { content };
+            assert_eq!(
+                serde_bare::to_vec(&old).unwrap(),
+                serde_bare::to_vec(&new).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(&old).unwrap(),
+                serde_json::to_value(&new).unwrap()
+            );
+            assert_eq!(
+                serde_bare::from_slice::<FastOptionalData>(&serde_bare::to_vec(&old).unwrap())
+                    .unwrap(),
+                new
+            );
         }
     }
 }

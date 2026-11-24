@@ -197,7 +197,7 @@ impl CronManager {
     /// and remove the job from the registry.
     pub(crate) fn cancel_job(&self, id: &str) {
         let _guard = self.schedule_lock.lock();
-        if let Some((_, state)) = self.jobs.remove(id) {
+        if let Some((_, state)) = self.jobs.remove_sync(id) {
             self.driver.cancel(&state.handle);
         }
     }
@@ -208,10 +208,12 @@ impl CronManager {
     /// registry, then call `this.driver.dispose()` to tear down all driver-held timer state.
     pub(crate) fn dispose(&self) {
         let _guard = self.schedule_lock.lock();
-        self.jobs.scan(|_, state| {
+        self.jobs.iter_sync(|_, state| {
             self.driver.cancel(&state.handle);
+
+            true
         });
-        self.jobs.clear();
+        self.jobs.clear_sync();
         self.driver.dispose();
     }
 }
@@ -241,7 +243,7 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
     {
         let mut should_return = false;
         let mut should_queue = false;
-        manager.jobs.read(id, |_, state| {
+        manager.jobs.read_sync(id, |_, state| {
             if state.running.load(Ordering::SeqCst) {
                 match state.overlap {
                     CronOverlap::Allow => {}
@@ -254,7 +256,7 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
             return;
         }
         if should_queue {
-            manager.jobs.read(id, |_, state| {
+            manager.jobs.read_sync(id, |_, state| {
                 state.queued.store(true, Ordering::SeqCst);
             });
             return;
@@ -262,7 +264,7 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
     }
 
     // Mark running, record this run, and snapshot the action to dispatch.
-    let action = match manager.jobs.read(id, |_, state| {
+    let action = match manager.jobs.read_sync(id, |_, state| {
         state.running.store(true, Ordering::SeqCst);
         *state.last_run.lock() = Some(Utc::now());
         state.run_count.fetch_add(1, Ordering::SeqCst);
@@ -301,7 +303,7 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
 
     // Clear running, recompute the next run, and drain a queued run if one was deferred.
     let mut run_queued = false;
-    manager.jobs.read(id, |_, state| {
+    manager.jobs.read_sync(id, |_, state| {
         state.running.store(false, Ordering::SeqCst);
         *state.next_run.lock() = compute_next_time(&state.schedule, Utc::now());
         if state.queued.swap(false, Ordering::SeqCst) {
@@ -1131,7 +1133,7 @@ impl AgentOs {
     /// Snapshot all cron jobs. Mirrors TS `CronManager.list`.
     pub fn list_cron_jobs(&self) -> Vec<CronJobInfo> {
         let mut result = Vec::new();
-        self.cron().jobs.scan(|id, state| {
+        self.cron().jobs.iter_sync(|id, state| {
             result.push(CronJobInfo {
                 id: id.clone(),
                 schedule: state.schedule.clone(),
@@ -1150,6 +1152,8 @@ impl AgentOs {
                 run_count: state.run_count.load(Ordering::SeqCst),
                 running: state.running.load(Ordering::SeqCst),
             });
+
+            true
         });
         result
     }
@@ -1167,7 +1171,7 @@ impl AgentOs {
 }
 
 fn ensure_cron_capacity(cron: &CronManager, id: &str) -> std::result::Result<(), ClientError> {
-    if cron.jobs.contains(id) || cron.jobs.len() < crate::CRON_JOB_LIMIT {
+    if cron.jobs.contains_sync(id) || cron.jobs.len() < crate::CRON_JOB_LIMIT {
         return Ok(());
     }
 
@@ -1192,7 +1196,7 @@ fn register_cron_job(
     // If replacing an existing id, cancel the old driver-armed timer before scheduling the new one.
     // The default timer driver's handles are id-based, so cancelling after the new schedule would
     // cancel the replacement.
-    if let Some((_, old)) = cron.jobs.remove(&id) {
+    if let Some((_, old)) = cron.jobs.remove_sync(&id) {
         cron.driver.cancel(&old.handle);
     }
 
@@ -1214,7 +1218,7 @@ fn register_cron_job(
         handle,
     };
 
-    let _ = cron.jobs.insert(id.clone(), state);
+    let _ = cron.jobs.insert_sync(id.clone(), state);
 
     Ok(CronJobHandle {
         id,
@@ -1272,7 +1276,10 @@ mod tests {
         for index in 0..CRON_JOB_LIMIT {
             let id = format!("job-{index}");
             assert!(
-                manager.jobs.insert(id.clone(), dummy_state(id)).is_ok(),
+                manager
+                    .jobs
+                    .insert_sync(id.clone(), dummy_state(id))
+                    .is_ok(),
                 "seed cron job"
             );
         }

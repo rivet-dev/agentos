@@ -1,4 +1,4 @@
-import type { AgentOsSandboxProvider } from "@rivet-dev/agentos-core";
+import type { AgentOsSandboxProvider } from "@rivet-dev/agentos";
 import type { DockerProviderOptions } from "sandbox-agent/docker";
 import { docker as sandboxAgentDocker } from "sandbox-agent/docker";
 import { sandboxAgentProvider } from "./provider.js";

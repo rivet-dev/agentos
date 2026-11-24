@@ -1,0 +1,1874 @@
+{
+  "scope": "final native51 focused WASM and VM creation; shared host, other agentOS workloads held",
+  "summary": {
+    "scope": "final native51 focused WASM and VM creation; shared host, other agentOS workloads held",
+    "samplesPerLane": 80,
+    "pairs": 4,
+    "metrics": {
+      "vmCreateMs": {
+        "mainMedianOfRunMedians": 56.7876735,
+        "candidateMedianOfRunMedians": 46.90514949999999,
+        "differenceMs": -9.882524000000004,
+        "differencePercent": -17.402586496169814
+      },
+      "firstWasmMs": {
+        "mainMedianOfRunMedians": 86.6354905,
+        "candidateMedianOfRunMedians": 86.527301,
+        "differenceMs": -0.10818950000000882,
+        "differencePercent": -0.12487896054562686
+      },
+      "warmWasmMs": {
+        "mainMedianOfRunMedians": 38.862722500000004,
+        "candidateMedianOfRunMedians": 40.271017,
+        "differenceMs": 1.4082944999999967,
+        "differencePercent": 3.6237669658887084
+      },
+      "wasmFsMs": {
+        "mainMedianOfRunMedians": 119.15818250000001,
+        "candidateMedianOfRunMedians": 119.8890955,
+        "differenceMs": 0.7309129999999868,
+        "differencePercent": 0.6133972377431851
+      }
+    },
+    "vmCreateMaximumMs": {
+      "main": 74.150561,
+      "candidate": 68.147577
+    }
+  },
+  "records": [
+    {
+      "kind": "artifacts",
+      "wasmPackageSha256": "b907229016bfd401e332574cacb5490c73d2d961163a2c777e30f8fca630b7f2",
+      "candidateRevision": "92f3c8da9677b4362429644bc63d1b16ee942cae",
+      "runnerSha256": "a40b036e657936f6ab58e28a2b1c2f1c245038d775e2fd9c1bc3fedcbbea98a9",
+      "entries": [
+        {
+          "label": "main",
+          "binarySha256": "797c45cf03d66fc5eb3c3cc90a7f1b4bb283314506dcb8c8f188422bc03ad548",
+          "coreSha256": "806c8621647c44087f1598f16c09f8f4dc766a766333b6cdf701be84237283d9"
+        },
+        {
+          "label": "candidate",
+          "binarySha256": "a75608044424859cf88bc509a9249fc978ecbb861a4060b412a75092dbb07599",
+          "coreSha256": "e89c7193bdb6bf1615c12828f8a2e8249f01cc896b68db068565c10f25c5e285"
+        }
+      ]
+    },
+    {
+      "kind": "sample",
+      "pair": 0,
+      "label": "main",
+      "vmCreateMs": 56.941976,
+      "firstWasmMs": 86.538564,
+      "warmWasmMs": 39.583172,
+      "wasmFsMs": 116.486067,
+      "sidecarStartMs": 0.235966,
+      "vmCreateSamples": [
+        {
+          "iteration": 0,
+          "warmup": true,
+          "milliseconds": 70.743208
+        },
+        {
+          "iteration": 1,
+          "warmup": true,
+          "milliseconds": 58.942418
+        },
+        {
+          "iteration": 2,
+          "warmup": true,
+          "milliseconds": 56.792183
+        },
+        {
+          "iteration": 3,
+          "warmup": true,
+          "milliseconds": 55.43879
+        },
+        {
+          "iteration": 4,
+          "warmup": true,
+          "milliseconds": 57.379075
+        },
+        {
+          "iteration": 5,
+          "warmup": false,
+          "milliseconds": 56.678211
+        },
+        {
+          "iteration": 6,
+          "warmup": false,
+          "milliseconds": 56.283171
+        },
+        {
+          "iteration": 7,
+          "warmup": false,
+          "milliseconds": 57.933339
+        },
+        {
+          "iteration": 8,
+          "warmup": false,
+          "milliseconds": 58.395778
+        },
+        {
+          "iteration": 9,
+          "warmup": false,
+          "milliseconds": 56.889872
+        },
+        {
+          "iteration": 10,
+          "warmup": false,
+          "milliseconds": 56.941976
+        },
+        {
+          "iteration": 11,
+          "warmup": false,
+          "milliseconds": 55.943778
+        },
+        {
+          "iteration": 12,
+          "warmup": false,
+          "milliseconds": 57.069011
+        },
+        {
+          "iteration": 13,
+          "warmup": false,
+          "milliseconds": 55.922633
+        },
+        {
+          "iteration": 14,
+          "warmup": false,
+          "milliseconds": 56.127071
+        },
+        {
+          "iteration": 15,
+          "warmup": false,
+          "milliseconds": 57.921286
+        },
+        {
+          "iteration": 16,
+          "warmup": false,
+          "milliseconds": 54.965398
+        },
+        {
+          "iteration": 17,
+          "warmup": false,
+          "milliseconds": 57.699195
+        },
+        {
+          "iteration": 18,
+          "warmup": false,
+          "milliseconds": 54.875514
+        },
+        {
+          "iteration": 19,
+          "warmup": false,
+          "milliseconds": 57.059247
+        },
+        {
+          "iteration": 20,
+          "warmup": false,
+          "milliseconds": 60.172602
+        },
+        {
+          "iteration": 21,
+          "warmup": false,
+          "milliseconds": 54.563343
+        },
+        {
+          "iteration": 22,
+          "warmup": false,
+          "milliseconds": 57.926572
+        },
+        {
+          "iteration": 23,
+          "warmup": false,
+          "milliseconds": 57.324125
+        },
+        {
+          "iteration": 24,
+          "warmup": false,
+          "milliseconds": 56.038363
+        }
+      ],
+      "raw": {
+        "vmCreateMs": [
+          56.678211,
+          56.283171,
+          57.933339,
+          58.395778,
+          56.889872,
+          56.941976,
+          55.943778,
+          57.069011,
+          55.922633,
+          56.127071,
+          57.921286,
+          54.965398,
+          57.699195,
+          54.875514,
+          57.059247,
+          60.172602,
+          54.563343,
+          57.926572,
+          57.324125,
+          56.038363
+        ],
+        "firstWasmMs": [
+          86.538564,
+          80.695294,
+          87.302065,
+          85.154857,
+          82.56834,
+          83.609472,
+          87.198189,
+          85.200053,
+          87.364977,
+          87.792108,
+          87.691091,
+          83.942329,
+          95.273853,
+          85.491168,
+          89.78329,
+          86.271071,
+          83.372465,
+          82.868449,
+          87.976322,
+          87.017422
+        ],
+        "warmWasmMs": [
+          37.321437,
+          42.265447,
+          37.232941,
+          40.765264,
+          39.583172,
+          38.263834,
+          52.799149,
+          37.589034,
+          37.990241,
+          40.539099,
+          38.562957,
+          42.554999,
+          41.035576,
+          37.786408,
+          43.42579,
+          37.781117,
+          43.090803,
+          38.482695,
+          37.144163,
+          48.008951
+        ],
+        "wasmFsMs": [
+          119.969564,
+          126.569796,
+          113.958863,
+          122.199936,
+          114.533018,
+          116.837114,
+          126.681769,
+          117.574352,
+          119.476265,
+          113.869551,
+          114.888849,
+          121.798806,
+          116.486067,
+          115.429419,
+          127.013494,
+          112.711492,
+          116.377174,
+          112.101145,
+          116.344716,
+          112.73353
+        ]
+      }
+    },
+    {
+      "kind": "sample",
+      "pair": 0,
+      "label": "candidate",
+      "vmCreateMs": 46.619381,
+      "firstWasmMs": 86.559039,
+      "warmWasmMs": 41.939442,
+      "wasmFsMs": 119.144097,
+      "sidecarStartMs": 0.251789,
+      "vmCreateSamples": [
+        {
+          "iteration": 0,
+          "warmup": true,
+          "milliseconds": 62.758148
+        },
+        {
+          "iteration": 1,
+          "warmup": true,
+          "milliseconds": 47.48681
+        },
+        {
+          "iteration": 2,
+          "warmup": true,
+          "milliseconds": 49.458103
+        },
+        {
+          "iteration": 3,
+          "warmup": true,
+          "milliseconds": 46.263549
+        },
+        {
+          "iteration": 4,
+          "warmup": true,
+          "milliseconds": 46.386541
+        },
+        {
+          "iteration": 5,
+          "warmup": false,
+          "milliseconds": 46.7818
+        },
+        {
+          "iteration": 6,
+          "warmup": false,
+          "milliseconds": 45.437975
+        },
+        {
+          "iteration": 7,
+          "warmup": false,
+          "milliseconds": 46.133592
+        },
+        {
+          "iteration": 8,
+          "warmup": false,
+          "milliseconds": 48.892447
+        },
+        {
+          "iteration": 9,
+          "warmup": false,
+          "milliseconds": 46.249406
+        },
+        {
+          "iteration": 10,
+          "warmup": false,
+          "milliseconds": 47.026205
+        },
+        {
+          "iteration": 11,
+          "warmup": false,
+          "milliseconds": 47.722043
+        },
+        {
+          "iteration": 12,
+          "warmup": false,
+          "milliseconds": 46.3097
+        },
+        {
+          "iteration": 13,
+          "warmup": false,
+          "milliseconds": 46.335496
+        },
+        {
+          "iteration": 14,
+          "warmup": false,
+          "milliseconds": 45.606509
+        },
+        {
+          "iteration": 15,
+          "warmup": false,
+          "milliseconds": 45.702955
+        },
+        {
+          "iteration": 16,
+          "warmup": false,
+          "milliseconds": 47.61305
+        },
+        {
+          "iteration": 17,
+          "warmup": false,
+          "milliseconds": 46.724495
+        },
+        {
+          "iteration": 18,
+          "warmup": false,
+          "milliseconds": 46.823565
+        },
+        {
+          "iteration": 19,
+          "warmup": false,
+          "milliseconds": 45.067766
+        },
+        {
+          "iteration": 20,
+          "warmup": false,
+          "milliseconds": 59.126856
+        },
+        {
+          "iteration": 21,
+          "warmup": false,
+          "milliseconds": 46.276113
+        },
+        {
+          "iteration": 22,
+          "warmup": false,
+          "milliseconds": 44.779072
+        },
+        {
+          "iteration": 23,
+          "warmup": false,
+          "milliseconds": 46.619381
+        },
+        {
+          "iteration": 24,
+          "warmup": false,
+          "milliseconds": 46.712419
+        }
+      ],
+      "raw": {
+        "vmCreateMs": [
+          46.7818,
+          45.437975,
+          46.133592,
+          48.892447,
+          46.249406,
+          47.026205,
+          47.722043,
+          46.3097,
+          46.335496,
+          45.606509,
+          45.702955,
+          47.61305,
+          46.724495,
+          46.823565,
+          45.067766,
+          59.126856,
+          46.276113,
+          44.779072,
+          46.619381,
+          46.712419
+        ],
+        "firstWasmMs": [
+          85.710074,
+          81.194413,
+          93.707726,
+          88.225828,
+          94.873584,
+          85.270534,
+          88.553724,
+          85.948928,
+          86.284455,
+          87.466062,
+          87.07147,
+          86.559039,
+          83.288831,
+          84.361426,
+          87.044245,
+          85.665802,
+          86.912792,
+          82.987487,
+          84.5293,
+          91.882705
+        ],
+        "warmWasmMs": [
+          39.789251,
+          49.126623,
+          46.852314,
+          38.769048,
+          45.587618,
+          38.414687,
+          38.359192,
+          37.73194,
+          41.74174,
+          40.821399,
+          47.132173,
+          37.732122,
+          41.939442,
+          50.06199,
+          38.745427,
+          47.390804,
+          38.380124,
+          46.471848,
+          43.05963,
+          42.524601
+        ],
+        "wasmFsMs": [
+          116.988577,
+          118.404921,
+          119.144097,
+          114.709739,
+          120.356897,
+          122.898271,
+          116.284138,
+          118.42937,
+          118.402904,
+          116.009295,
+          128.57085,
+          121.588152,
+          121.078417,
+          123.632698,
+          117.96483,
+          124.061271,
+          120.167337,
+          123.366539,
+          118.760392,
+          118.611812
+        ]
+      }
+    },
+    {
+      "kind": "sample",
+      "pair": 1,
+      "label": "candidate",
+      "vmCreateMs": 46.813689,
+      "firstWasmMs": 86.495563,
+      "warmWasmMs": 40.513274,
+      "wasmFsMs": 121.376543,
+      "sidecarStartMs": 0.242863,
+      "vmCreateSamples": [
+        {
+          "iteration": 0,
+          "warmup": true,
+          "milliseconds": 59.323941
+        },
+        {
+          "iteration": 1,
+          "warmup": true,
+          "milliseconds": 48.457583
+        },
+        {
+          "iteration": 2,
+          "warmup": true,
+          "milliseconds": 49.447636
+        },
+        {
+          "iteration": 3,
+          "warmup": true,
+          "milliseconds": 47.833214
+        },
+        {
+          "iteration": 4,
+          "warmup": true,
+          "milliseconds": 46.933149
+        },
+        {
+          "iteration": 5,
+          "warmup": false,
+          "milliseconds": 45.949679
+        },
+        {
+          "iteration": 6,
+          "warmup": false,
+          "milliseconds": 48.083778
+        },
+        {
+          "iteration": 7,
+          "warmup": false,
+          "milliseconds": 46.15606
+        },
+        {
+          "iteration": 8,
+          "warmup": false,
+          "milliseconds": 48.076881
+        },
+        {
+          "iteration": 9,
+          "warmup": false,
+          "milliseconds": 45.738465
+        },
+        {
+          "iteration": 10,
+          "warmup": false,
+          "milliseconds": 47.44078
+        },
+        {
+          "iteration": 11,
+          "warmup": false,
+          "milliseconds": 47.217047
+        },
+        {
+          "iteration": 12,
+          "warmup": false,
+          "milliseconds": 50.630421
+        },
+        {
+          "iteration": 13,
+          "warmup": false,
+          "milliseconds": 46.425504
+        },
+        {
+          "iteration": 14,
+          "warmup": false,
+          "milliseconds": 46.994225
+        },
+        {
+          "iteration": 15,
+          "warmup": false,
+          "milliseconds": 46.594831
+        },
+        {
+          "iteration": 16,
+          "warmup": false,
+          "milliseconds": 48.958175
+        },
+        {
+          "iteration": 17,
+          "warmup": false,
+          "milliseconds": 46.381582
+        },
+        {
+          "iteration": 18,
+          "warmup": false,
+          "milliseconds": 46.042084
+        },
+        {
+          "iteration": 19,
+          "warmup": false,
+          "milliseconds": 46.813689
+        },
+        {
+          "iteration": 20,
+          "warmup": false,
+          "milliseconds": 48.820353
+        },
+        {
+          "iteration": 21,
+          "warmup": false,
+          "milliseconds": 45.883379
+        },
+        {
+          "iteration": 22,
+          "warmup": false,
+          "milliseconds": 46.543142
+        },
+        {
+          "iteration": 23,
+          "warmup": false,
+          "milliseconds": 44.835792
+        },
+        {
+          "iteration": 24,
+          "warmup": false,
+          "milliseconds": 49.803965
+        }
+      ],
+      "raw": {
+        "vmCreateMs": [
+          45.949679,
+          48.083778,
+          46.15606,
+          48.076881,
+          45.738465,
+          47.44078,
+          47.217047,
+          50.630421,
+          46.425504,
+          46.994225,
+          46.594831,
+          48.958175,
+          46.381582,
+          46.042084,
+          46.813689,
+          48.820353,
+          45.883379,
+          46.543142,
+          44.835792,
+          49.803965
+        ],
+        "firstWasmMs": [
+          84.308946,
+          86.495563,
+          86.293827,
+          89.364981,
+          83.63415,
+          88.690225,
+          87.486155,
+          92.532302,
+          84.304751,
+          84.943957,
+          86.225749,
+          84.256392,
+          85.301093,
+          86.387027,
+          82.579977,
+          87.601878,
+          91.951655,
+          88.002488,
+          87.215126,
+          92.970001
+        ],
+        "warmWasmMs": [
+          44.735815,
+          39.25626,
+          40.8058,
+          38.415892,
+          38.127002,
+          38.11567,
+          38.005005,
+          40.513274,
+          55.051277,
+          38.846184,
+          43.569529,
+          43.404317,
+          38.380686,
+          45.339623,
+          42.224466,
+          37.727723,
+          45.621479,
+          37.163465,
+          38.286645,
+          43.457772
+        ],
+        "wasmFsMs": [
+          123.195134,
+          122.7289,
+          121.722545,
+          119.735409,
+          120.697998,
+          120.137556,
+          115.676903,
+          122.24608,
+          122.803059,
+          116.584967,
+          121.376543,
+          120.90789,
+          117.018412,
+          124.585184,
+          129.737891,
+          118.004156,
+          125.328888,
+          118.492284,
+          117.845076,
+          124.766931
+        ]
+      }
+    },
+    {
+      "kind": "sample",
+      "pair": 1,
+      "label": "main",
+      "vmCreateMs": 56.587871,
+      "firstWasmMs": 86.732417,
+      "warmWasmMs": 38.536953,
+      "wasmFsMs": 119.921066,
+      "sidecarStartMs": 0.259947,
+      "vmCreateSamples": [
+        {
+          "iteration": 0,
+          "warmup": true,
+          "milliseconds": 71.083387
+        },
+        {
+          "iteration": 1,
+          "warmup": true,
+          "milliseconds": 58.081658
+        },
+        {
+          "iteration": 2,
+          "warmup": true,
+          "milliseconds": 57.631864
+        },
+        {
+          "iteration": 3,
+          "warmup": true,
+          "milliseconds": 56.139
+        },
+        {
+          "iteration": 4,
+          "warmup": true,
+          "milliseconds": 58.458345
+        },
+        {
+          "iteration": 5,
+          "warmup": false,
+          "milliseconds": 56.162456
+        },
+        {
+          "iteration": 6,
+          "warmup": false,
+          "milliseconds": 57.742587
+        },
+        {
+          "iteration": 7,
+          "warmup": false,
+          "milliseconds": 56.557122
+        },
+        {
+          "iteration": 8,
+          "warmup": false,
+          "milliseconds": 58.344016
+        },
+        {
+          "iteration": 9,
+          "warmup": false,
+          "milliseconds": 55.24427
+        },
+        {
+          "iteration": 10,
+          "warmup": false,
+          "milliseconds": 56.250936
+        },
+        {
+          "iteration": 11,
+          "warmup": false,
+          "milliseconds": 56.587871
+        },
+        {
+          "iteration": 12,
+          "warmup": false,
+          "milliseconds": 54.413597
+        },
+        {
+          "iteration": 13,
+          "warmup": false,
+          "milliseconds": 57.369991
+        },
+        {
+          "iteration": 14,
+          "warmup": false,
+          "milliseconds": 56.359898
+        },
+        {
+          "iteration": 15,
+          "warmup": false,
+          "milliseconds": 55.561826
+        },
+        {
+          "iteration": 16,
+          "warmup": false,
+          "milliseconds": 58.337837
+        },
+        {
+          "iteration": 17,
+          "warmup": false,
+          "milliseconds": 55.488504
+        },
+        {
+          "iteration": 18,
+          "warmup": false,
+          "milliseconds": 55.573076
+        },
+        {
+          "iteration": 19,
+          "warmup": false,
+          "milliseconds": 57.645917
+        },
+        {
+          "iteration": 20,
+          "warmup": false,
+          "milliseconds": 58.065265
+        },
+        {
+          "iteration": 21,
+          "warmup": false,
+          "milliseconds": 55.430302
+        },
+        {
+          "iteration": 22,
+          "warmup": false,
+          "milliseconds": 57.101094
+        },
+        {
+          "iteration": 23,
+          "warmup": false,
+          "milliseconds": 56.876247
+        },
+        {
+          "iteration": 24,
+          "warmup": false,
+          "milliseconds": 57.548247
+        }
+      ],
+      "raw": {
+        "vmCreateMs": [
+          56.162456,
+          57.742587,
+          56.557122,
+          58.344016,
+          55.24427,
+          56.250936,
+          56.587871,
+          54.413597,
+          57.369991,
+          56.359898,
+          55.561826,
+          58.337837,
+          55.488504,
+          55.573076,
+          57.645917,
+          58.065265,
+          55.430302,
+          57.101094,
+          56.876247,
+          57.548247
+        ],
+        "firstWasmMs": [
+          84.424216,
+          90.648828,
+          84.282548,
+          85.472752,
+          88.632799,
+          91.820774,
+          85.3268,
+          88.432626,
+          88.9235,
+          90.335558,
+          86.190428,
+          87.029454,
+          85.627698,
+          89.9226,
+          89.513691,
+          85.943108,
+          83.969774,
+          84.817378,
+          86.732417,
+          84.339506
+        ],
+        "warmWasmMs": [
+          39.312372,
+          38.576145,
+          38.849984,
+          37.946786,
+          53.618104,
+          37.159273,
+          42.967813,
+          43.289246,
+          39.008968,
+          37.544582,
+          37.576274,
+          37.290885,
+          38.536953,
+          48.101703,
+          37.160761,
+          38.353591,
+          45.553331,
+          38.43789,
+          37.978651,
+          37.291733
+        ],
+        "wasmFsMs": [
+          118.114287,
+          117.764355,
+          120.220685,
+          117.479842,
+          122.866465,
+          130.933498,
+          125.419702,
+          126.008237,
+          119.402676,
+          119.939364,
+          115.030053,
+          114.139834,
+          117.497889,
+          121.185566,
+          119.921066,
+          119.435337,
+          129.239305,
+          116.121673,
+          117.03188,
+          130.537977
+        ]
+      }
+    },
+    {
+      "kind": "sample",
+      "pair": 2,
+      "label": "main",
+      "vmCreateMs": 57.259908,
+      "firstWasmMs": 85.28694,
+      "warmWasmMs": 38.609711,
+      "wasmFsMs": 119.741448,
+      "sidecarStartMs": 0.255789,
+      "vmCreateSamples": [
+        {
+          "iteration": 0,
+          "warmup": true,
+          "milliseconds": 70.831938
+        },
+        {
+          "iteration": 1,
+          "warmup": true,
+          "milliseconds": 57.813506
+        },
+        {
+          "iteration": 2,
+          "warmup": true,
+          "milliseconds": 57.192642
+        },
+        {
+          "iteration": 3,
+          "warmup": true,
+          "milliseconds": 56.42019
+        },
+        {
+          "iteration": 4,
+          "warmup": true,
+          "milliseconds": 58.603896
+        },
+        {
+          "iteration": 5,
+          "warmup": false,
+          "milliseconds": 57.106949
+        },
+        {
+          "iteration": 6,
+          "warmup": false,
+          "milliseconds": 58.549891
+        },
+        {
+          "iteration": 7,
+          "warmup": false,
+          "milliseconds": 57.259908
+        },
+        {
+          "iteration": 8,
+          "warmup": false,
+          "milliseconds": 59.428448
+        },
+        {
+          "iteration": 9,
+          "warmup": false,
+          "milliseconds": 56.866125
+        },
+        {
+          "iteration": 10,
+          "warmup": false,
+          "milliseconds": 57.261867
+        },
+        {
+          "iteration": 11,
+          "warmup": false,
+          "milliseconds": 55.142374
+        },
+        {
+          "iteration": 12,
+          "warmup": false,
+          "milliseconds": 57.615713
+        },
+        {
+          "iteration": 13,
+          "warmup": false,
+          "milliseconds": 56.509054
+        },
+        {
+          "iteration": 14,
+          "warmup": false,
+          "milliseconds": 55.456523
+        },
+        {
+          "iteration": 15,
+          "warmup": false,
+          "milliseconds": 58.008501
+        },
+        {
+          "iteration": 16,
+          "warmup": false,
+          "milliseconds": 61.57425
+        },
+        {
+          "iteration": 17,
+          "warmup": false,
+          "milliseconds": 56.28512
+        },
+        {
+          "iteration": 18,
+          "warmup": false,
+          "milliseconds": 56.036038
+        },
+        {
+          "iteration": 19,
+          "warmup": false,
+          "milliseconds": 55.432602
+        },
+        {
+          "iteration": 20,
+          "warmup": false,
+          "milliseconds": 58.231854
+        },
+        {
+          "iteration": 21,
+          "warmup": false,
+          "milliseconds": 56.102955
+        },
+        {
+          "iteration": 22,
+          "warmup": false,
+          "milliseconds": 57.489212
+        },
+        {
+          "iteration": 23,
+          "warmup": false,
+          "milliseconds": 58.282299
+        },
+        {
+          "iteration": 24,
+          "warmup": false,
+          "milliseconds": 55.892444
+        }
+      ],
+      "raw": {
+        "vmCreateMs": [
+          57.106949,
+          58.549891,
+          57.259908,
+          59.428448,
+          56.866125,
+          57.261867,
+          55.142374,
+          57.615713,
+          56.509054,
+          55.456523,
+          58.008501,
+          61.57425,
+          56.28512,
+          56.036038,
+          55.432602,
+          58.231854,
+          56.102955,
+          57.489212,
+          58.282299,
+          55.892444
+        ],
+        "firstWasmMs": [
+          84.711081,
+          88.485162,
+          84.751553,
+          83.799026,
+          85.258532,
+          88.142581,
+          85.669686,
+          85.37266,
+          88.147064,
+          85.28694,
+          87.041306,
+          84.857894,
+          88.470452,
+          83.721585,
+          86.674998,
+          84.22974,
+          84.91002,
+          85.548597,
+          83.108365,
+          84.154254
+        ],
+        "warmWasmMs": [
+          37.627767,
+          43.177746,
+          37.501596,
+          37.256827,
+          41.024646,
+          39.232051,
+          50.334311,
+          44.534502,
+          37.638827,
+          38.609711,
+          37.579491,
+          38.219105,
+          40.713459,
+          44.410061,
+          40.871065,
+          37.13426,
+          38.337125,
+          38.425535,
+          38.611807,
+          38.366715
+        ],
+        "wasmFsMs": [
+          117.251612,
+          117.702024,
+          121.673675,
+          120.158941,
+          134.025208,
+          116.016923,
+          119.929971,
+          113.349319,
+          118.811482,
+          119.741448,
+          121.14269,
+          119.315539,
+          121.272657,
+          122.143208,
+          119.99277,
+          118.011273,
+          119.158842,
+          116.142342,
+          118.101839,
+          123.244435
+        ]
+      }
+    },
+    {
+      "kind": "sample",
+      "pair": 2,
+      "label": "candidate",
+      "vmCreateMs": 46.99661,
+      "firstWasmMs": 87.179687,
+      "warmWasmMs": 39.312515,
+      "wasmFsMs": 119.391239,
+      "sidecarStartMs": 0.266827,
+      "vmCreateSamples": [
+        {
+          "iteration": 0,
+          "warmup": true,
+          "milliseconds": 63.284484
+        },
+        {
+          "iteration": 1,
+          "warmup": true,
+          "milliseconds": 46.200799
+        },
+        {
+          "iteration": 2,
+          "warmup": true,
+          "milliseconds": 46.882391
+        },
+        {
+          "iteration": 3,
+          "warmup": true,
+          "milliseconds": 47.894667
+        },
+        {
+          "iteration": 4,
+          "warmup": true,
+          "milliseconds": 47.462572
+        },
+        {
+          "iteration": 5,
+          "warmup": false,
+          "milliseconds": 46.99661
+        },
+        {
+          "iteration": 6,
+          "warmup": false,
+          "milliseconds": 47.397656
+        },
+        {
+          "iteration": 7,
+          "warmup": false,
+          "milliseconds": 46.264538
+        },
+        {
+          "iteration": 8,
+          "warmup": false,
+          "milliseconds": 46.854287
+        },
+        {
+          "iteration": 9,
+          "warmup": false,
+          "milliseconds": 46.713765
+        },
+        {
+          "iteration": 10,
+          "warmup": false,
+          "milliseconds": 45.972301
+        },
+        {
+          "iteration": 11,
+          "warmup": false,
+          "milliseconds": 46.290468
+        },
+        {
+          "iteration": 12,
+          "warmup": false,
+          "milliseconds": 48.119204
+        },
+        {
+          "iteration": 13,
+          "warmup": false,
+          "milliseconds": 45.965916
+        },
+        {
+          "iteration": 14,
+          "warmup": false,
+          "milliseconds": 47.615416
+        },
+        {
+          "iteration": 15,
+          "warmup": false,
+          "milliseconds": 46.071491
+        },
+        {
+          "iteration": 16,
+          "warmup": false,
+          "milliseconds": 48.395739
+        },
+        {
+          "iteration": 17,
+          "warmup": false,
+          "milliseconds": 45.93896
+        },
+        {
+          "iteration": 18,
+          "warmup": false,
+          "milliseconds": 47.524397
+        },
+        {
+          "iteration": 19,
+          "warmup": false,
+          "milliseconds": 49.219538
+        },
+        {
+          "iteration": 20,
+          "warmup": false,
+          "milliseconds": 46.412959
+        },
+        {
+          "iteration": 21,
+          "warmup": false,
+          "milliseconds": 46.582404
+        },
+        {
+          "iteration": 22,
+          "warmup": false,
+          "milliseconds": 47.779665
+        },
+        {
+          "iteration": 23,
+          "warmup": false,
+          "milliseconds": 47.349238
+        },
+        {
+          "iteration": 24,
+          "warmup": false,
+          "milliseconds": 48.404575
+        }
+      ],
+      "raw": {
+        "vmCreateMs": [
+          46.99661,
+          47.397656,
+          46.264538,
+          46.854287,
+          46.713765,
+          45.972301,
+          46.290468,
+          48.119204,
+          45.965916,
+          47.615416,
+          46.071491,
+          48.395739,
+          45.93896,
+          47.524397,
+          49.219538,
+          46.412959,
+          46.582404,
+          47.779665,
+          47.349238,
+          48.404575
+        ],
+        "firstWasmMs": [
+          82.153556,
+          86.600926,
+          83.365527,
+          85.978635,
+          86.61758,
+          92.044465,
+          85.641037,
+          121.298855,
+          88.549711,
+          86.402237,
+          83.834395,
+          88.42177,
+          86.098448,
+          87.179687,
+          92.089198,
+          89.82229,
+          83.616358,
+          106.593553,
+          89.229324,
+          87.722276
+        ],
+        "warmWasmMs": [
+          48.691578,
+          38.514736,
+          47.581206,
+          41.080514,
+          37.813792,
+          46.956788,
+          37.566331,
+          40.153467,
+          37.681244,
+          38.853514,
+          39.312515,
+          40.941014,
+          39.620648,
+          39.686814,
+          38.138891,
+          43.997911,
+          38.391425,
+          38.599858,
+          37.531982,
+          38.493795
+        ],
+        "wasmFsMs": [
+          119.880039,
+          118.615454,
+          116.137676,
+          117.323915,
+          116.668953,
+          119.043733,
+          116.900359,
+          122.182688,
+          120.299445,
+          119.391239,
+          132.300852,
+          122.476056,
+          122.875988,
+          121.425561,
+          116.493461,
+          127.52598,
+          118.365025,
+          116.851292,
+          121.468092,
+          115.479681
+        ]
+      }
+    },
+    {
+      "kind": "sample",
+      "pair": 3,
+      "label": "candidate",
+      "vmCreateMs": 47.112111,
+      "firstWasmMs": 85.277179,
+      "warmWasmMs": 40.02876,
+      "wasmFsMs": 120.386952,
+      "sidecarStartMs": 0.250409,
+      "vmCreateSamples": [
+        {
+          "iteration": 0,
+          "warmup": true,
+          "milliseconds": 58.953233
+        },
+        {
+          "iteration": 1,
+          "warmup": true,
+          "milliseconds": 46.751181
+        },
+        {
+          "iteration": 2,
+          "warmup": true,
+          "milliseconds": 47.410636
+        },
+        {
+          "iteration": 3,
+          "warmup": true,
+          "milliseconds": 48.301067
+        },
+        {
+          "iteration": 4,
+          "warmup": true,
+          "milliseconds": 45.334076
+        },
+        {
+          "iteration": 5,
+          "warmup": false,
+          "milliseconds": 46.557167
+        },
+        {
+          "iteration": 6,
+          "warmup": false,
+          "milliseconds": 47.273707
+        },
+        {
+          "iteration": 7,
+          "warmup": false,
+          "milliseconds": 45.038521
+        },
+        {
+          "iteration": 8,
+          "warmup": false,
+          "milliseconds": 46.652039
+        },
+        {
+          "iteration": 9,
+          "warmup": false,
+          "milliseconds": 47.729478
+        },
+        {
+          "iteration": 10,
+          "warmup": false,
+          "milliseconds": 47.112111
+        },
+        {
+          "iteration": 11,
+          "warmup": false,
+          "milliseconds": 48.006215
+        },
+        {
+          "iteration": 12,
+          "warmup": false,
+          "milliseconds": 47.478953
+        },
+        {
+          "iteration": 13,
+          "warmup": false,
+          "milliseconds": 68.147577
+        },
+        {
+          "iteration": 14,
+          "warmup": false,
+          "milliseconds": 46.552597
+        },
+        {
+          "iteration": 15,
+          "warmup": false,
+          "milliseconds": 47.595391
+        },
+        {
+          "iteration": 16,
+          "warmup": false,
+          "milliseconds": 46.256016
+        },
+        {
+          "iteration": 17,
+          "warmup": false,
+          "milliseconds": 47.474262
+        },
+        {
+          "iteration": 18,
+          "warmup": false,
+          "milliseconds": 44.73523
+        },
+        {
+          "iteration": 19,
+          "warmup": false,
+          "milliseconds": 45.659703
+        },
+        {
+          "iteration": 20,
+          "warmup": false,
+          "milliseconds": 48.938441
+        },
+        {
+          "iteration": 21,
+          "warmup": false,
+          "milliseconds": 45.559821
+        },
+        {
+          "iteration": 22,
+          "warmup": false,
+          "milliseconds": 47.478252
+        },
+        {
+          "iteration": 23,
+          "warmup": false,
+          "milliseconds": 46.346626
+        },
+        {
+          "iteration": 24,
+          "warmup": false,
+          "milliseconds": 44.895921
+        }
+      ],
+      "raw": {
+        "vmCreateMs": [
+          46.557167,
+          47.273707,
+          45.038521,
+          46.652039,
+          47.729478,
+          47.112111,
+          48.006215,
+          47.478953,
+          68.147577,
+          46.552597,
+          47.595391,
+          46.256016,
+          47.474262,
+          44.73523,
+          45.659703,
+          48.938441,
+          45.559821,
+          47.478252,
+          46.346626,
+          44.895921
+        ],
+        "firstWasmMs": [
+          118.00573,
+          84.694351,
+          85.033781,
+          91.83141,
+          83.362252,
+          84.271011,
+          84.180063,
+          89.352868,
+          85.259501,
+          84.418602,
+          84.635096,
+          87.357329,
+          85.277179,
+          88.27001,
+          88.339334,
+          85.314237,
+          81.960311,
+          87.025889,
+          88.535069,
+          81.162655
+        ],
+        "warmWasmMs": [
+          40.02876,
+          39.972516,
+          38.311681,
+          47.526765,
+          37.498172,
+          37.784596,
+          38.596778,
+          37.522828,
+          58.805482,
+          41.610402,
+          39.055588,
+          41.697284,
+          48.793762,
+          38.782237,
+          40.597568,
+          38.476763,
+          43.994661,
+          45.59575,
+          37.176891,
+          40.561284
+        ],
+        "wasmFsMs": [
+          127.922601,
+          114.822928,
+          117.606958,
+          120.386952,
+          117.372624,
+          122.562425,
+          114.576336,
+          115.225367,
+          117.464942,
+          142.637635,
+          115.395432,
+          121.545012,
+          134.276398,
+          118.995749,
+          125.14195,
+          115.165798,
+          115.578789,
+          126.241775,
+          120.740656,
+          122.963363
+        ]
+      }
+    },
+    {
+      "kind": "sample",
+      "pair": 3,
+      "label": "main",
+      "vmCreateMs": 56.633371,
+      "firstWasmMs": 87.856951,
+      "warmWasmMs": 39.115734,
+      "wasmFsMs": 118.574917,
+      "sidecarStartMs": 0.305282,
+      "vmCreateSamples": [
+        {
+          "iteration": 0,
+          "warmup": true,
+          "milliseconds": 74.150561
+        },
+        {
+          "iteration": 1,
+          "warmup": true,
+          "milliseconds": 56.706102
+        },
+        {
+          "iteration": 2,
+          "warmup": true,
+          "milliseconds": 58.592234
+        },
+        {
+          "iteration": 3,
+          "warmup": true,
+          "milliseconds": 58.470903
+        },
+        {
+          "iteration": 4,
+          "warmup": true,
+          "milliseconds": 57.964281
+        },
+        {
+          "iteration": 5,
+          "warmup": false,
+          "milliseconds": 58.18977
+        },
+        {
+          "iteration": 6,
+          "warmup": false,
+          "milliseconds": 56.756813
+        },
+        {
+          "iteration": 7,
+          "warmup": false,
+          "milliseconds": 59.3166
+        },
+        {
+          "iteration": 8,
+          "warmup": false,
+          "milliseconds": 56.185311
+        },
+        {
+          "iteration": 9,
+          "warmup": false,
+          "milliseconds": 55.880565
+        },
+        {
+          "iteration": 10,
+          "warmup": false,
+          "milliseconds": 56.316034
+        },
+        {
+          "iteration": 11,
+          "warmup": false,
+          "milliseconds": 56.757711
+        },
+        {
+          "iteration": 12,
+          "warmup": false,
+          "milliseconds": 55.942787
+        },
+        {
+          "iteration": 13,
+          "warmup": false,
+          "milliseconds": 57.96234
+        },
+        {
+          "iteration": 14,
+          "warmup": false,
+          "milliseconds": 55.893114
+        },
+        {
+          "iteration": 15,
+          "warmup": false,
+          "milliseconds": 59.046362
+        },
+        {
+          "iteration": 16,
+          "warmup": false,
+          "milliseconds": 57.712887
+        },
+        {
+          "iteration": 17,
+          "warmup": false,
+          "milliseconds": 55.404531
+        },
+        {
+          "iteration": 18,
+          "warmup": false,
+          "milliseconds": 56.298339
+        },
+        {
+          "iteration": 19,
+          "warmup": false,
+          "milliseconds": 56.633371
+        },
+        {
+          "iteration": 20,
+          "warmup": false,
+          "milliseconds": 57.709436
+        },
+        {
+          "iteration": 21,
+          "warmup": false,
+          "milliseconds": 56.329158
+        },
+        {
+          "iteration": 22,
+          "warmup": false,
+          "milliseconds": 56.560194
+        },
+        {
+          "iteration": 23,
+          "warmup": false,
+          "milliseconds": 54.798668
+        },
+        {
+          "iteration": 24,
+          "warmup": false,
+          "milliseconds": 58.098325
+        }
+      ],
+      "raw": {
+        "vmCreateMs": [
+          58.18977,
+          56.756813,
+          59.3166,
+          56.185311,
+          55.880565,
+          56.316034,
+          56.757711,
+          55.942787,
+          57.96234,
+          55.893114,
+          59.046362,
+          57.712887,
+          55.404531,
+          56.298339,
+          56.633371,
+          57.709436,
+          56.329158,
+          56.560194,
+          54.798668,
+          58.098325
+        ],
+        "firstWasmMs": [
+          84.929017,
+          87.670755,
+          84.51797,
+          94.102265,
+          88.252703,
+          87.856951,
+          100.845947,
+          81.677696,
+          87.647086,
+          88.606296,
+          88.918095,
+          83.437003,
+          87.714168,
+          86.85629,
+          84.298713,
+          96.279004,
+          89.027875,
+          89.030225,
+          91.212202,
+          84.207453
+        ],
+        "warmWasmMs": [
+          38.19255,
+          46.406799,
+          37.906061,
+          38.464725,
+          53.268415,
+          37.501919,
+          39.130568,
+          42.690556,
+          37.318365,
+          49.929657,
+          50.145247,
+          37.719641,
+          37.516549,
+          45.687481,
+          37.255949,
+          40.420101,
+          39.946043,
+          37.423465,
+          37.627788,
+          39.115734
+        ],
+        "wasmFsMs": [
+          118.455752,
+          136.201511,
+          120.205298,
+          115.8422,
+          115.272566,
+          120.931309,
+          117.616866,
+          118.679338,
+          113.182804,
+          117.634645,
+          117.287875,
+          118.574917,
+          118.251576,
+          131.737306,
+          118.274257,
+          126.368613,
+          114.707675,
+          123.064455,
+          119.027925,
+          119.0877
+        ]
+      }
+    }
+  ]
+}

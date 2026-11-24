@@ -66,9 +66,12 @@ const packCommand = Command.make(
 			Flag.withDefault(REPO_ROOT),
 			Flag.withDescription("Checkout to pack, such as the merge base"),
 		),
+		sourceAssets: Flag.Boolean("source-assets").pipe(
+			Flag.withDescription("Use complete command and software artifacts built from this checkout"),
+		),
 	},
-	({ out, root }) =>
-		pack(root, out).pipe(
+	({ out, root, sourceAssets }) =>
+		pack(root, out, sourceAssets).pipe(
 			Effect.flatMap((m) =>
 				Console.log(
 					`packed ${Object.keys(m.tarballs).length} packages into ${out}`,

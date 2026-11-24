@@ -1,4 +1,4 @@
-import { AgentOs, nodeModulesMount } from "@rivet-dev/agentos-core";
+import { AgentOs, nodeModulesMount } from "@rivet-dev/agentos";
 
 // Common AgentOs.create() configuration. The embedding process is trusted, so
 // it may also configure host resources such as host directories and local

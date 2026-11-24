@@ -1,5 +1,5 @@
-import type { NativeMountPluginDescriptor } from "@rivet-dev/agentos-runtime-core/descriptors";
 import { afterEach, describe, expect, it } from "vitest";
+import type { NativeMountPluginDescriptor } from "../src/descriptors.js";
 import { AgentOs } from "../src/index.js";
 
 interface GoogleDriveMountConfig {

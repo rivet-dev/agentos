@@ -1,12 +1,12 @@
-//! Config comparison against a running VM through a real `agentos-native-sidecar`.
-#![cfg(feature = "service-internals")]
+//! Config comparison against a running VM through a real `agentos-sidecar`.
+#![cfg(feature = "actor-internals")]
 
 mod common;
 
 use std::collections::BTreeMap;
 
+use agentos_client::actor_internals::vm_config_equivalent;
 use agentos_client::config::AgentOsConfig;
-use agentos_client::service_internals::vm_config_equivalent;
 use agentos_client::AgentOs;
 
 fn config(environment: Option<BTreeMap<String, String>>) -> AgentOsConfig {

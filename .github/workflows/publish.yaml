@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.2.0 or 0.2.0-rc.1). Leave empty for preview publish on the dispatched branch."
+        description: "Version to release (e.g. 0.2.0 or 0.2.0-rc.1). Leave empty to publish to a preview-<branch>-<hash> tag."
         required: false
         type: string
       latest:
-        description: "Tag as @latest (release only)"
+        description: "Promote to latest (stable releases only)"
         required: true
         type: boolean
         default: true
@@ -30,9 +30,13 @@ env:
   R2_BUCKET: rivet-releases
   R2_ENDPOINT: https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com
   SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu darwin-x64 darwin-arm64"
-  RUST_TOOLCHAIN: "1.91.1"
+  # Keep the Docker defaults in sync with the release compiler.
+  RUST_TOOLCHAIN: "1.95.0"
   LINUX_GNU_LLVM_VERSION: "22"
   LINUX_GNU_SYSROOT_TAG: "sysroot-20250207"
+
+permissions:
+  contents: read
 
 jobs:
   context:
@@ -46,16 +50,17 @@ jobs:
       latest: ${{ steps.ctx.outputs.latest }}
       build_profile: ${{ steps.mode.outputs.profile }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 1
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --filter=publish
+      - run: pnpm install --frozen-lockfile --filter=publish --filter=@rivet-dev/agentos-toolchain
       - id: ctx
         name: Resolve publish context
         run: pnpm --filter=publish exec tsx src/ci/bin.ts context-output
@@ -80,36 +85,159 @@ jobs:
           esac
           echo "profile=$profile" >> "$GITHUB_OUTPUT"
 
-  wasm-commands:
-    name: WASM Commands
-    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && inputs.version != '' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
+  # The WASM command corpus builds from source in three parallel jobs of this
+  # run. Each job builds its own patched sysroot (about 2 minutes) instead of
+  # sharing one, so no build output crosses runs or waits on another job.
+  wasm-commands-default:
+    name: WASM Commands (default set)
+    runs-on: &incus-linux >-
+      ${{ github.repository == 'rivet-dev/agentos'
+          && github.ref == 'refs/heads/main' && inputs.version != ''
+          && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Attach persistent Incus caches
         if: startsWith(runner.name, 'ci-0')
         run: bash scripts/ci/incus-cache.sh wasm
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
         with:
           targets: wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
-        if: ${{ !startsWith(runner.name, 'ci-0') }}
-        with:
-          workspaces: toolchain -> target
-          cache-workspace-crates: true
-          key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
-      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...'
       - run: make -C toolchain commands
-      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
-      - uses: actions/upload-artifact@v4
+      # tar keeps the alias and stub symlinks of the canonical command tree.
+      - name: Pack the default command tree
+        run: tar -C toolchain/target/wasm32-wasip1/release -cf "$RUNNER_TEMP/wasm-commands-default.tar" commands
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wasm-commands-part-default
+          path: ${{ runner.temp }}/wasm-commands-default.tar
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wasm-command-licenses
+          path: toolchain/c/build/awk.COPYING
+          if-no-files-found: error
+      # The git software package builds its templates from the pinned upstream
+      # source, so Publish npm needs these files from this job's Git build.
+      - name: Pack the Git packaging inputs
+        run: |
+          set -euo pipefail
+          node software/git/scripts/stage-templates.mjs
+          python3 - <<'PYTHON'
+          import re
+          import tarfile
+          import os
+          from pathlib import Path
+
+          version = re.search(r"^GIT_VERSION\s*:=\s*(\S+)\s*$", Path("toolchain/c/Makefile").read_text(), re.M).group(1)
+          git = Path(f"toolchain/c/build/git-upstream/git-{version}")
+          inputs = [
+              "Makefile", "shared.mak", "config.mak.uname",
+              "GIT-VERSION-GEN", "GIT-VERSION-FILE.in", "version",
+              "GIT-BUILD-OPTIONS.in", "git-submodule.sh", "git-sh-setup.sh",
+              "git-sh-i18n.sh", "tools/generate-script.sh", "gitweb/Makefile",
+              "templates/Makefile",
+          ]
+          templates = (git / "templates/Makefile").read_text()
+          inputs += [f"templates/{name}" for name in re.findall(r"^TEMPLATES \+= (.+)$", templates, re.M)]
+          with tarfile.open(Path(os.environ["RUNNER_TEMP"]) / "software-build-inputs-git.tar", "w") as archive:
+              for name in inputs:
+                  source = git / name
+                  if not source.is_file() or source.is_symlink():
+                      raise ValueError(f"missing regular Git packaging input: {source}")
+                  archive.add(source)
+          PYTHON
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: software-build-inputs-git
+          path: ${{ runner.temp }}/software-build-inputs-git.tar
+          if-no-files-found: error
+
+  # These real upstream commands are intentionally outside the fast default
+  # toolchain target, but are part of the published and parity-tested corpus.
+  # They are C builds against the patched sysroot and need no Rust or Node.
+  wasm-commands-heavy:
+    name: WASM Commands (${{ matrix.command }})
+    strategy:
+      matrix:
+        command: [duckdb, vim]
+    runs-on: *incus-linux
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
+      - run: make -C toolchain cmd/${{ matrix.command }}
+      - name: Pack the ${{ matrix.command }} command
+        run: |
+          set -euo pipefail
+          test -s "toolchain/target/wasm32-wasip1/release/commands/${{ matrix.command }}"
+          tar -C toolchain/target/wasm32-wasip1/release -cf "$RUNNER_TEMP/wasm-commands-${{ matrix.command }}.tar" "commands/${{ matrix.command }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wasm-commands-part-${{ matrix.command }}
+          path: ${{ runner.temp }}/wasm-commands-${{ matrix.command }}.tar
+          if-no-files-found: error
+      # The vim software package ships the runtime files of this Vim build.
+      # Pack the staging helper's exact selection, not the vendor tree.
+      - name: Pack the Vim runtime packaging inputs
+        if: matrix.command == 'vim'
+        run: |
+          set -euo pipefail
+          test -f toolchain/c/libs/vim/runtime/defaults.vim
+          node software/vim/scripts/stage-runtime.mjs
+          stage="$RUNNER_TEMP/software-build-inputs-vim"
+          mkdir -p "$stage/toolchain/c/libs/vim"
+          cp -R software/vim/share/vim/vim92 "$stage/toolchain/c/libs/vim/runtime"
+          tar -C "$stage" -cf "$RUNNER_TEMP/software-build-inputs-vim.tar" toolchain
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.command == 'vim'
+        with:
+          name: software-build-inputs-vim
+          path: ${{ runner.temp }}/software-build-inputs-vim.tar
+          if-no-files-found: error
+
+  # Merge the parts, then check completeness on the full set. Downstream jobs
+  # depend on this job and the `wasm-commands` artifact it uploads.
+  wasm-commands:
+    needs: [wasm-commands-default, wasm-commands-heavy]
+    name: WASM Commands
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: wasm-commands-part-*
+          path: ${{ runner.temp }}/wasm-commands-parts
+          merge-multiple: true
+      - name: Restore canonical WASM command staging
+        run: |
+          set -euo pipefail
+          release_dir="toolchain/target/wasm32-wasip1/release"
+          mkdir -p "$release_dir"
+          for part in default duckdb vim; do
+            tar -C "$release_dir" -xf "$RUNNER_TEMP/wasm-commands-parts/wasm-commands-$part.tar"
+          done
+      - run: node packages/core/scripts/copy-wasm-commands.mjs --require
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: wasm-commands
-          path: packages/runtime-core/commands
+          path: packages/core/commands
           if-no-files-found: error
 
   build-sidecar:
@@ -125,28 +253,34 @@ jobs:
           - platform: linux-arm64-gnu
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && inputs.version != '' && matrix.platform != 'linux-arm64-gnu' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
+    runs-on: >-
+      ${{ github.repository == 'rivet-dev/agentos'
+          && matrix.runner == 'ubuntu-latest'
+          && github.ref == 'refs/heads/main' && inputs.version != ''
+          && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Attach persistent Incus caches
         if: startsWith(runner.name, 'ci-0')
         run: bash scripts/ci/incus-cache.sh docker
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           name: agentos-${{ matrix.platform }}
       - name: Build linux artifacts
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          builder: ${{ env.BUILDX_BUILDER || '' }}
+          builder: ${{ env.BUILDX_BUILDER }}
           context: .
           file: docker/build/linux-gnu.Dockerfile
           build-args: |
+            CACHE_SCOPE=${{ env.CI_CACHE_SCOPE || 'hosted' }}
+            CARGO_BUILD_JOBS=${{ env.CARGO_BUILD_JOBS || '4' }}
             TARGET=${{ matrix.target }}
             BUILD_PROFILE=${{ needs.context.outputs.build_profile }}
             CACHE_PLATFORM=${{ matrix.platform }}
-            CACHE_SCOPE=${{ env.CI_SLOT || 'hosted' }}
-            CARGO_BUILD_JOBS=${{ env.CARGO_BUILD_JOBS || '4' }}
             RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
             LINUX_GNU_LLVM_VERSION=${{ env.LINUX_GNU_LLVM_VERSION }}
             LINUX_GNU_SYSROOT_TAG=${{ env.LINUX_GNU_SYSROOT_TAG }}
@@ -160,21 +294,20 @@ jobs:
           mkdir -p "$sidecar_out"
           image="agentos-linux-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
           cid=""
-          trap 'test -z "$cid" || docker rm -f "$cid" >/dev/null 2>&1; docker image rm "$image" >/dev/null 2>&1 || true' EXIT
+          trap 'if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null; fi; docker image rm "$image" >/dev/null || true' EXIT
           cid=$(docker create --label rivet.ci.extraction=true "$image")
-          docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
-          docker rm "$cid"
-          test -f "$sidecar_out/agentos-native-sidecar"
+          docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
+          test -f "$sidecar_out/agentos-sidecar"
           echo "sidecar_dir=$sidecar_out" >> "$GITHUB_OUTPUT"
       - name: Check glibc floor
-        run: |
-          scripts/ci/check-linux-glibc-floor.sh \
-            "${{ steps.extract.outputs.sidecar_dir }}/agentos-native-sidecar"
+        env:
+          SIDECAR_DIR: ${{ steps.extract.outputs.sidecar_dir }}
+        run: scripts/ci/check-linux-glibc-floor.sh "$SIDECAR_DIR/agentos-sidecar"
       - name: Smoke-run binaries in old Linux containers
-        run: |
-          scripts/ci/smoke-linux-artifacts.sh binary \
-            "${{ steps.extract.outputs.sidecar_dir }}/agentos-native-sidecar"
-      - uses: actions/upload-artifact@v4
+        env:
+          SIDECAR_DIR: ${{ steps.extract.outputs.sidecar_dir }}
+        run: scripts/ci/smoke-linux-artifacts.sh binary "$SIDECAR_DIR/agentos-sidecar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sidecar-${{ matrix.platform }}
           path: ${{ steps.extract.outputs.sidecar_dir }}
@@ -195,31 +328,38 @@ jobs:
             runner: ubuntu-latest
             target: aarch64-apple-darwin
             clang: aarch64-apple-darwin20.4
-    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && inputs.version != '' && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
+    runs-on: *incus-linux
+    permissions:
+      contents: read
+      packages: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Attach persistent Incus caches
         if: startsWith(runner.name, 'ci-0')
         run: bash scripts/ci/incus-cache.sh docker
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           name: agentos-${{ matrix.platform }}
       - name: Log in to ghcr.io
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf "%s\n" "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
       - name: Cross-compile via osxcross
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          builder: ${{ env.BUILDX_BUILDER || '' }}
+          builder: ${{ env.BUILDX_BUILDER }}
           context: .
           file: docker/build/darwin.Dockerfile
           build-args: |
+            CACHE_SCOPE=${{ env.CI_CACHE_SCOPE || 'hosted' }}
+            CARGO_BUILD_JOBS=${{ env.CARGO_BUILD_JOBS || '4' }}
             TARGET=${{ matrix.target }}
             CLANG=${{ matrix.clang }}
             BUILD_PROFILE=${{ needs.context.outputs.build_profile }}
             CACHE_PLATFORM=${{ matrix.platform }}
-            CACHE_SCOPE=${{ env.CI_SLOT || 'hosted' }}
-            CARGO_BUILD_JOBS=${{ env.CARGO_BUILD_JOBS || '4' }}
             RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
           tags: agentos-darwin-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           load: true
@@ -230,53 +370,95 @@ jobs:
           mkdir -p "$sidecar_out"
           image="agentos-darwin-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
           cid=""
-          trap 'test -z "$cid" || docker rm -f "$cid" >/dev/null 2>&1; docker image rm "$image" >/dev/null 2>&1 || true' EXIT
+          trap 'if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null; fi; docker image rm "$image" >/dev/null || true' EXIT
           cid=$(docker create --label rivet.ci.extraction=true "$image")
-          docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
-          docker rm "$cid"
-          test -f "$sidecar_out/agentos-native-sidecar"
+          docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
+          test -f "$sidecar_out/agentos-sidecar"
           case "${{ matrix.platform }}" in
             darwin-x64) expected_arch="x86_64" ;;
             darwin-arm64) expected_arch="arm64" ;;
             *) echo "unknown darwin platform: ${{ matrix.platform }}" >&2; exit 2 ;;
           esac
-          file "$sidecar_out/agentos-native-sidecar" | grep -F "$expected_arch"
-      - uses: actions/upload-artifact@v4
+          file "$sidecar_out/agentos-sidecar" | grep -F "$expected_arch"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sidecar-${{ matrix.platform }}
           path: target/sidecar-artifacts/${{ matrix.platform }}
           if-no-files-found: error
 
-  publish-npm:
-    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin]
-    name: Publish npm
-    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
+  # Packages and verifies every crate from its tarball and checks the publish
+  # order, without uploading. It needs no build artifacts, so it runs beside
+  # the builds; a release publishes nothing, npm included, unless it passes.
+  crates-rehearsal:
+    name: Rehearse crates.io publish
+    runs-on: *incus-linux
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh raw
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-          registry-url: https://registry.npmjs.org
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - name: Rehearse crate publish
+        run: pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates --rehearse
+
+  prepare-npm:
+    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin, crates-rehearsal]
+    name: Prepare npm tarballs
+    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && (needs.context.outputs.trigger != 'release' || needs.crates-rehearsal.result == 'success') }}
+    runs-on: *incus-linux
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh raw
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-commands
-          path: packages/runtime-core/commands
+          path: packages/core/commands
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wasm-command-licenses
+          path: toolchain/c/build
       - name: Restore canonical WASM command staging
         run: |
           set -euo pipefail
           commands_dir="toolchain/target/wasm32-wasip1/release/commands"
           mkdir -p "$commands_dir"
-          cp -a packages/runtime-core/commands/. "$commands_dir/"
+          cp -a packages/core/commands/. "$commands_dir/"
           test -s "$commands_dir/sh"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: software-build-inputs-*
+          path: ${{ runner.temp }}/software-build-inputs
+          merge-multiple: true
+      - name: Restore Git and Vim packaging inputs
+        run: |
+          set -euo pipefail
+          for part in git vim; do
+            tar -xf "$RUNNER_TEMP/software-build-inputs/software-build-inputs-$part.tar"
+          done
+          test -x toolchain/c/build/git-upstream/git-*/tools/generate-script.sh
+          test -f toolchain/c/libs/vim/runtime/defaults.vim
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: sidecar-*
           path: artifacts
@@ -284,53 +466,104 @@ jobs:
         run: |
           set -euo pipefail
           for p in $SIDECAR_PLATFORMS; do
-            runtime_bin="artifacts/sidecar-${p}/agentos-native-sidecar"
-            runtime_dest="packages/runtime-sidecar/npm/${p}"
-            test -f "$runtime_bin"
-            test -d "$runtime_dest"
-            cp "$runtime_bin" "${runtime_dest}/agentos-native-sidecar"
-            chmod +x "${runtime_dest}/agentos-native-sidecar"
+            agent_bin="artifacts/sidecar-${p}/agentos-sidecar"
+            agent_dest="packages/sidecar/npm/${p}"
+            test -f "$agent_bin"
+            test -d "$agent_dest"
+            cp "$agent_bin" "${agent_dest}/agentos-sidecar"
+            chmod +x "${agent_dest}/agentos-sidecar"
           done
       - name: Bump package versions for build
+        env:
+          VERSION: ${{ needs.context.outputs.version }}
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
-            --version ${{ needs.context.outputs.version }} \
+            --version "$VERSION" \
             --version-only
-      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - run: node packages/core/scripts/copy-wasm-commands.mjs --require
       - name: Build TypeScript packages
         env:
           AGENTOS_SKIP_NATIVE_META_BUILD: "1"
         run: |
-          # Browser support is retained in-tree but intentionally disabled until
-          # it has a reactor/security design independent of the native sidecar.
           npx turbo build \
-            --filter='!@rivet-dev/agentos-runtime-browser' \
             --filter='!./examples/*' \
             --filter='!./examples/quickstart/*'
       - name: Stage immutable software artifacts
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts stage-software \
             --output "$GITHUB_WORKSPACE/software-artifacts"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: software-artifacts
           path: software-artifacts
           if-no-files-found: error
       - name: Finalize package versions for publish
+        env:
+          VERSION: ${{ needs.context.outputs.version }}
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
-            --version ${{ needs.context.outputs.version }}
-      - name: Publish npm packages
+            --version "$VERSION"
+      - name: Pack npm packages
+        env:
+          VERSION: ${{ needs.context.outputs.version }}
+        run: |
+          pnpm --filter=publish exec tsx src/ci/bin.ts prepare-packed-npm \
+            --version "$VERSION" --output "$RUNNER_TEMP/npm-packages"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-publish-tarballs
+          path: ${{ runner.temp }}/npm-packages/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish-npm:
+    needs: [context, prepare-npm]
+    name: Publish npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/publish
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-publish-tarballs
+          path: ${{ runner.temp }}/npm-packages/
+      - name: Publish prepared npm packages
         env:
           NODE_AUTH_TOKEN: ""
-        run: |
-          pnpm --filter=publish exec tsx src/ci/bin.ts publish-npm \
-            --tag ${{ needs.context.outputs.npm_tag }} \
-            --parallel 16 \
-            --retries 3 \
-            ${{ needs.context.outputs.trigger == 'release' && '--release-mode' || '' }}
+          VERSION: ${{ needs.context.outputs.version }}
+          NPM_TAG: ${{ needs.context.outputs.npm_tag }}
+          TRIGGER: ${{ needs.context.outputs.trigger }}
+        run: node scripts/publish/src/ci/publish-packed-npm.ts "$RUNNER_TEMP/npm-packages"
+
+  publish-software-mirror:
+    needs: [context, publish-npm]
+    name: Publish software mirror
+    if: ${{ needs.context.outputs.trigger == 'release' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --filter=publish --filter=@rivet-dev/agentos-toolchain
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: software-artifacts
+          path: software-artifacts
       - name: Upload software artifacts to R2
-        if: ${{ needs.context.outputs.trigger == 'release' }}
         env:
           R2_RELEASES_ACCESS_KEY_ID: ${{ secrets.R2_RELEASES_ACCESS_KEY_ID }}
           R2_RELEASES_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASES_SECRET_ACCESS_KEY }}
@@ -355,22 +588,23 @@ jobs:
   release-assets:
     needs: [context, build-sidecar, build-sidecar-darwin]
     name: Release assets
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --filter=publish
-      - uses: actions/download-artifact@v4
+      - run: pnpm install --frozen-lockfile --filter=publish --filter=@rivet-dev/agentos-toolchain
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: sidecar-*
           path: artifacts
@@ -388,12 +622,12 @@ jobs:
           mkdir -p release-assets
           for p in $SIDECAR_PLATFORMS; do
             target="${PLATFORM_TARGET[$p]}"
-            cp "artifacts/sidecar-${p}/agentos-native-sidecar" "release-assets/agentos-native-sidecar-${target}"
+            cp "artifacts/sidecar-${p}/agentos-sidecar" "release-assets/agentos-sidecar-${target}"
           done
-          chmod +x release-assets/agentos-native-sidecar-*
-          if [ -d crates/execution/assets/pyodide ]; then
+          chmod +x release-assets/agentos-sidecar-*
+          if [ -d crates/executor-v8-runtime/assets/pyodide ]; then
             mkdir -p release-assets/pyodide
-            cp -R crates/execution/assets/pyodide/. release-assets/pyodide/
+            cp -R crates/executor-v8-runtime/assets/pyodide/. release-assets/pyodide/
           fi
       - name: Create GitHub release and upload assets
         if: ${{ needs.context.outputs.trigger == 'release' }}
@@ -431,78 +665,59 @@ jobs:
           pnpm --filter=publish exec tsx src/ci/bin.ts copy-r2 \
             --sha "$SHA" --version "$VERSION" --latest "$LATEST"
           curl --fail --silent --show-error --head --retry 6 --retry-delay 5 --retry-all-errors \
-            "https://releases.rivet.dev/agent-os/${VERSION}/sidecar/agentos-native-sidecar-x86_64-unknown-linux-gnu" >/dev/null
+            "https://releases.rivet.dev/agent-os/${VERSION}/sidecar/agentos-sidecar-x86_64-unknown-linux-gnu" >/dev/null
           if [ "$LATEST" = "true" ]; then
             curl --fail --silent --show-error --head --retry 6 --retry-delay 5 --retry-all-errors \
-              "https://releases.rivet.dev/agent-os/latest/sidecar/agentos-native-sidecar-x86_64-unknown-linux-gnu" >/dev/null
+              "https://releases.rivet.dev/agent-os/latest/sidecar/agentos-sidecar-x86_64-unknown-linux-gnu" >/dev/null
           fi
 
   publish-crates:
-    needs: [context, build-sidecar, release-assets]
+    needs: [context, build-sidecar, release-assets, crates-rehearsal]
     name: Publish crates.io
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && (needs.release-assets.result == 'success' || needs.release-assets.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.crates-rehearsal.result == 'success' && needs.build-sidecar.result == 'success' && (needs.release-assets.result == 'success' || needs.release-assets.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: . -> target
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/.rusty_v8
           key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
       - run: pnpm install --frozen-lockfile
-      - name: Bump Cargo versions
-        run: |
-          pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
-            --version ${{ needs.context.outputs.version }} \
-            --version-only
-      - name: Stage vendored V8 bridge bundles and base filesystem
-        run: |
-          set -euo pipefail
-          # crates/{execution,v8-runtime}/assets/generated is gitignored; the
-          # published crates fall back to the vendored bundle (build-support
-          # copy_vendored_bundle) and panic if it is absent. Stage it here.
-          for crate in execution v8-runtime; do
-            out="crates/${crate}/assets/generated"
-            mkdir -p "$out"
-            node packages/build-tools/scripts/build-v8-bridge.mjs --out-dir "$out"
-          done
-          git add -f crates/execution/assets/generated crates/v8-runtime/assets/generated
-          # The single committed base filesystem lives in the vfs crate; the
-          # kernel and native-sidecar crates vendor a copy for isolated publish
-          # builds (their build.rs falls back to assets/base-filesystem.json).
-          mkdir -p crates/kernel/assets crates/native-sidecar/assets
-          cp crates/vfs/assets/base-filesystem.json crates/kernel/assets/base-filesystem.json
-          cp crates/vfs/assets/base-filesystem.json crates/native-sidecar/assets/base-filesystem.json
-      - name: Dry-run crate publish
-        if: ${{ needs.context.outputs.trigger != 'release' }}
-        run: |
-          pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates \
-            --version ${{ needs.context.outputs.version }} \
-            --dry-run \
-            --allow-dirty
-      - name: Publish crates
-        if: ${{ needs.context.outputs.trigger == 'release' }}
+      - name: Stage crates for publish
         env:
+          VERSION: ${{ needs.context.outputs.version }}
+        run: |
+          pnpm --filter=publish exec tsx src/ci/bin.ts stage-crates \
+            --version "$VERSION"
+      - name: Publish crates
+        env:
+          VERSION: ${{ needs.context.outputs.version }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates \
-            --version ${{ needs.context.outputs.version }} \
+            --version "$VERSION" \
             --allow-dirty
 
   notify-managed-services:
     name: Notify managed services
-    needs: [context, publish-npm, release-assets, publish-crates]
+    permissions: {}
+    needs: [context, publish-npm, publish-software-mirror, release-assets, publish-crates]
     if: ${{ success() && needs.context.outputs.trigger == 'release' }}
     runs-on: ubuntu-latest
     steps:

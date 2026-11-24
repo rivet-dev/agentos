@@ -5,11 +5,11 @@
  * they land on npm before the meta package that lists them as
  * `optionalDependencies`. The sidecar meta packages users install resolve the
  * platform-specific binary package for the current host at install time via npm
- * `os`/`cpu`/`libc`, so those platform packages must exist on npm
+ * `os`/`cpu`/`libc`, so those platform packages must exist on the registry
  * before anyone installs the meta.
  */
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 export interface Package {
@@ -21,7 +21,7 @@ export interface Package {
 }
 
 export interface DiscoverPackagesOptions {
-	/** Reserved for future release-only package filtering. */
+	/** Reserved for parity with the rivetkit discovery API. */
 	includeReleaseOnly?: boolean;
 }
 
@@ -35,9 +35,6 @@ export const EXCLUDED = new Set<string>([
 	"@rivet-dev/agentos-workspace",
 	"@rivet-dev/agentos-dev-shell",
 	"@rivet-dev/agentos-shell",
-	// Browser support stays in-tree as migration source, but it is outside the
-	// unified sidecar reactor/security contract and must not be published.
-	"@rivet-dev/agentos-runtime-browser",
 	"publish",
 ]);
 
@@ -58,15 +55,12 @@ export interface MetaPackageSpec {
 
 export const META_PACKAGES: readonly MetaPackageSpec[] = [
 	{
-		meta: "@rivet-dev/agentos-runtime-sidecar",
-		platformPrefix: "@rivet-dev/agentos-runtime-sidecar-",
+		meta: "@rivet-dev/agentos-sidecar",
+		platformPrefix: "@rivet-dev/agentos-sidecar-",
 	},
 ];
 
-const SIDECAR_BINARY_PACKAGE_DIRS = [
-	"packages/runtime-sidecar/npm",
-	"packages/sidecar/npm",
-] as const;
+const SIDECAR_BINARY_PACKAGE_DIRS = ["packages/sidecar/npm"] as const;
 
 /**
  * Platforms whose sidecar binary package is built and published. Kept in sync
@@ -132,21 +126,25 @@ export function discoverPackages(
 	//    the meta package resolves at install time. Only the allowlisted
 	//    platforms are included so unbuilt platform dirs are never published.
 	const platformAllowlist = new Set(sidecarPlatforms());
-	for (const packageDir of SIDECAR_BINARY_PACKAGE_DIRS) {
-		const npmDir = join(repoRoot, packageDir);
-		if (existsSync(npmDir)) {
-			for (const entry of readdirSync(npmDir).sort()) {
-				if (!platformAllowlist.has(entry)) continue;
-				const platDir = join(npmDir, entry);
-				if (!statSync(platDir).isDirectory()) continue;
-				add(platDir);
-			}
+	for (const platform of [...platformAllowlist].sort()) {
+		if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(platform)) {
+			throw new Error(`Invalid SIDECAR_PLATFORMS entry: ${platform}`);
 		}
+		let found = false;
+		for (const packageDir of SIDECAR_BINARY_PACKAGE_DIRS) {
+			const dir = join(repoRoot, packageDir, platform);
+			const pkg = readPackageJson(dir);
+			if (!pkg || !isPublishable(pkg) || !META_PACKAGES.some(
+				({ platformPrefix }) => pkg.name === `${platformPrefix}${platform}`,
+			)) continue;
+			add(dir);
+			found = true;
+		}
+		if (!found) throw new Error(`Unknown or unavailable SIDECAR_PLATFORMS entry: ${platform}`);
 	}
 
-	// 2. Publish agentOS SDK packages from the pnpm workspace. Registry
-	//    software is distributed as `.aospkg` object-store artifacts and must
-	//    never enter npm discovery.
+	// 2. pnpm workspace packages. Registry software is packed into .aospkg
+	//    artifacts and released independently from the agentOS npm packages.
 	const pnpmList = execSync("pnpm -r list --json --depth -1", {
 		cwd: repoRoot,
 		encoding: "utf8",
@@ -159,7 +157,14 @@ export function discoverPackages(
 	}> = JSON.parse(pnpmList);
 	for (const p of workspacePkgs) {
 		if (!p.name) continue;
-		if (!p.name.startsWith("@rivet-dev/agentos-")) {
+		const relDir = relative(repoRoot, resolve(p.path));
+		if (SIDECAR_BINARY_PACKAGE_DIRS.some((dir) => relDir.startsWith(`${dir}/`))) continue;
+		if (META_PACKAGES.some(({ platformPrefix }) => p.name.startsWith(platformPrefix))) continue;
+		if (
+			!p.name.startsWith("@rivet-dev/agentos-") &&
+			p.name !== "@rivet-dev/agentos" &&
+			p.name !== "secure-exec"
+		) {
 			continue;
 		}
 		add(p.path);
@@ -199,8 +204,8 @@ export function assertDiscoverySanity(packages: Package[]): void {
 	const required: string[] = [];
 	if (hasAgentOsPackages) {
 		required.push(
-			"@rivet-dev/agentos-core",
-			"@rivet-dev/agentos-runtime-sidecar",
+			"@rivet-dev/agentos",
+			"@rivet-dev/agentos-sidecar",
 		);
 	}
 	const missing = required.filter((r) => !byName.has(r));

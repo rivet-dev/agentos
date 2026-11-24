@@ -107,6 +107,16 @@ such as an unhandled rejection from a released `fetch`, are written to the same
 stderr and never change the call's result. Finish I/O inside one call, and run
 long-lived servers with `spawn` instead of a context.
 
+If cleanup is interrupted, agentOS preserves the call's result, reports the
+cleanup failure on stderr, and invalidates the context. Later calls fail with
+`ERR_AGENTOS_CONTEXT_INVALIDATED`. Close that context and create a new one before
+running more code.
+
+Each call starts with a fresh process exit status and exit-request state.
+Setting `process.exitCode` or calling `process.exit()` affects that call; later
+calls start normally. Globals, process configuration, and registered event
+listeners remain in the context.
+
 A context runs one call at a time. A call made while another call in the same
 context is still running fails immediately with `execution_busy`. Files, npm,
 Bash, and type checks may pass the same id, but they run in fresh processes and
@@ -206,6 +216,65 @@ await vm.v1.process.signal({ process: server, signal: "SIGTERM" });
 </CodeGroup>
 
 Spawned processes always start with fresh state, so they take no `contextId`.
+
+## Start processes from a snapshot
+
+A runtime that every process imports, such as a framework bundle, can cost tens
+of milliseconds to import in each new process. Name its entry module in
+`snapshotEntrypoints`, and a guest `node <entry>` process starts with every
+module the entry imports already evaluated. This optimization applies to
+processes launched directly through the VM process API; child processes use
+normal module loading.
+
+<CodeSnippet file="examples/embedded/snapshot-entrypoints.ts" title="Library" />
+
+The sidecar finds the entry's static imports, evaluates them once in a separate
+helper process, and stores the result as a V8 startup snapshot. Processes boot
+from it after it is built, in this VM and in any other VM that mounts the same
+files. Each process gets its own copy of the module state; nothing that one
+process changes is visible to another.
+
+The snapshot holds compiled bytecode for every function of the graph and of the
+Node.js bridge, so a process's first call runs without compiling code. This makes
+the snapshot larger than its source and adds to each process's boot, not to its
+calls.
+
+Requirements:
+
+- Every imported module must be an ES module (`.mjs`, or a `node:` builtin) on
+  a read-only `host_dir` mount. The entry itself is evaluated per process.
+- The VM must use the default Node surface: no `allowedNodeBuiltins`, module
+  resolution, or platform restriction. Otherwise processes load normally.
+- At most 8 entrypoints per VM, 1,024 modules and 32 MiB of source per graph.
+
+What changes for the imported modules:
+
+- Their top-level code runs once, when the snapshot is built, not in each
+  process. Read per-process state such as `process.argv`, `process.env`, and
+  `process.cwd()` inside functions, not at module top level. A top-level read
+  sees placeholder values.
+- Top-level code cannot read the time or random values (`Math.random()`,
+  `Date.now()`, `Date()`, `new Date()`, `performance.now()`, `process.hrtime()`,
+  `process.uptime()`, `crypto` randomness), because every process that boots
+  from the snapshot would share them. It also cannot use the host bridge (file,
+  network, or timer calls), `WebAssembly`, or top-level `await` of such work.
+  The snapshot build then fails, the sidecar logs
+  `ERR_AGENTOS_MODULE_SNAPSHOT_GRAPH` with the module and reason to stderr, and
+  processes keep loading normally.
+- `performance.timeOrigin` is per process, and top-level code can check it.
+  A top-level copy of its value, though, holds the time the snapshot was built.
+- Top-level code that does not finish within 30 seconds stops the build with
+  `ERR_AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT`, and processes keep loading normally.
+  Set `AGENTOS_V8_SNAPSHOT_HELPER_TIMEOUT_MS` in the environment that starts the
+  sidecar to change the limit.
+- A module that defines a builtin that V8 adds when it restores a context (a
+  polyfill) keeps its own value where it captured it; later global lookups see
+  V8's builtin.
+
+Keep the entry thin: a short module that imports the runtime and starts it.
+Each process checks that the entry and every imported file still match what
+the snapshot was built from, so a changed file takes effect on the next
+process, and a new snapshot builds in the background.
 
 ## A full Linux environment underneath
 

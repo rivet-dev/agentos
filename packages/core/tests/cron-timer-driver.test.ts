@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ScheduleEntry } from "../src/cron/schedule-driver.js";
 import {
 	InvalidScheduleError,
 	PastScheduleError,
 } from "../src/cron/parse-schedule.js";
+import type { ScheduleEntry } from "../src/cron/schedule-driver.js";
 import { TimerScheduleDriver } from "../src/cron/timer-driver.js";
 
 describe("TimerScheduleDriver", () => {

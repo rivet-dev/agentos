@@ -1,11 +1,14 @@
 # syntax=docker/dockerfile:1.10.0
 #
-# Build agentOS Linux GNU native artifacts in one cached container. The sysroot
+# Build AgentOS Linux GNU native artifacts in one cached container. The sysroot
 # setup mirrors scripts/ci/setup-linux-gnu-sysroot.sh, but runs inside Docker so
 # Cargo caches can be persisted with BuildKit/GHA like the Darwin build.
-FROM ubuntu:24.04
+FROM scratch AS agentos-v8-inputs
+COPY scripts/ci/v8/archives.json /archives.json
 
-ARG RUST_TOOLCHAIN=1.91.1
+FROM ubuntu:24.04 AS native-build
+
+ARG RUST_TOOLCHAIN=1.95.0
 ARG TARGET=x86_64-unknown-linux-gnu
 ARG BUILD_PROFILE=debug
 ARG CACHE_SCOPE=local
@@ -34,7 +37,7 @@ RUN set -eux; \
     . /etc/os-release; \
     codename="${VERSION_CODENAME:?missing VERSION_CODENAME}"; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg xz-utils binutils sccache build-essential pkg-config libssl-dev; \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg xz-utils binutils sccache build-essential pkg-config libssl-dev python3; \
     curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -; \
     apt-get install -y --no-install-recommends nodejs; \
     corepack enable; \
@@ -67,6 +70,10 @@ RUN set -eux; \
     cd /; \
     xzcat /tmp/agentos-sysroot.tar.xz | tar -x; \
     rm -rf /var/lib/apt/lists/* /tmp/agentos-sysroot.tar.xz
+
+COPY scripts/ci/v8 /build/scripts/ci/v8
+RUN --mount=type=bind,from=agentos-v8-inputs,target=/opt/engine-inputs \
+    python3 scripts/ci/v8/engine.py install "${TARGET}" /opt/agentos-v8 --build-context /opt/engine-inputs --cargo-config /opt/agentos-v8.toml --shell-env /opt/agentos-v8.sh
 
 COPY . .
 
@@ -103,9 +110,10 @@ RUN --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-carg
       -C link-arg=/tmp/agentos_renameat2_shim.o \
       ${RUSTFLAGS:-}"; \
     if [ "$BUILD_PROFILE" = "release" ]; then FLAG="--release"; PROF=release; else FLAG=""; PROF=debug; fi; \
-    cargo build $FLAG -p agentos-native-sidecar --target "$TARGET"; \
+    . /opt/agentos-v8.sh; \
+    cargo --config /opt/agentos-v8.toml build $FLAG -p agentos-sidecar --target "$TARGET"; \
     mkdir -p /artifacts; \
-    cp "target/$TARGET/$PROF/agentos-native-sidecar" /artifacts/agentos-native-sidecar; \
+    cp "target/$TARGET/$PROF/agentos-sidecar" /artifacts/agentos-sidecar; \
     (sccache --show-stats 2>/dev/null || true)
 
 CMD ["ls", "-la", "/artifacts"]

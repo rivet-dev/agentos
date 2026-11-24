@@ -121,6 +121,27 @@ fn default_version_matches_the_client_release() {
 }
 
 #[tokio::test]
+async fn checks_transport_security_when_resolving_each_artifact_url() {
+    let registry = Registry::start().await;
+    let manifest = serde_json::json!({"schemaVersion": 1, "artifacts": [{
+        "name": "git", "size": 1, "digest": format!("sha256:{DIGEST_HEX}"),
+        "path": "http://registry.gameinc.io/git.aospkg"
+    }]});
+    registry.serve_raw("latest", 200, manifest.to_string().as_bytes());
+    let options = SoftwareRegistryOptions {
+        url: Some(registry.url.clone()),
+        version: None,
+    };
+    let error = resolve_registry_software("git", Some("latest"), Some(&options))
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("artifact URL must use https"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
 async fn resolves_a_name_to_a_digest_pinned_url() {
     let registry = Registry::start().await;
     registry.serve("latest", &["git", "ripgrep"]);

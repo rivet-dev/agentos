@@ -1,10 +1,12 @@
 ---
 title: "Introduction"
-description: "Run isolated Linux-compatible VMs with agentOS Core."
+description: "Run tiny, fast, Linux-compatible VMs powered by WebAssembly and V8 isolates."
 ---
 
-agentOS provides isolated filesystem, process, terminal, language, and networking
-APIs in a lightweight VM.
+agentOS gives each agent a lightweight VM with files, processes, a shell, and
+networking. It is powered by WebAssembly and V8 isolates, the same technology
+behind Chrome and Cloudflare Workers, and exposes Linux-style POSIX files,
+processes, and sockets.
 
 <CardGroup>
   <Card title="Quickstart (Hosted)" href="/agentos/docs/quickstart-hosted">
@@ -13,19 +15,94 @@ APIs in a lightweight VM.
   <Card title="Quickstart (Library)" href="/agentos/docs/quickstart">
     Run a VM inside a trusted Node.js backend.
   </Card>
-  <Card title="Software" href="/agentos/docs/software">
-    Install immutable `.aospkg` command packages.
+  <Card title="Architecture" href="/agentos/docs/architecture">
+    See how the sidecar, kernel, and guest code fit together.
+  </Card>
+  <Card title="Security Model" href="/agentos/docs/security-model">
+    Understand the trust boundary and what a VM can reach by default.
   </Card>
 </CardGroup>
 
-Run agentOS two ways:
+## Why agentOS
+
+- **Library, not extra infrastructure.** Install agentOS from npm and run it inside the backend process you already operate.
+- **WebAssembly and V8, not a microVM.** V8 isolates run JavaScript, and WebAssembly runs compiled tools such as the shell, coreutils, and Python in the same compact runtime.
+- **Direct function calls, not extra APIs.** Connect agents to your application with [host functions](/agentos/docs/host-functions) instead of another network service.
+- **Scoped access, not exposed credentials.** Bind trusted host functions without giving the agent your raw secrets.
+- **One process, not a VM per agent.** Many isolated VMs share one runtime instead of each duplicating a full microVM stack.
+- **Runs anywhere.** Deploy on standard Linux infrastructure without a hypervisor or nested virtualization.
+
+A cold start takes about 5 ms and a shell workload uses about 22 MB of memory.
+See [Performance](/agentos/docs/performance) for the benchmarks and how to run
+them yourself.
+
+## Library or hosted
+
+<svg viewBox="0 0 590 190" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Library: agentOS runs as a VM inside your backend, created with AgentOs.create(). Or hosted: your backend and your frontend call an agentOS VM over HTTP, reached with client.agentOS.getOrCreate()." style="width:100%;max-width:590px;height:auto;display:block;margin:2rem auto;font-family:system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="library-vs-hosted-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2E4034"/></marker>
+  </defs>
+
+  <rect x="10" y="10" width="200" height="170" rx="9" fill="#faf8f3" stroke="#2E4034" stroke-width="1.3" stroke-dasharray="6 5"/>
+  <text x="24" y="30" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.14em" fill="#2E4034">LIBRARY</text>
+  <rect x="30" y="44" width="160" height="96" rx="7" fill="#ffffff" stroke="#1b1916" stroke-width="1.3"/>
+  <text x="110" y="64" text-anchor="middle" font-size="12" fill="#1b1916">Your backend</text>
+  <rect x="50" y="76" width="120" height="46" rx="6" fill="#e7ece7" stroke="#1b1916" stroke-width="1.3"/>
+  <text x="110" y="103" text-anchor="middle" font-size="12" font-weight="600" fill="#1b1916">agentOS VM</text>
+  <text x="110" y="163" text-anchor="middle" font-size="10.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">AgentOs.create()</text>
+
+  <text x="232.5" y="99" text-anchor="middle" font-size="12" fill="#56524a">or</text>
+
+  <g transform="translate(30 0)">
+    <rect x="225" y="10" width="325" height="170" rx="9" fill="#faf8f3" stroke="#2E4034" stroke-width="1.3" stroke-dasharray="6 5"/>
+    <text x="239" y="30" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.14em" fill="#2E4034">HOSTED</text>
+    <rect x="245" y="48" width="110" height="38" rx="6" fill="#ffffff" stroke="#1b1916" stroke-width="1.3"/>
+    <text x="300" y="71" text-anchor="middle" font-size="12" fill="#1b1916">Your backend</text>
+    <rect x="245" y="100" width="110" height="38" rx="6" fill="#ffffff" stroke="#1b1916" stroke-width="1.3"/>
+    <text x="300" y="123" text-anchor="middle" font-size="12" fill="#1b1916">Your frontend</text>
+    <path d="M355 67 H366 Q372 67 372 73 V87 Q372 93 378 93" fill="none" stroke="#2E4034" stroke-width="1.3"/>
+    <path d="M355 119 H366 Q372 119 372 113 V99 Q372 93 378 93" fill="none" stroke="#2E4034" stroke-width="1.3"/>
+    <line x1="378" y1="93" x2="429" y2="93" stroke="#2E4034" stroke-width="1.3" marker-end="url(#library-vs-hosted-arrow)"/>
+    <text x="403" y="86" text-anchor="middle" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">HTTP</text>
+    <rect x="430" y="70" width="100" height="46" rx="6" fill="#e7ece7" stroke="#1b1916" stroke-width="1.3"/>
+    <text x="480" y="97" text-anchor="middle" font-size="12" font-weight="600" fill="#1b1916">agentOS VM</text>
+    <text x="387" y="163" text-anchor="middle" font-size="10.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" fill="#56524a">{'client.agentOS.getOrCreate(["my-vm"])'}</text>
+  </g>
+</svg>
 
 - **Hosted:** the prebuilt `agentOS` Rivet Actor gives each VM a durable ID,
   versioned configuration, replayable output, and expiring previews, controlled
   from `@rivet-dev/agentos` or plain HTTP.
-- **Library:** `@rivet-dev/agentos-core` runs VMs inside your Node.js backend.
+- **Library:** `@rivet-dev/agentos` runs VMs inside your Node.js backend.
   Your application owns the VM's lifecycle, persistence, and access to host
   resources such as [host functions](/agentos/docs/host-functions) and
   [mounts](/agentos/docs/filesystem#mounts).
+- **Hosted:** the prebuilt `agentOS` Rivet Actor gives each VM a durable ID,
+  versioned configuration, replayable output, and expiring previews. Control
+  it from `@rivet-dev/agentos` or plain HTTP.
 
-See [which one to use](/agentos/docs/quickstart-hosted#which-one-should-i-use).
+|  | [Library](/agentos/docs/quickstart) | [Hosted](/agentos/docs/quickstart-hosted) |
+|---|---|---|
+| **Runs** | Inside your process | Durable instance on Rivet Cloud or [self-hosted](/agentos/docs/self-hosting) |
+| **Lifecycle** | Runs until `dispose()` or process exit | Sleeps when idle unless a process is running |
+| **Clients** | Your backend | Your backend, or browsers with a scoped JWT |
+| **Preview URLs** | None | Expiring preview URLs |
+| **Host access** | Host functions, host directory mounts, local software | Serializable configuration only |
+
+## What's in a VM
+
+| Group | What it does |
+| --- | --- |
+| `process` and `terminal` | Run commands, manage child processes, and open interactive PTY sessions. See [Processes & Shells](/agentos/docs/processes). |
+| `filesystem` | Read, write, and list files, and attach mounts. See [Filesystem](/agentos/docs/filesystem). |
+| `javascript`, `typescript`, `python` | Run code, install npm and pip packages, and type-check. See [Node.js](/agentos/docs/javascript) and [Python](/agentos/docs/python). |
+| `network` | Reach servers running in the VM and create preview URLs. See [Networking & Previews](/agentos/docs/networking). |
+| `software` | Install `.aospkg` command packages. See [Software](/agentos/docs/software). |
+| `cron` | Run scheduled commands. See [Crons & Schedules](/agentos/docs/cron). |
+
+## Embedded API
+
+<CodeSnippet file="examples/embedded/quickstart.ts" />
+
+Start with the [hosted quickstart](/agentos/docs/quickstart-hosted) or the
+[embedded quickstart](/agentos/docs/quickstart-embedded).

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { AgentOs, type VirtualFileSystem } from "../src/index.js";
 import { createInMemoryFileSystem } from "../src/test/runtime.js";
 
-// Every VM here is a tenant of one real sidecar process. A guest process must
+// Every VM in this group is a tenant of one real sidecar process. A guest process must
 // reach only its own VM's host functions and filesystem driver.
 describe("VM callbacks on a shared sidecar", () => {
 	const cleanups: Array<() => Promise<void>> = [];
@@ -243,4 +243,51 @@ describe("VM callbacks on a shared sidecar", () => {
 		expect((await callWho(a.vm)).tenant).toBe("a");
 		expect(calls).toEqual(["b", "a"]);
 	}, 120_000);
+});
+
+describe("independent sidecar lifecycle", () => {
+	test("disposing one owner preserves the other VM's files and execution", async () => {
+		const sidecars: Awaited<ReturnType<typeof AgentOs.createSidecar>>[] = [];
+		const errors: unknown[] = [];
+		try {
+			const vms: AgentOs[] = [];
+			for (let index = 0; index < 2; index++) {
+				// Equal display IDs must not give independent native owners shared storage.
+				const sidecar = await AgentOs.createSidecar({
+					sidecarId: "independent-lifecycle-owner",
+				});
+				sidecars.push(sidecar);
+				const vm = await AgentOs.create({
+					defaultSoftware: false,
+					sidecar: { kind: "explicit", handle: sidecar },
+				});
+				vms.push(vm);
+				await vm.writeFile("/tmp/owner.txt", String(index));
+			}
+			await vms[0].dispose();
+			await sidecars[0].dispose();
+			expect(
+				new TextDecoder().decode(await vms[1].readFile("/tmp/owner.txt")),
+			).toBe("1");
+			const result = await vms[1].javascript.execute(
+				"const fs = require('node:fs'); fs.writeFileSync('/tmp/survived.txt', fs.readFileSync('/tmp/owner.txt'));",
+				{ format: "commonjs", timeoutMs: 3_000 },
+			);
+			expect(result.outcome, JSON.stringify(result)).toBe("succeeded");
+			expect(
+				new TextDecoder().decode(await vms[1].readFile("/tmp/survived.txt")),
+			).toBe("1");
+		} catch (error) {
+			errors.push(error);
+		} finally {
+			const results = await Promise.allSettled(
+				sidecars.map((owner) => owner.dispose()),
+			);
+			for (const result of results) {
+				if (result.status === "rejected") errors.push(result.reason);
+			}
+		}
+		if (errors.length)
+			throw new AggregateError(errors, "independent sidecar lifecycle failed");
+	}, 15_000);
 });

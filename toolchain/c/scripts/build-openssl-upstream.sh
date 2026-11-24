@@ -84,6 +84,14 @@ verify_tarball() {
 }
 
 mkdir -p "$CACHE_DIR" "$(dirname "$BUILD_DIR")" "$(dirname "$PREFIX")"
+[[ "$PREFIX" = /* ]] || { echo 'OpenSSL prefix must be absolute' >&2; exit 2; }
+exec 9>"$PREFIX.lock"
+flock 9
+source "$(dirname "${BASH_SOURCE[0]}")/check-generation-limit.sh"
+[[ ! -e "$PREFIX" || -L "$PREFIX" ]] || {
+  echo "ImmutablePrefixRequired: use a new OpenSSL prefix instead of replacing legacy directory $PREFIX" >&2
+  exit 2
+}
 
 TARBALL="$CACHE_DIR/openssl-${VERSION}.tar.gz"
 if [[ ! -f "$TARBALL" ]]; then
@@ -96,40 +104,35 @@ if [[ ! -f "$TARBALL" ]]; then
 fi
 verify_tarball "$TARBALL"
 
-# Build and install into disposable sibling directories. A failed configure,
-# compile, or install leaves the last known-good prefix untouched.
+# A complete install is published as one symlink to an immutable generation.
+# Keep old generations available to compilers that already resolved their inputs.
 BUILD_TMP="${BUILD_DIR}.tmp.$$"
 STAGE_TMP="${PREFIX}.stage.$$"
 BUILD_OLD="${BUILD_DIR}.old.$$"
-PREFIX_OLD="${PREFIX}.old.$$"
 BUILD_HAD_OLD=0
-PREFIX_HAD_OLD=0
 BUILD_INSTALLED=0
-PREFIX_INSTALLED=0
 PROMOTION_STARTED=0
-PROMOTION_COMPLETE=0
+generation=
 cleanup() {
+  local published=0
+  if [[ -n "$generation" && "$PREFIX" -ef "$generation" ]]; then published=1; fi
   rm -rf "$BUILD_TMP" "$STAGE_TMP"
   rm -f "${TARBALL_TMP:-}"
-  if [[ "$PROMOTION_STARTED" = 1 && "$PROMOTION_COMPLETE" = 0 ]]; then
-    if [[ "$BUILD_INSTALLED" = 1 ]]; then
-      rm -rf "$BUILD_DIR"
-    fi
-    if [[ "$PREFIX_INSTALLED" = 1 ]]; then
-      rm -rf "$PREFIX"
-    fi
+  if [[ "$PROMOTION_STARTED" = 1 && "$published" = 0 ]]; then
+    if [[ "$BUILD_INSTALLED" = 1 ]]; then rm -rf "$BUILD_DIR"; fi
     if [[ "$BUILD_HAD_OLD" = 1 && -e "$BUILD_OLD" ]]; then
       rm -rf "$BUILD_DIR"
       mv "$BUILD_OLD" "$BUILD_DIR"
     fi
-    if [[ "$PREFIX_HAD_OLD" = 1 && -e "$PREFIX_OLD" ]]; then
-      rm -rf "$PREFIX"
-      mv "$PREFIX_OLD" "$PREFIX"
-    fi
+  fi
+  if [[ "$published" = 1 ]]; then
+    rm -rf "$BUILD_OLD"
+  elif [[ -n "$generation" ]]; then
+    rm -rf "$generation"
   fi
 }
 trap cleanup EXIT
-rm -rf "$BUILD_TMP" "$STAGE_TMP" "$BUILD_OLD" "$PREFIX_OLD"
+rm -rf "$BUILD_TMP" "$STAGE_TMP" "$BUILD_OLD"
 mkdir -p "$BUILD_TMP" "$STAGE_TMP"
 
 echo "Extracting upstream OpenSSL ${VERSION}..."
@@ -137,10 +140,9 @@ tar -xzf "$TARBALL" -C "$BUILD_TMP" --strip-components=1
 
 pushd "$BUILD_TMP" >/dev/null
 
-# OpenSSH only needs libcrypto. Keep curl/wget/git on their existing mbedTLS
-# backend and omit OpenSSL's TLS library consumers, programs, modules, dynamic
-# loading, threads, and platform assembly. BSD-generic32 matches wasm32's data
-# model; getrandom is provided by the owned libc/syscall layer.
+# OpenSSH uses libcrypto; curl and Git share this generation's libssl/libcrypto.
+# Omit programs, modules, dynamic loading, threads, and platform assembly.
+# BSD-generic32 matches wasm32's data model; getrandom comes from the owned libc.
 echo "Configuring upstream OpenSSL ${VERSION} for wasm32-wasip1..."
 CC="$CC_CMD" \
 AR="$AR_CMD" \
@@ -174,26 +176,33 @@ make DESTDIR="$STAGE_TMP" install_dev
 
 popd >/dev/null
 
-if [[ ! -f "$STAGE_TMP/usr/lib/libcrypto.a" || ! -f "$STAGE_TMP/usr/include/openssl/opensslv.h" ]]; then
-  echo "Expected OpenSSL libcrypto and development headers were not installed" >&2
+if [[ ! -f "$STAGE_TMP/usr/lib/libssl.a" || ! -f "$STAGE_TMP/usr/lib/libcrypto.a" || ! -f "$STAGE_TMP/usr/include/openssl/opensslv.h" ]]; then
+  echo "Expected OpenSSL libssl, libcrypto and development headers were not installed" >&2
   exit 1
 fi
+
+generation=$(mktemp -d "${PREFIX}.generation.XXXXXXXX")
+cp -a "$STAGE_TMP/usr/." "$generation/"
+# OpenSSL keeps /usr as its guest build prefix. Only host consumption metadata
+# is relocated, so pkg-config cannot introduce host /usr headers or libraries.
+python3 - "$generation" "$STAGE_TMP/usr" <<'PYMETA'
+import pathlib,re,sys
+root,staged=map(pathlib.Path,sys.argv[1:])
+pattern=re.compile(re.escape(str(staged))+r"(?=/|$)|/usr(?=/|[\s'\"$]|$)")
+for extension in ('*.pc','*.la'):
+ for path in root.rglob(extension):
+  path.write_text(pattern.sub(lambda _:str(root),path.read_text()))
+PYMETA
+printf 'agentos-immutable-prefix-v1\n' > "$generation/.agentos-generation"
 
 PROMOTION_STARTED=1
 if [[ -e "$BUILD_DIR" ]]; then
   mv "$BUILD_DIR" "$BUILD_OLD"
   BUILD_HAD_OLD=1
 fi
-if [[ -e "$PREFIX" ]]; then
-  mv "$PREFIX" "$PREFIX_OLD"
-  PREFIX_HAD_OLD=1
-fi
 mv "$BUILD_TMP" "$BUILD_DIR"
 BUILD_INSTALLED=1
-mv "$STAGE_TMP/usr" "$PREFIX"
-PREFIX_INSTALLED=1
-PROMOTION_COMPLETE=1
-rm -rf "$BUILD_OLD" "$PREFIX_OLD" "$STAGE_TMP"
-trap - EXIT
-
-echo "Built upstream OpenSSL libcrypto at $PREFIX/lib/libcrypto.a"
+ln -s "$(basename "$generation")" "$STAGE_TMP/current"
+mv -Tf "$STAGE_TMP/current" "$PREFIX"
+# Cleanup detects publication by identity, including interruption before here.
+echo "Built upstream OpenSSL libssl/libcrypto at $generation/lib"

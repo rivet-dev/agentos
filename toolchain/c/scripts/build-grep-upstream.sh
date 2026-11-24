@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: build-grep-upstream.sh \
   --version <grep-version> \
-  --url <release-url> \
+  --sha256 <pinned-tarball-sha256> \
   --cache-dir <cache-dir> \
   --build-dir <build-dir> \
   --cc <cc> \
@@ -16,7 +16,7 @@ EOF
 }
 
 VERSION=""
-URL=""
+SHA256=""
 CACHE_DIR=""
 BUILD_DIR=""
 CC_CMD=""
@@ -30,8 +30,8 @@ while [[ $# -gt 0 ]]; do
       VERSION="$2"
       shift 2
       ;;
-    --url)
-      URL="$2"
+    --sha256)
+      SHA256="$2"
       shift 2
       ;;
     --cache-dir)
@@ -66,23 +66,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$VERSION" || -z "$URL" || -z "$CACHE_DIR" || -z "$BUILD_DIR" || -z "$CC_CMD" || -z "$AR_CMD" || -z "$RANLIB_CMD" || -z "$OUTPUT" ]]; then
+if [[ -z "$VERSION" || -z "$SHA256" || -z "$CACHE_DIR" || -z "$BUILD_DIR" || -z "$CC_CMD" || -z "$AR_CMD" || -z "$RANLIB_CMD" || -z "$OUTPUT" ]]; then
   usage >&2
   exit 1
 fi
-
-fetch() {
-  local url="$1"
-  local out="$2"
-  if command -v curl >/dev/null 2>&1; then
-    curl --retry 3 --retry-all-errors -fSL "$url" -o "$out"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q "$url" -O "$out"
-  else
-    echo "Neither curl nor wget is available to fetch $url" >&2
-    exit 1
-  fi
-}
 
 mkdir -p "$CACHE_DIR"
 rm -rf "$BUILD_DIR"
@@ -91,8 +78,9 @@ mkdir -p "$BUILD_DIR"
 TARBALL="$CACHE_DIR/grep-${VERSION}.tar.xz"
 if [[ ! -f "$TARBALL" ]]; then
   echo "Fetching upstream GNU grep ${VERSION} release tarball..."
-  fetch "$URL" "$TARBALL"
+  "$(dirname "$0")/fetch-gnu-release.sh" "grep/grep-${VERSION}.tar.xz" "$SHA256" "$TARBALL"
 fi
+printf '%s  %s\n' "$SHA256" "$TARBALL" | sha256sum --check
 
 echo "Extracting upstream GNU grep ${VERSION}..."
 tar -xJf "$TARBALL" -C "$BUILD_DIR"
@@ -149,9 +137,9 @@ if [[ -z "$BIN" ]]; then
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
-if command -v wasm-opt >/dev/null 2>&1; then
+if [[ "${AGENTOS_ENABLE_BINARYEN:-0}" == "1" ]]; then
   echo "Optimizing GNU grep WASM binary..."
-  wasm-opt -O3 --strip-debug --all-features "$BIN" -o "$OUTPUT"
+  "${WASM_OPT:-wasm-opt}" -O3 --strip-debug --all-features "$BIN" -o "$OUTPUT"
 else
   cp "$BIN" "$OUTPUT"
 fi

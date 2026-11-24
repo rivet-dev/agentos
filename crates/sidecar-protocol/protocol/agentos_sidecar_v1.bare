@@ -166,6 +166,7 @@ type CreateVmRequest struct {
   config: JsonUtf8
 }
 
+
 type DisposeReason enum {
   REQUESTED
   CONNECTION_CLOSED
@@ -225,9 +226,15 @@ type WasmPermissionTier enum {
   ISOLATED
 }
 
+type StandaloneWasmBackend enum {
+  V8
+  WASMTIME
+  WASMTIME_THREADS
+}
+
 # agentOS package descriptor. `path` is the trusted host path of the package:
 # normally the packed `.aospkg` file (header + vbare manifest + mount index +
-# mount tar; see crates/vfs/package-format/v2.bare). The sidecar reads the
+# mount tar; see crates/vfs-core/package-format/v2.bare). The sidecar reads the
 # vbare chunk1 manifest, projects the package read-only under
 # `<packagesMountAt>/pkgs/<name>/<version>`, and links its `bin/` commands onto
 # $PATH. A directory path is accepted only for local transition fixtures and is
@@ -273,6 +280,7 @@ type AcquirePackageRequest struct {
   # Dropping a client waiter alone does not immediately cancel this operation.
   timeoutMs: optional<u64>
   maxPackageBytes: optional<u64>
+  maxSourceUrlBytes: optional<u64>
   downloadTimeoutMs: optional<u64>
   connectTimeoutMs: optional<u64>
   maxRedirects: optional<u32>
@@ -442,6 +450,20 @@ type GuestFilesystemCallRequest struct {
   offset: optional<u64>
 }
 
+# Writes many files in one request. For each entry, in order, the sidecar
+# creates missing parent directories (mkdir -p) and then writes the file. A
+# failed entry does not stop later entries. Entry count is bounded by the
+# negotiated AuthenticatedResponse.maxWriteFilesEntries; total size is bounded
+# by the negotiated maxFrameBytes.
+type GuestFilesystemWriteFileEntry struct {
+  path: str
+  content: data
+}
+
+type GuestFilesystemWriteFilesRequest struct {
+  entries: list<GuestFilesystemWriteFileEntry>
+}
+
 type GuestKernelCallRequest struct {
   executionId: str
   operation: str
@@ -463,6 +485,7 @@ type ExecuteRequest struct {
   env: map<str><str>
   cwd: optional<str>
   wasmPermissionTier: optional<WasmPermissionTier>
+  wasmBackend: optional<StandaloneWasmBackend>
   retainOutput: bool
 }
 
@@ -884,7 +907,8 @@ type RequestPayload union {
   AcquirePackageRequest |
   InstallPackageRequest |
   GetPackageCacheStatsRequest |
-  ReadProcessOutputRequest
+  ReadProcessOutputRequest |
+  GuestFilesystemWriteFilesRequest
 }
 
 type RequestFrame struct {
@@ -898,6 +922,8 @@ type AuthenticatedResponse struct {
   sidecarId: str
   connectionId: str
   maxFrameBytes: u32
+  # Most entries one GuestFilesystemWriteFilesRequest may carry.
+  maxWriteFilesEntries: u32
 }
 
 type SessionOpenedResponse struct {
@@ -911,10 +937,6 @@ type VmCreatedResponse struct {
 
 type VmConfigComparedResponse struct {
   equivalent: bool
-}
-
-type VmDisposedResponse struct {
-  vmId: str
 }
 
 type RootFilesystemBootstrappedResponse struct {
@@ -990,6 +1012,21 @@ type GuestFilesystemResultResponse struct {
   target: optional<str>
 }
 
+# Same code and message as the rejection the equivalent single request returns.
+type GuestFilesystemWriteFileError struct {
+  code: str
+  message: str
+}
+
+type GuestFilesystemWriteFileResult struct {
+  error: optional<GuestFilesystemWriteFileError>
+}
+
+# One result per request entry, in request order.
+type GuestFilesystemWriteFilesResponse struct {
+  results: list<GuestFilesystemWriteFileResult>
+}
+
 type GuestKernelResultResponse struct {
   payload: data
 }
@@ -1032,11 +1069,6 @@ type ProcessSnapshotStatus enum {
   STOPPED
 }
 
-type StreamChannel enum {
-  STDOUT
-  STDERR
-}
-
 type ProcessSnapshotEntry struct {
   processId: str
   pid: u32
@@ -1049,10 +1081,16 @@ type ProcessSnapshotEntry struct {
   cwd: str
   status: ProcessSnapshotStatus
   exitCode: optional<i32>
+  exitSignal: optional<u32>
 }
 
 type ProcessSnapshotResponse struct {
   processes: list<ProcessSnapshotEntry>
+}
+
+type StreamChannel enum {
+  STDOUT
+  STDERR
 }
 
 type ProcessOutputReplayEvent struct {
@@ -1069,6 +1107,7 @@ type ProcessOutputPageResponse struct {
   hasMore: bool
   truncated: bool
   exitCode: optional<i32>
+  exitSignal: optional<u32>
 }
 
 type QueueSnapshotEntry struct {
@@ -1082,6 +1121,7 @@ type QueueSnapshotEntry struct {
 
 type ResourceSnapshotResponse struct {
   runningProcesses: u64
+  stoppedProcesses: u64
   exitedProcesses: u64
   fdTables: u64
   openFds: u64
@@ -1095,6 +1135,16 @@ type ResourceSnapshotResponse struct {
   socketConnections: u64
   socketBufferedBytes: u64
   socketDatagramQueueLen: u64
+  wasmReservedMemoryBytes: u64
+  wasmtimeEngineProfiles: u64
+  wasmtimeModuleEntries: u64
+  wasmtimeModuleCacheHits: u64
+  wasmtimeModuleCacheMisses: u64
+  wasmtimeModuleCacheEvictions: u64
+  wasmtimeCompiledSourceBytes: u64
+  wasmtimeChargedModuleBytes: u64
+  wasmtimeCompileTimeMicros: u64
+  wasmtimeProcessRetainedRssBytes: optional<u64>
   queueSnapshots: list<QueueSnapshotEntry>
 }
 
@@ -1209,6 +1259,7 @@ type ExecutionCompletedResponse struct {
   execution: optional<ExecutionDescriptor>
   outcome: ExecutionOutcome
   exitCode: optional<i32>
+  exitSignal: optional<u32>
   error: optional<ExecutionErrorData>
   stdout: optional<data>
   stderr: optional<data>
@@ -1274,6 +1325,23 @@ type ExecutionOutputPageResponse struct {
   truncated: bool
 }
 
+type ExecutionCompletedEvent struct {
+  executionId: str
+  generation: u64
+  outcome: ExecutionOutcome
+  exitCode: optional<i32>
+  exitSignal: optional<u32>
+  error: optional<ExecutionErrorData>
+}
+
+# `completedExecutions` holds the completion of every public execution that
+# had already finished when the dispose began. An execution absent from it was
+# still running, so the dispose terminated it.
+type VmDisposedResponse struct {
+  vmId: str
+  completedExecutions: list<ExecutionCompletedEvent>
+}
+
 type ResponsePayload union {
   AuthenticatedResponse |
   SessionOpenedResponse |
@@ -1325,7 +1393,8 @@ type ResponsePayload union {
   PackageAcquiredResponse |
   PackageInstalledResponse |
   PackageCacheStatsResponse |
-  ProcessOutputPageResponse
+  ProcessOutputPageResponse |
+  GuestFilesystemWriteFilesResponse
 }
 
 type ResponseFrame struct {
@@ -1347,6 +1416,7 @@ type VmLifecycleEvent struct {
   state: VmLifecycleState
 }
 
+
 type ProcessOutputEvent struct {
   processId: str
   channel: StreamChannel
@@ -1358,14 +1428,7 @@ type ProcessOutputEvent struct {
 type ProcessExitedEvent struct {
   processId: str
   exitCode: i32
-}
-
-type ExecutionCompletedEvent struct {
-  executionId: str
-  generation: u64
-  outcome: ExecutionOutcome
-  exitCode: optional<i32>
-  error: optional<ExecutionErrorData>
+  exitSignal: optional<u32>
 }
 
 type StructuredEvent struct {
@@ -1462,3 +1525,6 @@ type ProtocolFrame union {
   SidecarResponseFrame |
   ControlFrame
 }
+
+
+

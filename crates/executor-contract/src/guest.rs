@@ -1,0 +1,138 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::mem::size_of;
+
+/// Owned compatibility host-call envelope used by legacy synchronous guest
+/// adapters. Native adapters should prefer typed [`crate::host::HostOperation`]
+/// values, but both forms remain engine independent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostRpcRequest {
+    pub id: u64,
+    pub method: String,
+    pub args: Vec<Value>,
+    pub raw_bytes_args: HashMap<usize, Vec<u8>>,
+}
+
+/// Heap charge for an owned JSON value whose inline slot is already counted.
+/// Arrays and strings expose their allocated capacity. Object maps do not, so
+/// reserve space for tree node slack and child links as well as keys and values.
+/// Refuse values beyond the normal JSON decoder's depth without recursing further.
+pub fn json_heap_bytes(value: &Value) -> usize {
+    fn visit(value: &Value, depth: usize) -> usize {
+        if depth > 128 {
+            return usize::MAX;
+        }
+        match value {
+            Value::String(text) => text.capacity(),
+            Value::Array(values) => values.iter().fold(
+                values.capacity().saturating_mul(size_of::<Value>()),
+                |bytes, child| bytes.saturating_add(visit(child, depth + 1)),
+            ),
+            Value::Object(entries) if !entries.is_empty() => {
+                // A B-tree node holds up to eleven entries. Allow for the
+                // sparsely populated root and partially filled child nodes.
+                let slots = 11usize.saturating_add(entries.len().saturating_mul(3));
+                entries.iter().fold(
+                    slots.saturating_mul(size_of::<(String, Value, usize)>()),
+                    |bytes, (key, child)| {
+                        bytes
+                            .saturating_add(key.capacity())
+                            .saturating_add(visit(child, depth + 1))
+                    },
+                )
+            }
+            _ => 0,
+        }
+    }
+    visit(value, 0)
+}
+
+impl HostRpcRequest {
+    /// Bytes retained outside of this envelope, including spare buffer slots.
+    pub fn heap_bytes(&self) -> usize {
+        let args = self.args.iter().fold(
+            self.args.capacity().saturating_mul(size_of::<Value>()),
+            |bytes, arg| bytes.saturating_add(json_heap_bytes(arg)),
+        );
+        // Hash table growth leaves spare buckets and a control byte per bucket.
+        let raw_slots = self
+            .raw_bytes_args
+            .capacity()
+            .saturating_mul(2)
+            .saturating_mul(size_of::<(usize, Vec<u8>)>() + 1);
+        self.raw_bytes_args.values().fold(
+            self.method
+                .capacity()
+                .saturating_add(args)
+                .saturating_add(raw_slots),
+            |bytes, raw| bytes.saturating_add(raw.capacity()),
+        )
+    }
+}
+
+/// Per-execution guest identity and operating-system projection supplied by
+/// the sidecar. Concrete executors translate these owned values into their
+/// guest-specific bootstrap representation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuestRuntimeConfig {
+    #[serde(default)]
+    pub bridge_limits: GuestBridgeLimits,
+    pub virtual_pid: Option<u64>,
+    pub virtual_ppid: Option<u64>,
+    pub virtual_uid: Option<u64>,
+    pub virtual_gid: Option<u64>,
+    pub virtual_exec_path: Option<String>,
+    pub os_cpu_count: Option<u64>,
+    pub os_totalmem: Option<u64>,
+    pub os_freemem: Option<u64>,
+    pub os_homedir: Option<String>,
+    pub os_hostname: Option<String>,
+    pub os_tmpdir: Option<String>,
+    pub os_type: Option<String>,
+    pub os_release: Option<String>,
+    pub os_version: Option<String>,
+    pub os_machine: Option<String>,
+    pub os_shell: Option<String>,
+    pub os_user: Option<String>,
+    pub high_resolution_time: bool,
+    /// Forward stdout/stderr writes to the owning kernel descriptor table.
+    /// Standalone executors keep their local output event contract.
+    #[serde(default)]
+    pub kernel_stdio: bool,
+    /// Discover the owning process's kernel IPC channel during guest startup.
+    /// Standalone executors leave this disabled unless their host services IPC.
+    /// Channel access is still authorized by the kernel's process ownership.
+    #[serde(default)]
+    pub kernel_ipc: bool,
+    /// Optional code evaluated by V8-family adapters when creating a reusable
+    /// snapshot. Non-V8 executors preserve but otherwise ignore this field.
+    pub snapshot_userland_code: Option<String>,
+    /// Module paths preloaded in a reusable V8 module snapshot.
+    #[serde(default)]
+    pub snapshot_entrypoints: Vec<String>,
+    /// Trusted sidecar script evaluated before the entrypoint is linked.
+    pub prelude_script: Option<String>,
+}
+
+/// Effective trusted per-execution bridge retention policy. Shared defaults also
+/// apply to standalone executors; VM overrides are supplied by the composition root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct GuestBridgeLimits {
+    pub max_chunk_size_line_bytes: usize,
+    pub max_pending_response_bytes: usize,
+    pub max_readline_history_entries: usize,
+    pub max_blob_bytes: usize,
+}
+
+impl Default for GuestBridgeLimits {
+    fn default() -> Self {
+        Self {
+            max_chunk_size_line_bytes: 16 * 1024 + 32,
+            max_pending_response_bytes: 256 * 1024,
+            max_readline_history_entries: 1024,
+            max_blob_bytes: 64 * 1024 * 1024,
+        }
+    }
+}

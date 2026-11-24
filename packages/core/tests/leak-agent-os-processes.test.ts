@@ -114,7 +114,7 @@ describe("AgentOs _processes leak (H5)", () => {
 		expect(processes.size).toBe(0);
 	});
 
-	test("dispose drains language-process exits before clearing their registry", async () => {
+	test("dispose reports a signalled exit for each running language process", async () => {
 		const { vm } = makeAgentOs();
 		type LanguageProcess = {
 			executionId: string;
@@ -124,15 +124,19 @@ describe("AgentOs _processes leak (H5)", () => {
 				language: "javascript";
 				startedAtMs: number;
 			};
-			exit?: { pid: number; outcome: "signalled"; signal: "SIGKILL" };
+			exit?: {
+				pid: number;
+				outcome: "signalled";
+				exitCode: number;
+				exitSignal: number;
+				signal: "SIGKILL";
+			};
 			outputHandlers: Set<(event: unknown) => void>;
 			exitHandlers: Set<(event: unknown) => void>;
 		};
 		const internals = vm as unknown as {
 			_languageProcesses: Map<number, LanguageProcess>;
 			_languageProcessIds: Map<string, number>;
-			_killProcess: (pid: number) => Promise<void>;
-			_disposeSidecarEventListener: () => void;
 		};
 		const process: LanguageProcess = {
 			executionId: "execution-303",
@@ -148,29 +152,21 @@ describe("AgentOs _processes leak (H5)", () => {
 		internals._languageProcesses.set(303, process);
 		internals._languageProcessIds.set(process.executionId, 303);
 
-		let exitObserved = false;
-		vm.onProcessExit(303, () => {
-			exitObserved = true;
-			expect(internals._languageProcesses.has(303)).toBe(true);
+		let observedExit: unknown;
+		vm.onProcessExit(303, (exit) => {
+			observedExit = exit;
 		});
-		internals._killProcess = async (pid) => {
-			await Promise.resolve();
-			process.exit = { pid, outcome: "signalled", signal: "SIGKILL" };
-			process.descriptor = { ...process.descriptor, state: "exited" };
-			for (const handler of process.exitHandlers) handler(process.exit);
-		};
-
-		let registrySizeWhenListenerDisposed: number | null = null;
-		const disposeListener = internals._disposeSidecarEventListener;
-		internals._disposeSidecarEventListener = () => {
-			registrySizeWhenListenerDisposed = internals._languageProcesses.size;
-			disposeListener();
-		};
 
 		await vm.dispose();
 
-		expect(exitObserved).toBe(true);
-		expect(registrySizeWhenListenerDisposed).toBe(0);
+		expect(observedExit).toEqual({
+			pid: 303,
+			outcome: "signalled",
+			exitCode: 137,
+			exitSignal: 9,
+			signal: "SIGKILL",
+		});
+		expect(internals._languageProcesses.size).toBe(0);
 		expect(internals._languageProcessIds.size).toBe(0);
 	});
 

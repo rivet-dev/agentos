@@ -113,6 +113,7 @@ export interface ProcessInfo {
 	cwd: string;
 	status: "running" | "exited";
 	exitCode: number | null;
+	exitSignal?: number | null;
 	startTime: number;
 	exitTime: number | null;
 }
@@ -124,9 +125,11 @@ export interface ManagedProcess {
 	kill(signal?: number): void;
 	wait(): Promise<number>;
 	readonly exitCode: number | null;
+	readonly exitSignal?: number | null;
 }
 
 export interface ShellHandle {
+	readonly exitSignal?: number | null;
 	pid: number;
 	write(data: Uint8Array | string): Promise<void>;
 	/** Ordered PTY output containing stdout and stderr exactly once. */
@@ -143,7 +146,9 @@ export interface OpenShellOptions {
 	cwd?: string;
 	cols?: number;
 	rows?: number;
-	/** Optional stderr-only diagnostic tap; do not render it alongside `onData`. */
+	/** Engine affinity inherited by standalone WASM commands launched by the shell. */
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
+	/** Runtime diagnostics outside the PTY; guest stdout and stderr share `onData`. */
 	onStderr?: (data: Uint8Array) => void;
 }
 
@@ -156,15 +161,20 @@ export interface ExecOptions {
 	cwd?: string;
 	stdin?: string | Uint8Array;
 	timeout?: number;
+	/** Maximum combined host-captured stdout and stderr bytes. Defaults to 16 MiB. */
+	maxCapturedOutputBytes?: number;
 	onStdout?: (data: Uint8Array) => void;
 	onStderr?: (data: Uint8Array) => void;
 	captureStdio?: boolean;
 	filePath?: string;
 	cpuTimeLimitMs?: number;
 	timingMitigation?: TimingMitigation;
+	/** Selects standalone WASM commands only; JavaScript remains on V8. */
+	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
 }
 
 export interface ExecResult {
+	exitSignal?: number;
 	exitCode: number;
 	stdout: string;
 	stderr: string;

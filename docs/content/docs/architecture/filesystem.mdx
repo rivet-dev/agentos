@@ -75,7 +75,7 @@ A host-backed mount (host directory, S3, ...) comes from trusted config, so its 
 - **Symlinks.** Symlink resolution (`realpath` following) is performed by the kernel against the *virtual* namespace, not the host's. A symlink inside a host-directory mount cannot be used to escape the mount root onto the wider host filesystem; the resolved target is re-confined to the mount root.
 - **Path aliasing / TOCTOU.** Because resolution and confinement happen inside the kernel on each operation, there is no window where the guest resolves a path and the backend later acts on a different one. The guest sees only the mounted subtree, never the wider host filesystem.
 
-Mounts for host and remote backends are **read-only by default**; a writable mount must be opted into explicitly. The `readOnly` flag is enforced at the engine, so a write syscall to a read-only mount fails inside the kernel rather than reaching the backend.
+Mounts for host and remote backends are **read-only by default**; a writable mount must be opted into explicitly. The `readOnly` flag is enforced at the engine, so a write syscall to a read-only mount fails inside the kernel rather than reaching the backend. The guest gets `EROFS`, as on Linux, even when it does not own the mounted files.
 
 <Note>"Trusted mount, untrusted traffic": the mount's target is trusted configuration, but the guest drives I/O through it, so confining guest operations to the mount root (`..`, symlink, TOCTOU, path-aliasing) is squarely in scope and enforced by the kernel.</Note>
 

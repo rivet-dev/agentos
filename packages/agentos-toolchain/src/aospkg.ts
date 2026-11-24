@@ -1,7 +1,7 @@
 /**
  * `.aospkg` packer — the toolchain half of the canonical packer in
- * `crates/vfs/src/package_format/pack.rs` (both encode the schema in
- * `crates/vfs/package-format/v2.bare`; the TS codecs are generated from it by
+ * `crates/vfs-core/src/package_format/pack.rs` (both encode the schema in
+ * `crates/vfs-core/package-format/v2.bare`; the TS codecs are generated from it by
  * `pnpm --dir packages/build-tools build:package-format`).
  *
  * Container layout: `16-byte header + vbare PackageManifest + vbare MountIndex
@@ -16,15 +16,15 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import {
+	type CommandTarget,
 	decodePackageManifest,
 	encodeMountIndex,
 	encodePackageManifest,
-	TarEntryKind,
-	type CommandTarget,
 	type ManPage,
 	type PackageManifest,
 	type ProvidesBlock,
 	type TarEntry,
+	TarEntryKind,
 } from "./generated-package-format.js";
 
 const AOSPKG_MAGIC = Uint8Array.from([0x89, 0x41, 0x4f, 0x53]); // 0x89 'A' 'O' 'S'
@@ -52,13 +52,24 @@ export interface AospkgSummary {
 export type DecodedAospkgManifest = PackageManifest;
 
 /** Decode the chunk1 manifest from a package container. */
-export function decodeAospkgManifest(source: Uint8Array): DecodedAospkgManifest {
-	const bytes = Buffer.from(source.buffer, source.byteOffset, source.byteLength);
-	if (bytes.length < 16 || !bytes.subarray(0, 4).equals(Buffer.from(AOSPKG_MAGIC))) {
+export function decodeAospkgManifest(
+	source: Uint8Array,
+): DecodedAospkgManifest {
+	const bytes = Buffer.from(
+		source.buffer,
+		source.byteOffset,
+		source.byteLength,
+	);
+	if (
+		bytes.length < 16 ||
+		!bytes.subarray(0, 4).equals(Buffer.from(AOSPKG_MAGIC))
+	) {
 		throw new Error("invalid .aospkg header");
 	}
 	if (bytes.readUInt16LE(4) !== AOSPKG_FORMAT_VERSION) {
-		throw new Error(`unsupported .aospkg format version: ${bytes.readUInt16LE(4)}`);
+		throw new Error(
+			`unsupported .aospkg format version: ${bytes.readUInt16LE(4)}`,
+		);
 	}
 	const manifestLength = bytes.readUInt32LE(8);
 	const manifestEnd = 16 + manifestLength;
@@ -67,7 +78,8 @@ export function decodeAospkgManifest(source: Uint8Array): DecodedAospkgManifest 
 	}
 	const version = bytes.readUInt16LE(16);
 	const payload = bytes.subarray(18, manifestEnd);
-	if (version === PACKAGE_MANIFEST_VERSION) return decodePackageManifest(payload);
+	if (version === PACKAGE_MANIFEST_VERSION)
+		return decodePackageManifest(payload);
 	throw new Error(`unsupported package manifest version: ${version}`);
 }
 
@@ -98,7 +110,10 @@ interface RawTarMember {
 
 /** Pack `sourceTar` into a `.aospkg` at `dest`. The source
  * `agentos-package.json` must carry `name` and `version`. */
-export function packAospkgFromTar(sourceTar: string, dest: string): AospkgSummary {
+export function packAospkgFromTar(
+	sourceTar: string,
+	dest: string,
+): AospkgSummary {
 	const source = readFileSync(sourceTar);
 	const { bytes, summary } = packAospkgFromTarBytes(source);
 	writeFileSync(dest, bytes);
@@ -261,7 +276,11 @@ function indexEntry(member: RawTarMember): TarEntry | undefined {
 			linkTarget: member.linkTarget,
 		};
 	}
-	if (member.typeflag === "0" || member.typeflag === "\0" || member.typeflag === "7") {
+	if (
+		member.typeflag === "0" ||
+		member.typeflag === "\0" ||
+		member.typeflag === "7"
+	) {
 		return {
 			...base,
 			kind: TarEntryKind.File,
@@ -360,7 +379,10 @@ function manPagesFromIndex(sortedPaths: string[]): ManPage[] {
 			if (parts.length !== 2) return [];
 			return [{ section: parts[0], page: parts[1] }];
 		})
-		.sort((a, b) => byteCompare(a.section, b.section) || byteCompare(a.page, b.page));
+		.sort(
+			(a, b) =>
+				byteCompare(a.section, b.section) || byteCompare(a.page, b.page),
+		);
 }
 
 function isProjectableCommandName(name: string): boolean {

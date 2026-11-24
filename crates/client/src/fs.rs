@@ -24,6 +24,11 @@ use agentos_sidecar_client::wire::{
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;
 
+/// Room for the frame envelope in one write-files request.
+const WRITE_FILES_FRAME_OVERHEAD_BYTES: usize = 64 * 1024;
+/// Per-entry length prefixes in one write-files request.
+const WRITE_FILES_ENTRY_OVERHEAD_BYTES: usize = 16;
+
 // ---------------------------------------------------------------------------
 // Supporting types
 // ---------------------------------------------------------------------------
@@ -546,6 +551,49 @@ impl AgentOs {
         Ok(())
     }
 
+    /// One write-files request. Returns one error message (or `None`) per entry, in order.
+    async fn kernel_write_files(
+        &self,
+        entries: Vec<wire::GuestFilesystemWriteFileEntry>,
+    ) -> Result<Vec<Option<String>>> {
+        let expected = entries.len();
+        let response = self
+            .transport()
+            .request_wire(
+                self.fs_vm_scope(),
+                wire::RequestPayload::GuestFilesystemWriteFilesRequest(
+                    wire::GuestFilesystemWriteFilesRequest { entries },
+                ),
+            )
+            .await
+            .context("guest filesystem write files failed")?;
+        match response {
+            wire::ResponsePayload::GuestFilesystemWriteFilesResponse(response)
+                if response.results.len() == expected =>
+            {
+                Ok(response
+                    .results
+                    .into_iter()
+                    .map(|result| {
+                        result.error.map(|error| {
+                            if error.message.starts_with(&format!("{}:", error.code)) {
+                                error.message
+                            } else {
+                                format!("{}: {}", error.code, error.message)
+                            }
+                        })
+                    })
+                    .collect())
+            }
+            wire::ResponsePayload::RejectedResponse(rejected) => {
+                Err(ClientError::from_rejection(rejected).into())
+            }
+            other => Err(anyhow::anyhow!(
+                "unexpected response to guest filesystem write files: {other:?}"
+            )),
+        }
+    }
+
     /// Single-level directory creation. Mirrors TS `kernel.mkdir(path)` (no options), which the
     /// native client maps to the `create_dir` guest filesystem operation. This backs BOTH
     /// `AgentOs::mkdir` (non-recursive) and every `_mkdirp` component, so it always emits
@@ -649,6 +697,31 @@ impl AgentOs {
         self.kernel_read_file(path).await
     }
 
+    /// Read at most `length` bytes without allocating the complete file. Kernel
+    /// pread quotas still apply. Mirrors TS `filesystem.readFileRange`.
+    pub async fn read_file_range(&self, path: &str, offset: u64, length: u64) -> Result<Vec<u8>> {
+        Self::assert_safe_absolute_path(path)?;
+        if offset > 9_007_199_254_740_991 || length > 9_007_199_254_740_991 {
+            return Err(ClientError::InvalidConfig(
+                "readFileRange offset and length must be non-negative safe integers".into(),
+            )
+            .into());
+        }
+        let mut request = Self::fs_request(GuestFilesystemOperation::Pread, path);
+        request.offset = Some(offset);
+        request.len = Some(length);
+        let result = self.guest_fs_call(request).await?;
+        let content = result
+            .content
+            .with_context(|| format!("sidecar returned no file content for {path}"))?;
+        match result.encoding {
+            Some(RootFilesystemEntryEncoding::Base64) => BASE64
+                .decode(content.as_bytes())
+                .context("decoding base64 file content"),
+            Some(RootFilesystemEntryEncoding::Utf8) | None => Ok(content.into_bytes()),
+        }
+    }
+
     /// Write a file. Writable-path guard; does NOT auto-create parents; `Text` -> UTF-8.
     pub async fn write_file(&self, path: &str, content: impl Into<FileContent>) -> Result<()> {
         Self::assert_writable_absolute_path(path)?;
@@ -656,35 +729,79 @@ impl AgentOs {
         self.kernel_write_file(path, &content).await
     }
 
-    /// Batch write. Sequential; never rejects (per-entry error); auto-creates parent dirs.
+    /// Batch write. Never rejects (per-entry error); auto-creates parent dirs. Results keep input
+    /// order. Sends as few `GuestFilesystemWriteFilesRequest`s as the entry-count and frame-size
+    /// limits from the authenticate handshake allow (mirrors TS `SidecarProcess.writeFiles`).
     pub async fn write_files(&self, entries: Vec<BatchWriteEntry>) -> Vec<BatchWriteResult> {
-        let mut results = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let outcome: Result<()> = async {
-                Self::assert_writable_absolute_path(&entry.path)?;
-                // Create parent directories as needed. TS slices off everything after the last `/`;
-                // for a path like `/foo` this yields an empty parent which is skipped.
-                if let Some(idx) = entry.path.rfind('/') {
-                    let parent = &entry.path[..idx];
-                    if !parent.is_empty() {
-                        self.mkdirp(parent).await?;
+        let mut results: Vec<BatchWriteResult> = entries
+            .iter()
+            .map(|entry| BatchWriteResult {
+                path: entry.path.clone(),
+                success: true,
+                error: None,
+            })
+            .collect();
+        let mut pending = Vec::with_capacity(entries.len());
+        for (index, entry) in entries.into_iter().enumerate() {
+            match Self::assert_writable_absolute_path(&entry.path) {
+                Ok(()) => pending.push((
+                    index,
+                    wire::GuestFilesystemWriteFileEntry {
+                        path: entry.path,
+                        content: entry.content.into_bytes(),
+                    },
+                )),
+                Err(err) => {
+                    results[index].success = false;
+                    results[index].error = Some(err.batch_message());
+                }
+            }
+        }
+
+        let request_bytes = self.transport().max_frame_bytes();
+        let max_entries = self.transport().max_write_files_entries();
+        if max_entries == 0 {
+            for (index, _) in pending {
+                results[index].success = false;
+                results[index].error =
+                    Some("write-files limits were not negotiated by this connection".into());
+            }
+            return results;
+        }
+        let mut pending = pending.into_iter().peekable();
+        while pending.peek().is_some() {
+            let mut indexes = Vec::new();
+            let mut chunk = Vec::new();
+            let mut bytes = WRITE_FILES_FRAME_OVERHEAD_BYTES;
+            while let Some((_, entry)) = pending.peek() {
+                let entry_bytes =
+                    entry.path.len() + entry.content.len() + WRITE_FILES_ENTRY_OVERHEAD_BYTES;
+                if chunk.len() == max_entries
+                    || (!chunk.is_empty() && bytes + entry_bytes > request_bytes)
+                {
+                    break;
+                }
+                bytes += entry_bytes;
+                let (index, entry) = pending.next().expect("peeked entry");
+                indexes.push(index);
+                chunk.push(entry);
+            }
+            match self.kernel_write_files(chunk).await {
+                Ok(errors) => {
+                    for (index, error) in indexes.into_iter().zip(errors) {
+                        if let Some(error) = error {
+                            results[index].success = false;
+                            results[index].error = Some(error);
+                        }
                     }
                 }
-                self.kernel_write_file(&entry.path, &entry.content).await?;
-                Ok(())
-            }
-            .await;
-            match outcome {
-                Ok(()) => results.push(BatchWriteResult {
-                    path: entry.path,
-                    success: true,
-                    error: None,
-                }),
-                Err(err) => results.push(BatchWriteResult {
-                    path: entry.path,
-                    success: false,
-                    error: Some(Self::batch_error_message(&err)),
-                }),
+                Err(err) => {
+                    let message = Self::batch_error_message(&err);
+                    for index in indexes {
+                        results[index].success = false;
+                        results[index].error = Some(message.clone());
+                    }
+                }
             }
         }
         results
@@ -968,6 +1085,43 @@ impl AgentOs {
     }
 
     async fn reconfigure_dynamic_mounts(&self) -> Result<()> {
+        let ports = self.inner().configured_loopback_exempt_ports.lock().clone();
+        self.reconfigure_with_permissions(None, ports).await
+    }
+
+    /// Replace the trusted owner's complete policy. Omitted scopes use sidecar
+    /// defaults. Already authorized streams retain their capabilities.
+    pub async fn configure_permissions(
+        &self,
+        permissions: crate::config::Permissions,
+        loopback_exempt_ports: Option<Vec<u16>>,
+    ) -> Result<()> {
+        let _configuration=self.inner().vm_configuration_operation.try_lock().map_err(|_|ClientError::InvalidConfig("another VM configuration mutation is already in progress; retry after it completes".into()))?;
+        let ports = loopback_exempt_ports
+            .unwrap_or_else(|| self.inner().configured_loopback_exempt_ports.lock().clone());
+        if ports.len() > 65535 || ports.contains(&0) {
+            return Err(ClientError::InvalidConfig(
+                "loopbackExemptPorts must contain at most65535 ports from1 through65535".into(),
+            )
+            .into());
+        }
+        let config = crate::config::AgentOsConfig {
+            permissions: Some(permissions),
+            ..Default::default()
+        };
+        let policy = crate::agent_os::permissions_policy_config(&config)
+            .map(agentos_sidecar_client::wire::permissions_policy_config_to_wire);
+        self.reconfigure_with_permissions(policy, ports.clone())
+            .await?;
+        *self.inner().configured_loopback_exempt_ports.lock() = ports;
+        Ok(())
+    }
+
+    async fn reconfigure_with_permissions(
+        &self,
+        permissions: Option<wire::PermissionsPolicy>,
+        ports: Vec<u16>,
+    ) -> Result<()> {
         let inner = self.inner();
         let config = &inner.config;
         let mounts = inner.dynamic_mounts.lock().clone();
@@ -980,12 +1134,12 @@ impl AgentOs {
                     software: Vec::new(),
                     // Dynamic mount reconfiguration must retain the VM policy
                     // resolved at creation, not reconstruct it in the client.
-                    permissions: None,
+                    permissions,
                     module_access_cwd: None,
                     instructions: Vec::new(),
                     projected_modules: Vec::new(),
                     command_permissions: std::collections::HashMap::new(),
-                    loopback_exempt_ports: config.loopback_exempt_ports.clone(),
+                    loopback_exempt_ports: ports,
                     packages: crate::agent_os::build_package_descriptors(config),
                     packages_mount_at: config.packages_mount_at.clone().unwrap_or_default(),
                     bootstrap_commands: Vec::new(),

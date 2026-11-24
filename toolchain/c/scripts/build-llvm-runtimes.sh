@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+if [[ ! "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "CARGO_BUILD_JOBS must be a positive integer (default 2)" >&2
+  exit 2
+fi
+
 # Build the libc++/libc++abi/libunwind runtime set ourselves so C++ exception
 # handling matches the same patched WASI/POSIX sysroot DuckDB uses.
 #
@@ -16,6 +22,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PATCH_DIR="$SCRIPT_DIR/../patches/llvm-project"
 WASI_NM="$WASI_SDK_DIR/bin/llvm-nm"
+WASM_EH_FLAGS="${WASM_EH_FLAGS:--fwasm-exceptions}"
 
 if [ -d "$PATCH_DIR" ]; then
   while IFS= read -r patch_file; do
@@ -37,13 +44,17 @@ cmake \
   -B "$LLVM_RUNTIME_BUILD_DIR" \
   -G "Unix Makefiles" \
   -DUNIX=1 \
+  -DCMAKE_C_COMPILER_LAUNCHER="$SCRIPT_DIR/without-wasm-opt.sh" \
+  -DCMAKE_CXX_COMPILER_LAUNCHER="$SCRIPT_DIR/without-wasm-opt.sh" \
+  -DCMAKE_C_LINKER_LAUNCHER="$SCRIPT_DIR/without-wasm-opt.sh" \
+  -DCMAKE_CXX_LINKER_LAUNCHER="$SCRIPT_DIR/without-wasm-opt.sh" \
   -DCMAKE_TOOLCHAIN_FILE="$WASI_SDK_DIR/share/cmake/wasi-sdk.cmake" \
   -DCMAKE_MODULE_PATH="$SCRIPT_DIR/../cmake" \
   -DWASI_SDK_PREFIX="$WASI_SDK_DIR" \
   -DCMAKE_SYSROOT="$SYSROOT_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_FLAGS="-fwasm-exceptions -D_WASI_EMULATED_PTHREAD" \
-  -DCMAKE_CXX_FLAGS="-fwasm-exceptions -D_WASI_EMULATED_PTHREAD" \
+  -DCMAKE_C_FLAGS="$WASM_EH_FLAGS -D_WASI_EMULATED_PTHREAD" \
+  -DCMAKE_CXX_FLAGS="$WASM_EH_FLAGS -D_WASI_EMULATED_PTHREAD" \
   -DCMAKE_EXE_LINKER_FLAGS="-lwasi-emulated-pthread" \
   -DCMAKE_SHARED_LINKER_FLAGS="-lwasi-emulated-pthread" \
   -DCMAKE_REQUIRED_FLAGS="-D_WASI_EMULATED_PTHREAD" \
@@ -72,13 +83,7 @@ cmake \
   -DLIBUNWIND_ENABLE_STATIC=ON \
   -DCMAKE_INSTALL_PREFIX="$LLVM_RUNTIME_INSTALL_DIR"
 
-if [[ "${CARGO_BUILD_JOBS:-}" =~ ^[1-9][0-9]*$ ]]; then
-  LLVM_BUILD_JOBS="$CARGO_BUILD_JOBS"
-else
-  # Cargo also accepts relative counts and "default"; preserve the C default.
-  LLVM_BUILD_JOBS="$(nproc 2>/dev/null || echo 4)"
-fi
-cmake --build "$LLVM_RUNTIME_BUILD_DIR" --target install -j"$LLVM_BUILD_JOBS"
+cmake --build "$LLVM_RUNTIME_BUILD_DIR" --target install -j"$BUILD_JOBS"
 
 # llvm-nm returns a non-zero status for archive members with no symbols, which
 # is expected here for several libunwind objects. Capture output explicitly so
@@ -92,6 +97,11 @@ fi
 if ! grep -q ' T __cxa_allocate_exception$' <<<"$libcxxabi_symbols"; then
   echo "rebuilt libc++abi.a does not export __cxa_allocate_exception" >&2
   exit 1
+fi
+
+# Private consumers link these runtimes without replacing the shared sysroot.
+if [[ "${INSTALL_RUNTIME_IN_SYSROOT:-1}" != "1" ]]; then
+  exit 0
 fi
 
 SYSROOT_LIB="$SYSROOT_DIR/lib/wasm32-wasi"

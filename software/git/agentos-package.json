@@ -9,6 +9,14 @@
 		"git-receive-pack": "git",
 		"git-upload-archive": "git"
 	},
+	"provides": {
+		"files": [
+			{
+				"source": "share/git-core/templates",
+				"target": "/opt/agentos/share/git-core/templates"
+			}
+		]
+	},
 	"registry": {
 		"title": "git",
 		"description": "Upstream Git version control for agentOS VMs.",

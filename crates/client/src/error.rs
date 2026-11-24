@@ -29,6 +29,8 @@ pub struct ResourceLimitDetails {
 /// Typed error taxonomy for the client SDK.
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ClientError {
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
     /// A filesystem path was not absolute (did not start with `/`).
     ///
     /// The message text matches the TypeScript `AgentOs` exactly (capital "P"). These strings are
@@ -91,10 +93,6 @@ pub enum ClientError {
         message: String,
         details: Box<ResourceLimitDetails>,
     },
-
-    /// A caller-supplied config value was rejected before the VM was created.
-    #[error("invalid config: {0}")]
-    InvalidConfig(String),
 
     /// A cron schedule string could not be parsed/validated.
     #[error("invalid schedule: {0}")]
@@ -201,8 +199,15 @@ impl ClientError {
     pub(crate) fn from_rejection(
         rejection: agentos_sidecar_client::wire::RejectedResponse,
     ) -> Self {
+        // A full or timed-out sidecar request queue is a retryable limit that
+        // names the setting to raise; it keeps its typed details.
+        let limit_rejection = matches!(
+            rejection.code.as_str(),
+            "ERR_AGENTOS_REQUEST_QUEUE_LIMIT" | "ERR_AGENTOS_REQUEST_QUEUE_TIMEOUT"
+        );
         if rejection.code == "ERR_AGENTOS_RESOURCE_LIMIT"
             || rejection.code == "ERR_AGENTOS_OVERLOADED"
+            || limit_rejection
             || rejection.code == "timeout"
             || matches!(
                 rejection.operation.as_deref(),
@@ -232,6 +237,7 @@ impl ClientError {
             }
             if rejection.code == "ERR_AGENTOS_RESOURCE_LIMIT"
                 || rejection.code == "ERR_AGENTOS_OVERLOADED"
+                || limit_rejection
             {
                 return Self::ResourceLimit {
                     code: rejection.code,

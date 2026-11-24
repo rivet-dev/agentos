@@ -7,38 +7,60 @@ on:
   schedule:
     - cron: "17 9 * * *"
 
+permissions:
+  contents: read
+
 jobs:
   bench-gate:
+    permissions:
+      contents: read
+      actions: read
     name: Runtime benchmark gate
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
-    runs-on: ${{ github.repository == 'rivet-dev/agentos' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
+    runs-on: >-
+      ${{ github.repository == 'rivet-dev/agentos'
+          && (github.ref == 'refs/heads/main'
+              || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+          && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Attach persistent Incus caches
         if: startsWith(runner.name, 'ci-0')
         run: bash scripts/ci/incus-cache.sh wasm
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: wasm32-wasip1
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
         with:
           targets: wasm32-wasip1
-      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-benchmarks...' --filter '@rivet-dev/agentos-runtime-core...' --filter '@rivet-dev/agentos-build-tools'
-      - run: cargo build --release -p agentos-native-sidecar
-      - run: cargo build --release -p agentos-native-baseline
-      - run: cargo build --release --target wasm32-wasip1 -p agentos-native-baseline
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-benchmarks...' --filter '@rivet-dev/agentos...' --filter '@rivet-dev/agentos-build-tools'
+      - run: cargo build --release -p agentos-sidecar
+      - run: cargo build --release -p agentos-benchmark-baseline
+      - run: cargo build --release --target wasm32-wasip1 -p agentos-benchmark-baseline
       - run: make -C toolchain pr-commands
-      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require-coreutils
-      - run: pnpm --dir packages/runtime-core build
-      - run: pnpm --dir packages/runtime-benchmarks bench:check
-      - run: pnpm --dir packages/runtime-benchmarks bench:gate
+      - run: node packages/core/scripts/copy-wasm-commands.mjs --require-coreutils
+      # Benchmarks use NodeRuntime and the staged command binaries above; the
+      # Core packaging build also requires .aospkg artifacts that this job does
+      # not build or exercise.
+      - name: Build Core benchmark runtime
+        run: |
+          pnpm --dir packages/core build:protocols
+          pnpm --dir packages/core exec tsc
+      - run: pnpm --dir packages/benchmarks bench:check
+      - run: pnpm --dir packages/benchmarks bench:gate
         env:
-          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
-          NATIVE_BASELINE_BIN: ${{ github.workspace }}/target/release/agentos-native-baseline
-          NATIVE_BASELINE_WASM: ${{ github.workspace }}/target/wasm32-wasip1/release/agentos-native-baseline.wasm
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-sidecar
+          NATIVE_BASELINE_BIN: ${{ github.workspace }}/target/release/agentos-benchmark-baseline
+          NATIVE_BASELINE_WASM: ${{ github.workspace }}/target/wasm32-wasip1/release/agentos-benchmark-baseline.wasm

@@ -24,15 +24,19 @@ export const packablePackages = (root: string = REPO_ROOT) =>
  * `root` into `outDir`, the way `npm publish` would. All packages get
  * `PACK_VERSION` so `workspace:*` references between them resolve to these
  * tarballs. Original `package.json` files are restored afterwards, even on
- * failure. WASM commands and default software come from the latest
- * published tarballs instead of being built.
+ * failure. Normal comparison runs seed expensive assets from published
+ * tarballs; full source runs prepare those assets before calling this method.
  */
-export const pack = Effect.fn("Footprint.pack")(function* (root: string, outDir: string) {
+export const pack = Effect.fn("Footprint.pack")(function* (
+	root: string,
+	outDir: string,
+	sourceAssets = false,
+) {
 	const fs = yield* FileSystem.FileSystem;
 	yield* fs.makeDirectory(outDir, { recursive: true });
 	const packages = packablePackages(root);
 
-	yield* seedAssets(root);
+	if (!sourceAssets) yield* seedAssets(root);
 	yield* run("pnpm", ["exec", "turbo", "run", "build", "--output-logs=errors-only", ...packages.map((pkg) => `--filter=${pkg.name}`)], {
 		cwd: root,
 	});

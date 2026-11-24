@@ -44,11 +44,46 @@ follows the same contract:
 
 The path from guest code to the host is a **chain of bounded queues**: the V8
 runtime → a per-execution frame channel → the V8→host event channel → the sidecar
-stdout frame queue → the host. Streaming channels apply backpressure where the
-producer can safely wait. Process/runtime delivery queues that cannot block
-reject the crossing event with an error naming `limits.process.pendingEventCount`
-or `limits.process.pendingEventBytes`. Neither path silently drops data or
-crashes the sidecar.
+stdout frame queue → the host. Each stage applies backpressure: when the shared
+process-event queue is full, the producing guest is paused rather than its event
+rejected (see below). Only internal queues whose producer cannot wait, such as
+host-function callback output, reject the crossing event with an error naming
+`limits.process.pendingEventCount` or `limits.process.pendingEventBytes`. No
+path silently drops data or crashes the sidecar.
+
+For queued executor host calls, `limits.process.pendingEventBytes` charges
+the request envelope, raw buffers and storage for decoded JSON strings, arrays
+and object entries. A small configured budget can reject a single valid request
+even when its compact JSON fits. For example, an array of small numbers needs
+one in-memory value slot per number. The separate
+`limits.reactor.maxBridgeResponseBytes` bounds the encoded reply.
+
+All VMs on one sidecar share its queue of process events waiting for the host.
+Guest stdout and stderr may fill at most seven eighths of that queue
+(`runtime.protocol.maxProcessEvents`); the rest is kept for exits and other
+lifecycle events. A VM that finds the output part full, or reaches its own
+`limits.process.pendingEventCount` or `limits.process.pendingEventBytes`, is
+paused: its guest's writes block, like
+a writer on a full pipe, until the host drains output. The host drain takes
+VMs in turn, so a quiet VM's events never wait behind another VM's backlog. A
+flooding guest or a slow host reader therefore delays only the VMs that produce
+output; it never drops output, starves another VM's exit, or closes the
+transport. Like one large write to a full pipe, an output chunk larger than
+the VM's whole `limits.process.pendingEventBytes` drains in parts that fit,
+with the guest paused between them. An event that cannot be split, such as an
+exit, is delivered over the byte limit (the queue's event-count bounds still
+apply) and the sidecar logs `ERR_AGENTOS_PROCESS_EVENT_LIMIT`; it is never
+dropped.
+
+If the VM's aggregate public-output queue exceeds either limit, agentOS closes
+that VM's admission and retires it. Other VMs, including those sharing its
+connection, remain available. Unclaimed requests on the failed VM receive the
+original typed limit error; an already claimed response is not published again.
+A trusted host diagnostic records the original fault and discarded retained
+output. Retirement is not successful execution or silent output truncation.
+If cooperative cleanup cannot drain by its existing deadline, the failed VM
+stays closed and counted; this does not force stronger guest termination.
+
 
 Buffer capacities are sized so that *transient* bursts are absorbed without ever
 engaging backpressure; backpressure is the safety net for a genuinely stuck
@@ -68,6 +103,24 @@ runtime one place to answer two questions:
 A CI audit fails the build if any limit-shaped constant is not classified and —
 for operator-tunable ones — wired to a config field, so "is everything bounded
 and config-wired?" is verified mechanically rather than by review.
+
+### Node HTTP response parser limits
+
+The Node compatibility bridge applies these fixed parser bounds to each response:
+
+| Limit | Default | Purpose |
+| --- | ---: | --- |
+| Body bytes | 128 MiB | Caps response body storage and streamed body accounting. |
+| Header and trailer bytes | 64 KiB combined | Caps response metadata held by the parser. |
+| Header and trailer fields | 2,000 each | Caps parsed field collections. |
+| Chunk extension bytes | 16 KiB per chunk | Matches native Node's accepted chunk extension boundary. |
+| Chunk size line bytes | 16 KiB + 32 bytes | Allows the extension, size digits, and framing while bounding an incomplete line. |
+| Pending response bytes after backpressure | 256 KiB | Caps parser-owned bytes retained while the Readable consumer is paused. |
+| Stream push chunk bytes | 16 KiB | Limits each push into the Readable stream. |
+
+These bridge bounds are fixed compatibility limits; there is currently no
+per-VM configuration knob to raise them. The parser reports the breached limit
+through the request or response error event.
 
 ## Logging & host visibility
 

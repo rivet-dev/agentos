@@ -3,7 +3,7 @@
 // Requires Docker. Starts a sandbox-agent container, mounts its filesystem
 // at /mnt/sandbox, and registers sandbox host functions for running commands.
 
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos";
 import { docker } from "@rivet-dev/agentos-sandbox";
 
 const SANDBOX_QUICKSTART_PERMISSIONS = {
@@ -38,12 +38,14 @@ try {
 
 	const runCommandResult = await vm.process.exec(
 		"agentos-sandbox run-command --command echo --args 'hello from Docker sandbox'",
+		{ output: { capture: "all" } },
 	);
 	console.log("Sandbox command:", (runCommandResult.stdout ?? "").trim());
 
-	const processList = await vm.process.exec("agentos-sandbox list-processes");
+	const processList = await vm.process.exec("agentos-sandbox list-processes", {
+		output: { capture: "all" },
+	});
 	console.log("Sandbox processes:", (processList.stdout ?? "").trim());
-
 } finally {
 	await vm.dispose();
 }

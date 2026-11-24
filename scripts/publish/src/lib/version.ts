@@ -20,6 +20,7 @@ import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { $ } from "execa";
 import * as semver from "semver";
+import { validatePublishVersion } from "./context.js";
 import { scoped } from "./logger.js";
 import { buildMetaPlatformMap, discoverPackages } from "./packages.js";
 
@@ -211,6 +212,41 @@ export async function bumpPackageJsons(
 	return updated;
 }
 
+// Cargo inline dependency fields can appear in any order and have trailing options.
+// An explicit package name takes precedence over an alias when deciding ownership.
+function bumpCargoPathDependencies(manifest: string, version: string): string {
+	return manifest.replace(
+		/^([ \t]*([\w-]+)\s*=\s*\{)([^\n]*)(\}[^\n]*)$/gm,
+		(
+			declaration,
+			prefix: string,
+			alias: string,
+			fields: string,
+			suffix: string,
+		) => {
+			const field = (name: string) =>
+				fields.match(
+					new RegExp(`(?:^|,)\\s*${name}\\s*=\\s*["']([^"']*)["']`),
+				)?.[1];
+			const packageName = field("package") ?? alias;
+			if (
+				!/^(?:agentos|agent-os)-[a-z0-9-]+$/.test(packageName) ||
+				!field("path")
+			) {
+				return declaration;
+			}
+			return (
+				prefix +
+				fields.replace(
+					/((?:^|,)\s*version\s*=\s*["'])[^"']*(["'])/,
+					`$1${version}$2`,
+				) +
+				suffix
+			);
+		},
+	);
+}
+
 /**
  * Rewrite the agentOS Rust workspace version (`[workspace.package]`). agentOS crates
  * inherit it via `version.workspace = true`.
@@ -226,19 +262,7 @@ export async function bumpCargoVersions(
 		/(\[workspace\.package\]\n(?:[^\n]*\n)*?[ \t]*version = )"[^"]+"/,
 		`$1"${version}"`,
 	);
-	// Bump agentOS-owned crate dep requirements (path = "crates/...").
-	next = next.replace(
-		/((?:agentos|agent-os)-[a-z0-9-]+ = \{ path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
-		`$1${version}$2`,
-	);
-	// Also bump aliased agentOS-owned crate deps declared as
-	// `<alias> = { package = "agentos-...", path = "crates/...", version = "..." }`
-	// (e.g. `vfs = { package = "agentos-vfs-core", ... }`), which the pattern
-	// above misses because the line starts with the alias key, not `agentos-`.
-	next = next.replace(
-		/(\{ package = "(?:agentos|agent-os)-[a-z0-9-]+", path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
-		`$1${version}$2`,
-	);
+	next = bumpCargoPathDependencies(next, version);
 
 	const updates = new Map<string, string>();
 	if (next !== cargoToml) updates.set(cargoTomlPath, next);
@@ -265,14 +289,7 @@ export async function bumpCargoVersions(
 			/(\[package\]\n(?:[^\n]*\n)*?[ \t]*version = )"[^"]+"/,
 			`$1"${version}"`,
 		);
-		updated = updated.replace(
-			/^((?:agentos|agent-os)-[a-z0-9-]+ = \{[^\n]*\bpath = "\.\.\/[^\"]+"[^\n]*\bversion = ")[^"]+(")/gm,
-			`$1${version}$2`,
-		);
-		updated = updated.replace(
-			/^(\w[\w-]* = \{[^\n]*\bpackage = "(?:agentos|agent-os)-[a-z0-9-]+"[^\n]*\bpath = "\.\.\/[^\"]+"[^\n]*\bversion = ")[^"]+(")/gm,
-			`$1${version}$2`,
-		);
+		updated = bumpCargoPathDependencies(updated, version);
 		if (updated !== manifest) updates.set(manifestPath, updated);
 	}
 
@@ -348,10 +365,7 @@ export async function resolveVersion(
 	opts: ResolveVersionOpts,
 ): Promise<string> {
 	if (opts.version) {
-		if (!semver.valid(opts.version)) {
-			throw new Error(`invalid semantic version: ${opts.version}`);
-		}
-		return opts.version;
+		return validatePublishVersion(opts.version);
 	}
 	if (!opts.major && !opts.minor && !opts.patch) {
 		throw new Error("must provide --version, --major, --minor, or --patch");
