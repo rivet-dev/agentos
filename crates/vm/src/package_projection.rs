@@ -8,9 +8,12 @@
 //! `provides.files` as virtual mounts; it never writes a physical symlink farm.
 //!
 //! The projection is deliberately granular. Each package version is a tar leaf
-//! at `/opt/agentos/pkgs/<pkg>/<version>`, and each managed command/current
-//! alias is its own root-symlink leaf. The containing dirs stay writable overlay
-//! dirs so user-installed commands can coexist beside managed package entries.
+//! at `/opt/agentos/pkgs/<pkg>/<version>`, and each `current`/manpage alias is
+//! its own root-symlink leaf. Command links are the exception: every package's
+//! links under one `bin` dir share a single `SymlinkDir` entry-overlay mount,
+//! because a mount per command dominated VM setup time. The containing dirs
+//! stay writable overlay dirs so user-installed commands can coexist beside
+//! managed package entries.
 //!
 //! This code runs during VM startup. Keep tar projection on metadata plus the
 //! small manifest/package metadata entries only: do not read payloads unrelated
@@ -18,7 +21,7 @@
 //! If a package digest is ever required, compute it at pack time and store it in
 //! a sidecar index instead of on this cold-start path.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -78,6 +81,19 @@ pub enum PackageLeafMount {
         guest_path: String,
         target: String,
     },
+    /// One read-only directory of managed symlinks, mounted as an entry
+    /// overlay: it owns only these names, and the directory stays writable.
+    SymlinkDir {
+        guest_path: String,
+        entries: BTreeMap<String, String>,
+    },
+}
+
+/// A managed command link at `<root>/bin/<command>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageCommandLink {
+    pub guest_path: String,
+    pub target: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,6 +338,9 @@ pub fn build_package_leaf_mounts(
     build_package_leaf_mounts_with_limit(packages, mount_at, MAX_AGENTOS_PACKAGE_MOUNTS)
 }
 
+/// Builds each package's own leaf mounts. Command links are not in the
+/// result: `command_dir_mounts` serves them from one shared mount per `bin`
+/// dir. Each link still counts as one entry toward `max_mounts`, like a mount.
 pub fn build_package_leaf_mounts_with_limit(
     packages: &[PackageDescriptor],
     mount_at: &str,
@@ -330,60 +349,54 @@ pub fn build_package_leaf_mounts_with_limit(
     let mount_at = normalize_mount_root(mount_at);
     let mut mounts = Vec::new();
     let mut command_paths = HashSet::new();
+    let push = |mounts: &mut Vec<PackageLeafMount>, links: usize, mount| {
+        check_entry_limit(mounts.len() + links + 1, max_mounts)?;
+        mounts.push(mount);
+        Ok::<_, VmError>(())
+    };
 
     for package in packages {
         let package_root = package_guest_root(&mount_at, &package.name);
         let version_path = normalize_path(&format!("{package_root}/{}", package.version));
-        if let Some(tar_path) = package.tar_ref() {
-            push_mount(
-                &mut mounts,
-                PackageLeafMount::Tar {
-                    guest_path: version_path,
-                    tar_path: tar_path.to_owned(),
-                    root: String::from("/"),
-                },
-                max_mounts,
-            )?;
-        } else {
-            push_mount(
-                &mut mounts,
-                PackageLeafMount::HostDir {
-                    guest_path: version_path,
-                    host_path: package.dir.clone(),
-                },
-                max_mounts,
-            )?;
-        }
-        push_mount(
+        let version_mount = match package.tar_ref() {
+            Some(tar_path) => PackageLeafMount::Tar {
+                guest_path: version_path,
+                tar_path: tar_path.to_owned(),
+                root: String::from("/"),
+            },
+            None => PackageLeafMount::HostDir {
+                guest_path: version_path,
+                host_path: package.dir.clone(),
+            },
+        };
+        push(&mut mounts, command_paths.len(), version_mount)?;
+        push(
             &mut mounts,
+            command_paths.len(),
             PackageLeafMount::SingleSymlink {
                 guest_path: normalize_path(&format!("{package_root}/current")),
                 target: package.version.clone(),
             },
-            max_mounts,
         )?;
 
-        for target in &package.commands {
-            let guest_path = normalize_path(&format!("{mount_at}/bin/{}", target.command));
-            if !command_paths.insert(guest_path.clone()) {
+        for (target, link) in package
+            .commands
+            .iter()
+            .zip(package_command_links(package, &mount_at))
+        {
+            if !command_paths.insert(link.guest_path) {
                 return Err(VmError::InvalidState(format!(
                     "command {:?} is already provided by another package",
                     target.command
                 )));
             }
-            push_mount(
-                &mut mounts,
-                PackageLeafMount::SingleSymlink {
-                    guest_path,
-                    target: format!("../pkgs/{}/current/{}", package.name, target.entry),
-                },
-                max_mounts,
-            )?;
+            check_entry_limit(mounts.len() + command_paths.len(), max_mounts)?;
         }
 
         for page in &package.man_pages {
-            push_mount(
+            push(
                 &mut mounts,
+                command_paths.len(),
                 PackageLeafMount::SingleSymlink {
                     guest_path: normalize_path(&format!(
                         "{mount_at}/share/man/{}/{}",
@@ -394,12 +407,50 @@ pub fn build_package_leaf_mounts_with_limit(
                         package.name, page.section, page.page
                     ),
                 },
-                max_mounts,
             )?;
         }
     }
 
     Ok(mounts)
+}
+
+/// The command links `package` projects under `<mount_at>/bin`.
+pub fn package_command_links<'a>(
+    package: &'a PackageDescriptor,
+    mount_at: &str,
+) -> impl Iterator<Item = PackageCommandLink> + 'a {
+    let bin = normalize_path(&format!("{}/bin", normalize_mount_root(mount_at)));
+    package
+        .commands
+        .iter()
+        .map(move |target| PackageCommandLink {
+            guest_path: format!("{bin}/{}", target.command),
+            target: format!("../pkgs/{}/current/{}", package.name, target.entry),
+        })
+}
+
+/// One `SymlinkDir` mount per parent directory of `links`. A later link for
+/// the same path replaces an earlier one; callers validate uniqueness first.
+pub fn command_dir_mounts(
+    links: impl IntoIterator<Item = PackageCommandLink>,
+) -> Vec<PackageLeafMount> {
+    let mut dirs = BTreeMap::<String, BTreeMap<String, String>>::new();
+    for link in links {
+        let (dir, name) = link
+            .guest_path
+            .rsplit_once('/')
+            .expect("command link paths are absolute");
+        let dir = if dir.is_empty() { "/" } else { dir };
+        dirs.entry(dir.to_owned())
+            .or_default()
+            .insert(name.to_owned(), link.target);
+    }
+    dirs.into_iter()
+        .map(|(guest_path, entries)| PackageLeafMount::SymlinkDir {
+            guest_path,
+            entries,
+        })
+        .collect()
 }
 
 pub fn package_provides_file_mount(
@@ -444,12 +495,7 @@ pub fn package_provides_file_mount(
     }
 }
 
-fn push_mount(
-    mounts: &mut Vec<PackageLeafMount>,
-    mount: PackageLeafMount,
-    max_mounts: usize,
-) -> Result<(), VmError> {
-    let observed = mounts.len() + 1;
+fn check_entry_limit(observed: usize, max_mounts: usize) -> Result<(), VmError> {
     if observed > max_mounts {
         return Err(VmError::PackageMountLimit {
             used: 0,
@@ -457,7 +503,6 @@ fn push_mount(
             limit: max_mounts,
         });
     }
-    mounts.push(mount);
     Ok(())
 }
 

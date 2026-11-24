@@ -83,7 +83,7 @@ generation IDs, or cursors to `number` without checking that range.
 | Language contexts and packages | 256 byte context ID; 1,024 contexts; 256 requested packages; 16 package index URLs |
 | Language diagnostics | 1,024 entries; 512 KiB aggregate |
 | Software config | 128 packages |
-| VM package projection | 4,096 package-owned mounts by default; override with `config.limits.agentosPackages.maxMounts` |
+| VM package projection | 4,096 projection entries (package-owned mounts and command links) by default; override with `config.limits.agentosPackages.maxMounts` |
 | Package download | 4 KiB URL; 512 MiB content; 30 second download; 5 second connect; 3 redirects; 128 response headers and 64 KiB header bytes |
 | Package format | 1 MiB manifest; 64 MiB mount index |
 | Process package cache | 2 GiB; 256 entries; 8 active and 64 pending acquisitions; 512 MiB minimum free disk reserve |

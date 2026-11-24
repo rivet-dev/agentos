@@ -16,8 +16,9 @@
 //!
 //! Projection uses granular leaf mounts: one tar mount for
 //! `/opt/agentos/pkgs/<pkg>/<version>`, one synthetic root symlink for
-//! `pkgs/<pkg>/current`, and one synthetic root symlink per managed command or
-//! manpage. The parent directories remain writable overlay directories so
+//! `pkgs/<pkg>/current` and per manpage, and one `symlinkDir` entry-overlay
+//! mount per command directory that serves every managed command link. The
+//! directories themselves remain writable overlay directories so
 //! guest-installed commands can coexist with managed package entries.
 
 use agentos_vm_kernel::mount_plugin::{
@@ -51,6 +52,10 @@ enum AgentosPackagesMountConfig {
         target: String,
         #[serde(rename = "readOnly")]
         read_only: Option<bool>,
+    },
+    /// Always read-only: the mount table requires it for entry overlays.
+    SymlinkDir {
+        entries: std::collections::BTreeMap<String, String>,
     },
 }
 
@@ -104,6 +109,13 @@ where
                 } else {
                     Ok(Box::new(mounted))
                 }
+            }
+            AgentosPackagesMountConfig::SymlinkDir { entries } => {
+                let filesystem = agentos_vfs_core::posix::SymlinkDirFileSystem::new(entries)
+                    .map_err(|error| PluginError::invalid_input(error.to_string()))?;
+                Ok(Box::new(ReadOnlyFileSystem::new(
+                    MountedVirtualFileSystem::new(filesystem),
+                )))
             }
             AgentosPackagesMountConfig::SingleSymlink { target, read_only } => {
                 let mounted = MountedVirtualFileSystem::new(

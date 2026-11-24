@@ -1356,6 +1356,11 @@ pub struct MountOptions {
     /// their archive root becomes a guest mount point; ordinary guest-created
     /// symlinks retain Linux's VM-root absolute semantics.
     pub absolute_symlinks_mount_relative: bool,
+    /// The mount owns only the names its root directory lists when mounted.
+    /// The directory itself and every other name stay on the parent
+    /// filesystem, so one read-only mount of managed entries can share a
+    /// writable directory with other files. Requires a read-only mount.
+    pub entry_overlay: bool,
 }
 
 impl MountOptions {
@@ -1372,6 +1377,7 @@ impl MountOptions {
             max_bytes: None,
             max_inodes: None,
             absolute_symlinks_mount_relative: false,
+            entry_overlay: false,
         }
     }
 
@@ -1417,6 +1423,11 @@ impl MountOptions {
 
     pub fn absolute_symlinks_mount_relative(mut self, enabled: bool) -> Self {
         self.absolute_symlinks_mount_relative = enabled;
+        self
+    }
+
+    pub fn entry_overlay(mut self, enabled: bool) -> Self {
+        self.entry_overlay = enabled;
         self
     }
 }
@@ -1510,6 +1521,8 @@ struct MountRegistration {
     max_bytes: Option<u64>,
     max_inodes: Option<usize>,
     absolute_symlinks_mount_relative: bool,
+    /// Names this mount owns inside its directory; `None` owns the subtree.
+    entry_overlay: Option<BTreeSet<String>>,
     cached_usage: Option<FileSystemUsage>,
     filesystem: Box<dyn MountedFileSystem>,
 }
@@ -1597,6 +1610,7 @@ impl MountTable {
                 max_bytes: None,
                 max_inodes: None,
                 absolute_symlinks_mount_relative: false,
+                entry_overlay: None,
                 cached_usage: None,
                 filesystem: Box::new(MountedVirtualFileSystem::new(root_fs)),
             }],
@@ -1633,6 +1647,7 @@ impl MountTable {
                 max_bytes: options.max_bytes,
                 max_inodes: options.max_inodes,
                 absolute_symlinks_mount_relative: options.absolute_symlinks_mount_relative,
+                entry_overlay: None,
                 cached_usage: None,
                 filesystem,
             }],
@@ -1689,9 +1704,25 @@ impl MountTable {
         let mut root_growth = Some(0);
         let mut namespace_ancestors = Vec::new();
         let mut namespace_requires_walk = false;
+        let mut entry_overlay = None;
         let setup = (|| {
             if normalized == "/" {
                 return Err(VfsError::new("EINVAL", "cannot mount over root"));
+            }
+            if options.entry_overlay {
+                if !options.read_only && !filesystem.is_read_only() {
+                    return Err(VfsError::new(
+                        "EINVAL",
+                        format!("entry overlay mount at {normalized} must be read-only"),
+                    ));
+                }
+                entry_overlay = Some(
+                    filesystem
+                        .read_dir("/")?
+                        .into_iter()
+                        .filter(|name| name != "." && name != "..")
+                        .collect::<BTreeSet<_>>(),
+                );
             }
             if self.mount_indices.contains_key(&normalized) {
                 return Err(VfsError::new(
@@ -1782,6 +1813,7 @@ impl MountTable {
             max_bytes: options.max_bytes,
             max_inodes: options.max_inodes,
             absolute_symlinks_mount_relative: options.absolute_symlinks_mount_relative,
+            entry_overlay,
             cached_usage: None,
             filesystem,
         });
@@ -2272,11 +2304,22 @@ impl MountTable {
 
     fn resolve_index(&self, full_path: &str) -> VfsResult<(usize, String)> {
         let normalized = normalize_path(full_path);
-        let mut candidate = normalized.as_str();
+        self.resolve_index_from(&normalized, &normalized)
+            .ok_or_else(|| {
+                VfsError::new(
+                    "ENOENT",
+                    format!("no such file or directory, resolve '{full_path}'"),
+                )
+            })
+    }
+
+    /// Route `normalized` to the longest mount at or above `start`.
+    fn resolve_index_from(&self, normalized: &str, start: &str) -> Option<(usize, String)> {
+        let mut candidate = start;
         loop {
             if let Some(index) = self.mount_indices.get(candidate).copied() {
                 let relative_path = if candidate == "/" {
-                    normalized
+                    normalized.to_owned()
                 } else if candidate.len() == normalized.len() {
                     String::from("/")
                 } else {
@@ -2285,21 +2328,29 @@ impl MountTable {
                     // paths such as `/data/data/file` and `/data/file`.
                     format!("/{}", &normalized[candidate.len() + 1..])
                 };
-                return Ok((index, relative_path));
+                let Some(entries) = &self.mounts[index].entry_overlay else {
+                    return Some((index, relative_path));
+                };
+                if relative_path == "/" {
+                    // The directory belongs to the parent when the parent has
+                    // it; a read-only parent without it gets the overlay root.
+                    let parent =
+                        self.resolve_index_from(normalized, parent_candidate(candidate))?;
+                    if self.mounts[parent.0].filesystem.lstat(&parent.1).is_ok() {
+                        return Some(parent);
+                    }
+                    return Some((index, relative_path));
+                }
+                let name = relative_path[1..].split('/').next().unwrap_or_default();
+                if entries.contains(name) {
+                    return Some((index, relative_path));
+                }
             }
             if candidate == "/" {
-                break;
+                return None;
             }
-            candidate = candidate
-                .rfind('/')
-                .map(|index| if index == 0 { "/" } else { &candidate[..index] })
-                .unwrap_or("/");
+            candidate = parent_candidate(candidate);
         }
-
-        Err(VfsError::new(
-            "ENOENT",
-            format!("no such file or directory, resolve '{full_path}'"),
-        ))
     }
 
     fn resolve_writable_index(&self, full_path: &str) -> VfsResult<(usize, String)> {
@@ -2521,6 +2572,46 @@ impl MountTable {
         }
     }
 
+    /// The entry-overlay mount on the directory `index` serves at
+    /// `relative_path`, with the names it adds. Keyed by the routed path, so
+    /// a listing reached through a symlinked parent still sees the overlay.
+    fn entry_overlay_for(
+        &self,
+        index: usize,
+        relative_path: &str,
+    ) -> Option<(usize, &BTreeSet<String>)> {
+        let canonical = self.routed_guest_path(index, relative_path);
+        let overlay = self.mount_indices.get(&canonical).copied()?;
+        // An overlay root routed to itself already lists its own entries.
+        if overlay == index {
+            return None;
+        }
+        Some((overlay, self.mounts[overlay].entry_overlay.as_ref()?))
+    }
+
+    fn entry_overlay_dir_entries(
+        &self,
+        index: usize,
+        relative_path: &str,
+    ) -> VfsResult<Option<Vec<VirtualDirEntry>>> {
+        let Some((overlay, names)) = self.entry_overlay_for(index, relative_path) else {
+            return Ok(None);
+        };
+        let filesystem = &self.mounts[overlay].filesystem;
+        names
+            .iter()
+            .map(|name| {
+                let stat = filesystem.lstat(&format!("/{name}"))?;
+                Ok(VirtualDirEntry {
+                    name: name.clone(),
+                    is_directory: stat.is_directory,
+                    is_symbolic_link: stat.is_symbolic_link,
+                })
+            })
+            .collect::<VfsResult<Vec<_>>>()
+            .map(Some)
+    }
+
     fn missing_mount_directory(
         &self,
         index: usize,
@@ -2650,6 +2741,14 @@ impl MountTable {
     }
 }
 
+/// Lexical parent of a normalized mount candidate path.
+fn parent_candidate(candidate: &str) -> &str {
+    candidate
+        .rfind('/')
+        .map(|index| if index == 0 { "/" } else { &candidate[..index] })
+        .unwrap_or("/")
+}
+
 fn measure_mounted_filesystem_usage(
     filesystem: &mut dyn MountedFileSystem,
     path: &str,
@@ -2777,7 +2876,10 @@ impl VirtualFileSystem for MountTable {
         let before = self.atime_snapshot(index, &relative_path, true)?;
         let mut entries = self.mounts[index].filesystem.read_dir(&relative_path)?;
         self.finish_atime_update(index, &relative_path, before)?;
-        let child_mounts = self.child_mount_basenames(&normalized);
+        let mut child_mounts = self.child_mount_basenames(&normalized);
+        if let Some((_, overlay)) = self.entry_overlay_for(index, &relative_path) {
+            child_mounts.extend(overlay.iter().cloned());
+        }
         if child_mounts.is_empty() {
             return Ok(entries);
         }
@@ -2812,7 +2914,10 @@ impl VirtualFileSystem for MountTable {
             .filesystem
             .read_dir_limited(&relative_path, max_entries)?;
         self.finish_atime_update(index, &relative_path, before)?;
-        let child_mounts = self.child_mount_basenames(&normalized);
+        let mut child_mounts = self.child_mount_basenames(&normalized);
+        if let Some((_, overlay)) = self.entry_overlay_for(index, &relative_path) {
+            child_mounts.extend(overlay.iter().cloned());
+        }
         if child_mounts.is_empty() {
             return Ok(entries);
         }
@@ -2857,6 +2962,15 @@ impl VirtualFileSystem for MountTable {
             .filesystem
             .read_dir_with_types(&relative_path)?;
         self.finish_atime_update(index, &relative_path, before)?;
+        // Overlay entries shadow same-named parent entries, with their own type.
+        if let Some(overlay) = self.entry_overlay_dir_entries(index, &relative_path)? {
+            let names = overlay
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<BTreeSet<_>>();
+            entries.retain(|entry| !names.contains(entry.name.as_str()));
+            entries.extend(overlay);
+        }
         let child_mounts = self.child_mount_basenames(&normalized);
         if child_mounts.is_empty() {
             return Ok(entries);
@@ -3125,6 +3239,17 @@ impl VirtualFileSystem for MountTable {
 
     fn remove_dir(&mut self, path: &str) -> VfsResult<()> {
         let (index, relative_path) = self.resolve_writable_index(path)?;
+        // The parent may hold no files of its own, but the guest still sees
+        // the overlay entries in this directory.
+        if self
+            .entry_overlay_for(index, &relative_path)
+            .is_some_and(|(_, names)| !names.is_empty())
+        {
+            return Err(VfsError::new(
+                "ENOTEMPTY",
+                format!("directory not empty, rmdir '{path}'"),
+            ));
+        }
         let before = self.mounts[index].filesystem.lstat(&relative_path).ok();
         self.mounts[index].filesystem.remove_dir(&relative_path)?;
         self.update_cached_path_usage(index, before, &relative_path);
