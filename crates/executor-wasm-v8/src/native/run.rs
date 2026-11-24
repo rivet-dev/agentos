@@ -229,7 +229,12 @@ fn run_images(
         // SAFETY: `state` came from `Box::into_raw` above, and the image has
         // made its last call, so no callback can still reach it.
         let mut state = unsafe { Box::from_raw(state) };
-        let heap_exceeded = isolate::take_heap_limit_exceeded(guest_isolate);
+        // The heap limit wins over exit and exec: the termination it scheduled
+        // may land after the guest already exited or replaced its image, and
+        // continuing would carry the raised limit into the next image.
+        if isolate::take_heap_limit_exceeded(guest_isolate) {
+            return Err(heap_limit_error());
+        }
         match outcome {
             Ok(()) => return Ok(state.common.exit_code.unwrap_or(0)),
             Err(failure) => {
@@ -254,9 +259,6 @@ fn run_images(
                 match state.unwind.take() {
                     Some(Unwind::Failed(error)) => return Err(error),
                     Some(Unwind::Exit | Unwind::ExecReplaced) | None => {}
-                }
-                if heap_exceeded {
-                    return Err(heap_limit_error());
                 }
                 return Err(failure);
             }
