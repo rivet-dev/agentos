@@ -843,8 +843,6 @@ pub(crate) const WASM_COMMAND: &str = "wasm";
 // runtimes and `vm.readFile()` see), so the VFS-RPC root is `/`, not a single
 // workspace dir.
 pub(crate) const EXECUTION_SANDBOX_ROOT_ENV: &str = "AGENTOS_SANDBOX_ROOT";
-pub(crate) const WASM_STDIO_SYNC_RPC_ENV: &str = "AGENTOS_WASI_STDIO_SYNC_RPC";
-pub(crate) const WASM_EXEC_COMMIT_RPC_ENV: &str = "AGENTOS_WASM_EXEC_COMMIT_RPC";
 #[cfg(test)]
 #[allow(dead_code)]
 pub(crate) const HOST_REALPATH_MAX_SYMLINK_DEPTH: usize = 40;
@@ -4273,6 +4271,9 @@ pub(crate) struct ResolvedChildProcessExecution {
     pub(crate) wasm_permission_tier: Option<WasmPermissionTier>,
     pub(crate) host_function_command: bool,
     pub(crate) adapter_policy: ExecutionAdapterPolicy,
+    /// The image bytes already loaded from the kernel at spawn, for an engine
+    /// that loads its module through the kernel (native host imports).
+    pub(crate) wasm_image: Option<crate::executor::PreloadedWasmImage>,
 }
 
 // ---------------------------------------------------------------------------

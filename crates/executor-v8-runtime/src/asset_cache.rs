@@ -2141,12 +2141,6 @@ for (const specifier of imports) {
 }
 "#;
 
-/// Managed WASM runner module, owned here and read by the V8 WASM executor.
-pub const NODE_WASM_RUNNER_SOURCE: &str = include_str!("../assets/runners/wasm-runner.mjs");
-/// WASI preview1 module the V8 WASM executor inlines into its runner
-/// bootstrap. Exposed so that crate never reads this crate's files directly.
-pub const NODE_WASI_MODULE_SOURCE: &str = include_str!("../assets/runners/wasi-module.js");
-
 static NEXT_NODE_IMPORT_CACHE_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy)]
@@ -2382,7 +2376,6 @@ pub struct NodeImportCache {
     python_runner_path: PathBuf,
     #[cfg_attr(not(test), allow(dead_code))]
     timing_bootstrap_path: PathBuf,
-    wasm_runner_path: PathBuf,
     asset_root: PathBuf,
     pyodide_dist_path: PathBuf,
     pyodide_cache_path: PathBuf,
@@ -2655,7 +2648,6 @@ impl NodeImportCache {
             loader_path: core_root.join("loader.mjs"),
             python_runner_path: core_root.join("python-runner.mjs"),
             timing_bootstrap_path: core_root.join("timing-bootstrap.mjs"),
-            wasm_runner_path: core_root.join("wasm-runner.mjs"),
             asset_root: core_root.join("assets"),
             pyodide_dist_path: pyodide_assets.root_dir.clone(),
             pyodide_cache_path: root_dir.join("pyodide-package-cache"),
@@ -2787,10 +2779,6 @@ impl NodeImportCache {
     #[cfg(test)]
     pub fn timing_bootstrap_path(&self) -> &Path {
         &self.timing_bootstrap_path
-    }
-
-    pub fn wasm_runner_path(&self) -> &Path {
-        &self.wasm_runner_path
     }
 
     pub fn asset_root(&self) -> &Path {
@@ -3103,7 +3091,6 @@ fn write_core_assets(root: &Path, cancelled: &AtomicBool) -> Result<(), io::Erro
         NODE_TIMING_BOOTSTRAP_SOURCE,
     )?;
     write_file_if_changed(&root.join("prewarm.mjs"), NODE_PREWARM_SOURCE)?;
-    write_file_if_changed(&root.join("wasm-runner.mjs"), NODE_WASM_RUNNER_SOURCE)?;
 
     for asset in BUILTIN_ASSETS {
         check_materialization_cancelled(cancelled)?;
@@ -4171,7 +4158,6 @@ mod tests {
     use super::{
         run_node_import_cache_root_cleanup_once, NodeImportCache,
         NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_LOCK, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS,
-        NODE_WASM_RUNNER_SOURCE,
     };
     use crate::host_node::node_binary;
     use serde_json::Value;
@@ -4992,14 +4978,14 @@ export async function loadPyodide(options) {
         import_cache
             .ensure_materialized()
             .expect("initial materialization should succeed");
-        assert!(import_cache.wasm_runner_path().is_file());
+        assert!(import_cache.materialization_marker_path.is_file());
 
         fs::remove_dir_all(&import_cache.root_dir).expect("remove materialized cache root");
         import_cache
             .ensure_materialized()
             .expect("missing materialized cache should be repaired");
 
-        assert!(import_cache.wasm_runner_path().is_file());
+        assert!(import_cache.materialization_marker_path.is_file());
         assert!(import_cache.materialization_marker_path.is_file());
     }
 
@@ -5419,43 +5405,6 @@ for (let index = 0; index < 520; index += 1) {
         assert!(dns_promises_asset.contains("__agentOSBuiltinDns.promises"));
         assert!(dns_promises_asset.contains("export const Resolver = mod.Resolver"));
         assert!(dns_promises_asset.contains("export const resolve4 = mod.resolve4"));
-    }
-
-    #[test]
-    fn wasm_runner_preopens_guest_cwd_before_root() {
-        let cwd_index = NODE_WASM_RUNNER_SOURCE
-            .find("preopens[cwdMount] = createPreopen(HOST_CWD, cwdReadOnly);")
-            .expect("runner should preopen the guest cwd");
-        let root_index = NODE_WASM_RUNNER_SOURCE
-            .find("preopens['/'] = createPreopen(rootMapping.hostPath, rootMapping.readOnly);")
-            .expect("runner should preopen the guest root");
-
-        assert!(cwd_index < root_index);
-    }
-
-    #[test]
-    fn wasm_runner_preserves_read_only_mappings_in_preopens() {
-        assert!(NODE_WASM_RUNNER_SOURCE
-            .contains("? { guestPath, hostPath, readOnly: entry.readOnly === true }"));
-        assert!(NODE_WASM_RUNNER_SOURCE.contains("readOnly: readOnly === true,"));
-        assert!(NODE_WASM_RUNNER_SOURCE.contains("resolveModuleGuestPathToHostMapping"));
-        assert!(NODE_WASM_RUNNER_SOURCE.contains("rightsBase: READ_ONLY_PREOPEN_RIGHTS_BASE,"));
-        assert!(NODE_WASM_RUNNER_SOURCE
-            .contains("preopens[guestPath] = createPreopen(mapping.hostPath, mapping.readOnly);"));
-        assert!(NODE_WASM_RUNNER_SOURCE.contains("const cwdReadOnly = readOnlyForCwd(guestCwd);"));
-        assert!(NODE_WASM_RUNNER_SOURCE
-            .contains("preopens[cwdMount] = createPreopen(HOST_CWD, cwdReadOnly);"));
-        assert!(NODE_WASM_RUNNER_SOURCE.contains(
-            "guestPathIsReadOnly(guestPath) &&\n      (hasMutationOpenFlags(oflags) || hasWriteRights(rightsBase))"
-        ));
-        assert!(NODE_WASM_RUNNER_SOURCE
-            .contains("if (guestReadOnlyDenied) {\n      return denyReadOnlyMutation();\n    }"));
-        assert!(NODE_WASM_RUNNER_SOURCE.contains("readOnly: preopenSpec?.readOnly === true,"));
-        assert!(NODE_WASM_RUNNER_SOURCE
-            .contains("resolveModuleGuestPathToHostMapping(guestPath)?.readOnly === true"));
-        assert!(NODE_WASM_RUNNER_SOURCE.contains(
-            "if (handle?.readOnly === true || isWorkspaceReadOnly()) {\n      return WASI_ERRNO_ROFS;\n    }"
-        ));
     }
 
     #[test]

@@ -22,6 +22,7 @@ struct DiagnosticState {
 #[derive(Debug)]
 pub struct ExecutionDiagnostics {
     enabled: bool,
+    backend: &'static str,
     started: Instant,
     state: Mutex<DiagnosticState>,
 }
@@ -30,9 +31,16 @@ impl ExecutionDiagnostics {
     pub fn new(enabled: bool) -> Self {
         Self {
             enabled,
+            backend: "wasmtime",
             started: Instant::now(),
             state: Mutex::new(DiagnosticState::default()),
         }
+    }
+
+    /// Name the engine in the emitted line (`"wasmtime"` by default).
+    pub fn for_backend(mut self, backend: &'static str) -> Self {
+        self.backend = backend;
+        self
     }
 
     pub fn enabled(&self) -> bool {
@@ -104,9 +112,7 @@ impl ExecutionDiagnostics {
             return None;
         }
         let state = self.state.lock().unwrap_or_else(|poisoned| {
-            eprintln!(
-                "ERR_AGENTOS_WASMTIME_DIAGNOSTICS_POISONED: recovering phase diagnostic state"
-            );
+            eprintln!("ERR_AGENTOS_WASM_DIAGNOSTICS_POISONED: recovering phase diagnostic state");
             poisoned.into_inner()
         });
         let phases = state
@@ -116,7 +122,7 @@ impl ExecutionDiagnostics {
             .collect::<Vec<_>>();
         let payload = json!({
             "reason": reason,
-            "backend": "wasmtime",
+            "backend": self.backend,
             "modulePath": module_path,
             "sourceModuleBytes": state.module_bytes,
             "moduleBytes": state.module_bytes,
@@ -143,9 +149,7 @@ impl ExecutionDiagnostics {
 
     fn with_state<T>(&self, update: impl FnOnce(&mut DiagnosticState) -> T) -> T {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| {
-            eprintln!(
-                "ERR_AGENTOS_WASMTIME_DIAGNOSTICS_POISONED: recovering phase diagnostic state"
-            );
+            eprintln!("ERR_AGENTOS_WASM_DIAGNOSTICS_POISONED: recovering phase diagnostic state");
             poisoned.into_inner()
         });
         update(&mut state)

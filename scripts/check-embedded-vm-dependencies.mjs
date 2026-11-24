@@ -26,6 +26,7 @@ const forbidden = [
 	"agentos-executor-contract",
 	"agentos-executor-v8-runtime",
 	"agentos-executor-wasm-abi",
+	"agentos-executor-wasm-host",
 	"agentos-rivetkit-ars-client",
 	"agentos-sidecar-protocol",
 	"agentos-vfs-storage",

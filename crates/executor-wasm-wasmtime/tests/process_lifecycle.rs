@@ -129,9 +129,7 @@ fn exhausted_cpu_does_not_run_start_section_exec() {
     assert_eq!(outcome.exec_commits, 0, "{}", outcome.stderr);
     assert_ne!(outcome.exit_code, 0);
     assert!(
-        outcome
-            .stderr
-            .contains("ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT"),
+        outcome.stderr.contains("ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT"),
         "{}",
         outcome.stderr
     );

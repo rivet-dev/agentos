@@ -10,7 +10,7 @@ pub(super) fn normalize(
     if let Some(host_error) = error.downcast_ref::<HostServiceError>() {
         if matches!(
             host_error.code.as_str(),
-            "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT" | "ERR_AGENTOS_WASMTIME_CPU_CLOCK"
+            "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT" | "ERR_AGENTOS_WASM_CPU_CLOCK"
         ) {
             return host_error.clone();
         }
@@ -23,7 +23,7 @@ pub(super) fn normalize(
         || diagnostic.contains("forcing a memory growth failure to be a trap")
     {
         return HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_MEMORY_LIMIT",
+            "ERR_AGENTOS_WASM_MEMORY_LIMIT",
             "WebAssembly linear-memory growth exceeded its configured limit",
         )
         .with_details(serde_json::json!({
@@ -34,19 +34,19 @@ pub(super) fn normalize(
         || diagnostic.contains("forcing a table growth failure to be a trap")
     {
         return HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_TABLE_LIMIT",
+            "ERR_AGENTOS_WASM_TABLE_LIMIT",
             "WebAssembly table growth exceeded its configured element limit",
         )
         .with_details(serde_json::json!({
             "limitName": "limits.wasm.maxTableElements",
         }));
     }
-    if default_code == "ERR_AGENTOS_WASMTIME_INSTANTIATE" {
+    if default_code == "ERR_AGENTOS_WASM_INSTANTIATE" {
         if diagnostic.contains("memory minimum size")
             && diagnostic.contains("exceeds memory limits")
         {
             return HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_MEMORY_LIMIT",
+                "ERR_AGENTOS_WASM_MEMORY_LIMIT",
                 "WebAssembly initial memory exceeds the configured linear-memory limit",
             )
             .with_details(serde_json::json!({
@@ -56,7 +56,7 @@ pub(super) fn normalize(
         if diagnostic.contains("table minimum size") && diagnostic.contains("exceeds table limits")
         {
             return HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_TABLE_LIMIT",
+                "ERR_AGENTOS_WASM_TABLE_LIMIT",
                 "WebAssembly initial table exceeds the configured element limit",
             )
             .with_details(serde_json::json!({
@@ -68,28 +68,28 @@ pub(super) fn normalize(
             "WebAssembly host imports do not match module requirements",
         );
     }
-    if cancelled || diagnostic.contains("ERR_AGENTOS_WASMTIME_CANCELED") {
+    if cancelled || diagnostic.contains("ERR_AGENTOS_WASM_CANCELED") {
         return HostServiceError::new("ECANCELED", "Wasmtime execution was canceled");
     }
-    if diagnostic.contains("ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT") {
+    if diagnostic.contains("ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT") {
         return HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT",
-            "Wasmtime execution exhausted its active CPU budget",
+            "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT",
+            "WebAssembly execution exhausted its active CPU budget",
         );
     }
     if let Some(trap) = error.downcast_ref::<wasmtime::Trap>() {
         return match trap {
             wasmtime::Trap::OutOfFuel => HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_FUEL_EXHAUSTED",
-                "Wasmtime execution exhausted deterministic fuel",
+                "ERR_AGENTOS_WASM_FUEL_EXHAUSTED",
+                "WebAssembly execution exhausted deterministic fuel",
             ),
             wasmtime::Trap::StackOverflow => HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_STACK_EXHAUSTED",
-                "Wasmtime execution exhausted its configured stack",
+                "ERR_AGENTOS_WASM_STACK_EXHAUSTED",
+                "WebAssembly execution exhausted its stack",
             ),
             wasmtime::Trap::Interrupt => HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_INTERRUPTED",
-                "Wasmtime execution was interrupted",
+                "ERR_AGENTOS_WASM_INTERRUPTED",
+                "WebAssembly execution was interrupted",
             ),
             wasmtime::Trap::MemoryOutOfBounds => stable_guest_trap(
                 "memory-out-of-bounds",
@@ -135,6 +135,13 @@ pub(super) fn normalize(
                 "allocation-too-large",
                 "WebAssembly attempted an allocation that is too large",
             ),
+            wasmtime::Trap::ArrayOutOfBounds => stable_guest_trap(
+                "array-out-of-bounds",
+                "WebAssembly accessed an array element outside its bounds",
+            ),
+            wasmtime::Trap::CastFailure => {
+                stable_guest_trap("cast-failure", "WebAssembly failed a reference cast")
+            }
             _ => stable_guest_trap("other", "WebAssembly trapped"),
         };
     }
@@ -154,15 +161,15 @@ mod tests {
     #[test]
     fn normalizes_limit_and_guest_trap_errors_without_engine_strings() {
         let memory = wasmtime::format_err!("forcing trap when growing memory to 131072 bytes");
-        let error = normalize("ERR_AGENTOS_WASMTIME_TRAP", &memory, false);
-        assert_eq!(error.code, "ERR_AGENTOS_WASMTIME_MEMORY_LIMIT");
+        let error = normalize("ERR_AGENTOS_WASM_TRAP", &memory, false);
+        assert_eq!(error.code, "ERR_AGENTOS_WASM_MEMORY_LIMIT");
         assert_eq!(
             error.details.unwrap()["limitName"],
             "limits.resources.maxWasmMemoryBytes"
         );
 
         let trap: wasmtime::Error = wasmtime::Trap::IntegerDivisionByZero.into();
-        let error = normalize("ERR_AGENTOS_WASMTIME_TRAP", &trap, false);
+        let error = normalize("ERR_AGENTOS_WASM_TRAP", &trap, false);
         assert_eq!(error.code, "ERR_AGENTOS_WASM_TRAP");
         assert_eq!(
             error.details.unwrap()["trapKind"],

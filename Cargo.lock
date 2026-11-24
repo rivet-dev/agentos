@@ -280,6 +280,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentos-executor-wasm-host"
+version = "0.0.1"
+dependencies = [
+ "agentos-driver-tokio",
+ "agentos-executor-contract",
+ "agentos-executor-wasm-abi",
+ "base64",
+ "flume",
+ "nix 0.29.0",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wasmparser 0.251.0",
+ "wat",
+]
+
+[[package]]
 name = "agentos-executor-wasm-v8"
 version = "0.0.1"
 dependencies = [
@@ -287,12 +304,11 @@ dependencies = [
  "agentos-executor-contract",
  "agentos-executor-v8-runtime",
  "agentos-executor-wasm-abi",
- "agentos-resource-accounting",
- "agentos-vm-host-interface",
- "base64",
+ "agentos-executor-wasm-host",
+ "agentos-v8",
+ "flume",
  "serde_json",
  "sha2 0.10.9",
- "tempfile",
  "tokio",
  "tracing",
  "wat",
@@ -305,6 +321,7 @@ dependencies = [
  "agentos-driver-tokio",
  "agentos-executor-contract",
  "agentos-executor-wasm-abi",
+ "agentos-executor-wasm-host",
  "base64",
  "ciborium",
  "flume",

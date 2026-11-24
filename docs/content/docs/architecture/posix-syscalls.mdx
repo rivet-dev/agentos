@@ -114,7 +114,8 @@ int host_net_connect(int fd, const char *addr, int addr_len);
 ## Layer 2: the kernel-backed WASI shim
 
 The second layer adapts the standard WASI calls themselves so that programs
-built against a normal libc behave correctly inside the VM. The embedded shim:
+built against a normal libc behave correctly inside the VM. Both WASM engines
+bind the same Rust implementation of these calls, which:
 
 - **Routes stdio through the kernel.** `fd_read` / `fd_write` on the standard descriptors go through the kernel stdio bridge rather than host file descriptors, so output stays inside the VM and honors PTYs and redirection.
 - **Fills in libc expectations.** For example `fcntl(F_SETFL)` is serviced via `fd_fdstat_set_flags`, so flag changes that libc performs do not fail.

@@ -141,7 +141,7 @@ mod service {
             VmPendingByteBudget, EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND,
             LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND, VM_DNS_SERVERS_METADATA_KEY,
             VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, VM_LISTEN_PORT_MAX_METADATA_KEY,
-            VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND, WASM_STDIO_SYNC_RPC_ENV,
+            VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND,
         };
         use agentos_vm::executor::backend::{
             DirectHostReplyHandle, DirectHostReplyTarget, HostCallIdentity, HostCallReply,
@@ -4629,7 +4629,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
             cwd: &Path,
             process_id: &str,
             attach_stdout_pty: bool,
-        ) -> Option<u32> {
+        ) -> Option<FakeTerminal> {
             let engines = sidecar
                 .vms
                 .get(vm_id)
@@ -4646,15 +4646,12 @@ console.log(JSON.stringify({ status: "ok", summary }));
 
             let env = {
                 let vm = sidecar.vms.get(vm_id).expect("wasm vm");
-                BTreeMap::from([
-                    (
-                        String::from(EXECUTION_SANDBOX_ROOT_ENV),
-                        normalize_host_path(&vm.runtime_scratch_root)
-                            .to_string_lossy()
-                            .into_owned(),
-                    ),
-                    (String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1")),
-                ])
+                BTreeMap::from([(
+                    String::from(EXECUTION_SANDBOX_ROOT_ENV),
+                    normalize_host_path(&vm.runtime_scratch_root)
+                        .to_string_lossy()
+                        .into_owned(),
+                )])
             };
 
             let execution = wasm_engine
@@ -4692,8 +4689,52 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 })
                 .expect("start fake wasm execution");
 
-            let (kernel_handle, master_fd) = {
+            let (kernel_handle, terminal) = {
                 let mut vm = sidecar.vms.get_mut(vm_id).expect("wasm vm");
+                // The executor reads the image through the kernel VFS, the way a
+                // sidecar-staged command would be found.
+                let image = std::fs::read(cwd.join("guest.wasm")).expect("read guest fixture");
+                vm.kernel
+                    .write_file("/guest.wasm", image)
+                    .expect("stage guest image in the VM");
+                vm.kernel
+                    .chmod("/guest.wasm", 0o755)
+                    .expect("mark guest image executable");
+                // A separate terminal owner holds the PTY master, as a real
+                // terminal would. The guest inherits only the slave on stdout,
+                // so its WASI start-up layout never renumbers the master.
+                let terminal = if attach_stdout_pty {
+                    let owner = vm
+                        .kernel
+                        .spawn_process(
+                            WASM_COMMAND,
+                            vec![String::from("terminal-owner")],
+                            SpawnOptions {
+                                requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
+                                cwd: Some(String::from("/")),
+                                ..SpawnOptions::default()
+                            },
+                        )
+                        .expect("spawn terminal owner");
+                    let owner_pid = owner.pid();
+                    let (master_fd, slave_fd, _pty_path) = vm
+                        .kernel
+                        .open_pty(EXECUTION_DRIVER_NAME, owner_pid)
+                        .expect("open kernel pty");
+                    vm.kernel
+                        .fd_dup2(EXECUTION_DRIVER_NAME, owner_pid, slave_fd, 1)
+                        .expect("dup kernel pty slave onto fd 1");
+                    vm.kernel
+                        .fd_close(EXECUTION_DRIVER_NAME, owner_pid, slave_fd)
+                        .expect("close extra kernel pty slave fd");
+                    Some(FakeTerminal {
+                        _owner: owner,
+                        owner_pid,
+                        master_fd,
+                    })
+                } else {
+                    None
+                };
                 let kernel_handle = vm
                     .kernel
                     .spawn_process(
@@ -4701,28 +4742,13 @@ console.log(JSON.stringify({ status: "ok", summary }));
                         vec![String::from("./guest.wasm")],
                         SpawnOptions {
                             requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
+                            parent_pid: terminal.as_ref().map(|terminal| terminal.owner_pid),
                             cwd: Some(String::from("/")),
                             ..SpawnOptions::default()
                         },
                     )
                     .expect("spawn kernel wasm process");
-                let kernel_pid = kernel_handle.pid();
-                let master_fd = if attach_stdout_pty {
-                    let (master_fd, slave_fd, _pty_path) = vm
-                        .kernel
-                        .open_pty(EXECUTION_DRIVER_NAME, kernel_pid)
-                        .expect("open kernel pty");
-                    vm.kernel
-                        .fd_dup2(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd, 1)
-                        .expect("dup kernel pty slave onto fd 1");
-                    vm.kernel
-                        .fd_close(EXECUTION_DRIVER_NAME, kernel_pid, slave_fd)
-                        .expect("close extra kernel pty slave fd");
-                    Some(master_fd)
-                } else {
-                    None
-                };
-                (kernel_handle, master_fd)
+                (kernel_handle, terminal)
             };
 
             let mut vm = sidecar.vms.get_mut(vm_id).expect("wasm vm");
@@ -4740,7 +4766,14 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 .with_host_cwd(cwd.to_path_buf()),
             );
 
-            master_fd
+            terminal
+        }
+
+        /// The PTY a fake WASM process writes its stdout to.
+        struct FakeTerminal {
+            _owner: agentos_vm_kernel::kernel::KernelProcessHandle,
+            owner_pid: u32,
+            master_fd: u32,
         }
 
         fn start_fake_javascript_process(
@@ -13300,9 +13333,10 @@ console.log(JSON.stringify({ status: "ok", summary }));
             )
             .expect("create vm");
 
-            let master_fd =
+            let terminal =
                 start_fake_wasm_process(&mut sidecar, &vm_id, &cwd, "proc-wasm-pty", true)
                     .expect("attach stdout pty");
+            let master_fd = terminal.master_fd;
 
             let mut pty_text = None;
             let mut stderr = Vec::new();
@@ -13342,13 +13376,7 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 if pty_text.is_none() {
                     let maybe_pty = {
                         let mut vm = sidecar.vms.get_mut(&vm_id).expect("wasm vm");
-                        let kernel_pid = vm
-                            .active_processes
-                            .get("proc-wasm-pty")
-                            .map(|process| process.kernel_pid)
-                            .unwrap_or_else(|| {
-                                panic!("proc-wasm-pty should stay active until exit is handled")
-                            });
+                        let kernel_pid = terminal.owner_pid;
                         let ready = vm
                             .kernel
                             .poll_targets(
@@ -13381,8 +13409,31 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 }
             }
 
-            let pty_text = pty_text.expect("pty master should receive stdout");
             let stderr = process_stream_to_string(&stderr);
+            let pty_text = pty_text.or_else(|| {
+                // Output written just before exit can land after the last event.
+                let mut vm = sidecar.vms.get_mut(&vm_id).expect("wasm vm");
+                let ready = vm
+                    .kernel
+                    .poll_targets(
+                        EXECUTION_DRIVER_NAME,
+                        terminal.owner_pid,
+                        vec![PollTargetEntry::fd(master_fd, POLLIN)],
+                        0,
+                    )
+                    .expect("poll pty master");
+                (ready.ready_count > 0).then(|| {
+                    String::from_utf8(
+                        vm.kernel
+                            .fd_read(EXECUTION_DRIVER_NAME, terminal.owner_pid, master_fd, 64)
+                            .expect("read pty master"),
+                    )
+                    .expect("pty output utf8")
+                })
+            });
+            let pty_text = pty_text.unwrap_or_else(|| {
+                panic!("pty master should receive stdout; exit={exit_code:?} stderr={stderr}")
+            });
             assert!(
                 pty_text.replace("\r\n", "\n").contains("PTY_MARKER\n"),
                 "pty output should contain routed marker: {pty_text:?}"
@@ -13704,8 +13755,8 @@ console.log(JSON.stringify({ status: "ok", summary }));
                 .active_processes
                 .insert(String::from("exec-process"), process);
 
-            // The WASM runner precompiles the shebang interpreter and sends
-            // its Linux-rewritten argv with the original script pathname.
+            // The WASM engine compiles the shebang interpreter and sends its
+            // Linux-rewritten argv with the original script pathname.
             // Native commit must validate the interpreter chain rather than
             // reject the script merely because its own header is not WASM.
             sidecar
@@ -13727,6 +13778,16 @@ console.log(JSON.stringify({ status: "ok", summary }));
                                 String::from("yes"),
                             )]),
                             local_replacement: true,
+                            // The native engines admit the interpreter image
+                            // and report the tiers its imports satisfy.
+                            validated_import_tiers: Some(
+                                agentos_vm::executor::host::ExecImportTiers {
+                                    isolated: true,
+                                    read_only: true,
+                                    read_write: true,
+                                    full: true,
+                                },
+                            ),
                             ..Default::default()
                         },
                     },
@@ -13760,6 +13821,14 @@ console.log(JSON.stringify({ status: "ok", summary }));
                             argv0: Some(String::new()),
                             env: replacement_env.clone(),
                             local_replacement: true,
+                            validated_import_tiers: Some(
+                                agentos_vm::executor::host::ExecImportTiers {
+                                    isolated: true,
+                                    read_only: true,
+                                    read_write: true,
+                                    full: true,
+                                },
+                            ),
                             ..Default::default()
                         },
                     },
@@ -13840,6 +13909,14 @@ console.log(JSON.stringify({ status: "ok", summary }));
                             executable_fd: Some(1_048_576),
                             env: fd_replacement_env.clone(),
                             local_replacement: true,
+                            validated_import_tiers: Some(
+                                agentos_vm::executor::host::ExecImportTiers {
+                                    isolated: true,
+                                    read_only: true,
+                                    read_write: true,
+                                    full: true,
+                                },
+                            ),
                             ..Default::default()
                         },
                     },

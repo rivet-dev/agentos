@@ -6,74 +6,31 @@ use super::limits;
 use super::linker;
 use super::store::{self, WasmtimeHostClient};
 use super::threads::ThreadGroup;
-use crate::backend::{
-    ExecutionWakeIdentity, HostCallReply, HostServiceError, PayloadLimit, PublishedSignalCheckpoint,
-};
-use crate::host::{
-    BoundedString, BoundedUsize, ExecutableImageSource, FilesystemOperation, HostOperation,
-    ProcessHostCapabilitySet, ProcessOperation,
-};
-use agentos_driver_tokio::accounting::{Reservation, ResourceClass, ResourceLedger};
+use crate::backend::{ExecutionWakeIdentity, HostServiceError, PublishedSignalCheckpoint};
+use crate::host::{FilesystemOperation, HostOperation, ProcessHostCapabilitySet};
+use agentos_driver_tokio::accounting::{ResourceClass, ResourceLedger};
 use agentos_driver_tokio::DriverHandle;
 use agentos_executor_wasm_abi::{
     StartWasmExecutionRequest, WasmExecutionError, WasmExecutionEvent, WasmtimeMetricsSnapshot,
 };
-use base64::Engine as _;
 use flume::{Receiver, Sender};
-use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
+#[cfg(test)]
+use {crate::backend::PayloadLimit, crate::host::ProcessOperation, serde_json::Value};
 
-const MODULE_READ_CHUNK_BYTES: usize = 512 * 1024;
-const DEFAULT_MAX_MODULE_FILE_BYTES: usize = 256 * 1024 * 1024;
+use agentos_executor_wasm_host::image::load_module;
+pub(super) use agentos_executor_wasm_host::image::{
+    committed_exec_tier, read_open_executable_image,
+};
 
 /// One queued executor event plus the ledger ownership for bytes retained by
-/// that queue slot. The reservation is released when the event leaves the
-/// Wasmtime queue; downstream output/host-call paths apply their own existing
-/// retention accounting after that handoff.
-pub(super) struct QueuedWasmtimeEvent {
-    event: Result<WasmExecutionEvent, WasmExecutionError>,
-    _retained_bytes: Option<Reservation>,
-}
-
-impl QueuedWasmtimeEvent {
-    pub(super) fn new(
-        resources: &Arc<ResourceLedger>,
-        event: Result<WasmExecutionEvent, WasmExecutionError>,
-        retained_bytes: usize,
-    ) -> Result<Self, HostServiceError> {
-        let retained_bytes = if retained_bytes == 0 {
-            None
-        } else {
-            Some(
-                resources
-                    .reserve(ResourceClass::AsyncCompletionBytes, retained_bytes)
-                    .map_err(|error| {
-                        HostServiceError::new(
-                            "ERR_AGENTOS_WASMTIME_EVENT_BYTES_LIMIT",
-                            error.to_string(),
-                        )
-                        .with_details(serde_json::json!({
-                            "limitName": "limits.reactor.maxAsyncCompletionBytes",
-                            "observed": retained_bytes,
-                        }))
-                    })?,
-            )
-        };
-        Ok(Self {
-            event,
-            _retained_bytes: retained_bytes,
-        })
-    }
-
-    fn into_event(self) -> Result<WasmExecutionEvent, WasmExecutionError> {
-        self.event
-    }
-}
+/// that queue slot, shared with the host-import channel.
+pub(super) type QueuedWasmtimeEvent = agentos_executor_wasm_host::QueuedWasmEvent;
 
 #[derive(Debug, Default)]
 struct HostLatch {
@@ -125,12 +82,12 @@ impl Control {
         let mut checkpoints = self.signal_checkpoints.lock().map_err(|_| {
             HostServiceError::new(
                 "EIO",
-                "ERR_AGENTOS_WASMTIME_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
+                "ERR_AGENTOS_WASM_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
             )
         })?;
         if checkpoints.len() >= self.max_signal_checkpoints {
             return Err(HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_SIGNAL_CHECKPOINT_LIMIT",
+                "ERR_AGENTOS_WASM_SIGNAL_CHECKPOINT_LIMIT",
                 "Wasmtime signal checkpoint inbox is full",
             )
             .with_details(serde_json::json!({
@@ -140,7 +97,7 @@ impl Control {
         }
         if checkpoints.len().saturating_add(1) * 5 >= self.max_signal_checkpoints * 4 {
             eprintln!(
-                "WARN_AGENTOS_WASMTIME_SIGNAL_CHECKPOINT_LIMIT: signal checkpoint inbox is at {}/{} entries",
+                "WARN_AGENTOS_WASM_SIGNAL_CHECKPOINT_LIMIT: signal checkpoint inbox is at {}/{} entries",
                 checkpoints.len().saturating_add(1),
                 self.max_signal_checkpoints
             );
@@ -171,7 +128,7 @@ impl Control {
         let mut checkpoints = self.signal_checkpoints.lock().map_err(|_| {
             HostServiceError::new(
                 "EIO",
-                "ERR_AGENTOS_WASMTIME_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
+                "ERR_AGENTOS_WASM_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
             )
         })?;
         let Some(position) = checkpoints.iter().position(|(pending_identity, delivery)| {
@@ -190,7 +147,7 @@ impl Control {
         let mut checkpoints = self.signal_checkpoints.lock().map_err(|_| {
             HostServiceError::new(
                 "EIO",
-                "ERR_AGENTOS_WASMTIME_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
+                "ERR_AGENTOS_WASM_SIGNAL_INBOX_POISONED: signal checkpoint state is poisoned",
             )
         })?;
         checkpoints.retain(|(pending_identity, _)| *pending_identity != identity);
@@ -394,7 +351,7 @@ impl WasmtimeExecution {
                 );
                 if done_sender.send(()).is_err() {
                     eprintln!(
-                        "ERR_AGENTOS_WASMTIME_TEARDOWN_CHANNEL: worker completion receiver was dropped"
+                        "ERR_AGENTOS_WASM_TEARDOWN_CHANNEL: worker completion receiver was dropped"
                     );
                 }
             })
@@ -427,11 +384,11 @@ impl WasmtimeExecution {
                 self.host.notify.notify_waiters();
             }
             Ok(_) => eprintln!(
-                "ERR_AGENTOS_WASMTIME_HOST_ALREADY_BOUND: ignored duplicate host capability binding"
+                "ERR_AGENTOS_WASM_HOST_ALREADY_BOUND: ignored duplicate host capability binding"
             ),
-            Err(_) => eprintln!(
-                "ERR_AGENTOS_WASMTIME_HOST_LATCH_POISONED: failed to bind host capabilities"
-            ),
+            Err(_) => {
+                eprintln!("ERR_AGENTOS_WASM_HOST_LATCH_POISONED: failed to bind host capabilities")
+            }
         }
     }
 
@@ -583,7 +540,7 @@ impl WasmtimeExecution {
                 }
             }
             Err(error) => eprintln!(
-                "ERR_AGENTOS_WASMTIME_TEARDOWN_TIMEOUT: guest executor did not stop within {} ms: {error}",
+                "ERR_AGENTOS_WASM_TEARDOWN_TIMEOUT: guest executor did not stop within {} ms: {error}",
                 self.teardown_timeout.as_millis()
             ),
         }
@@ -664,7 +621,7 @@ async fn run_execution(
         .lock()
         .map_err(|_| {
             HostServiceError::new(
-                "ERR_AGENTOS_WASMTIME_CONTROL_POISONED",
+                "ERR_AGENTOS_WASM_CONTROL_POISONED",
                 "Wasmtime Engine control slot is poisoned",
             )
         })?
@@ -687,7 +644,7 @@ async fn run_execution(
             Err(_) => {
                 control.interrupt();
                 Err(HostServiceError::new(
-                    "ERR_AGENTOS_WASMTIME_WALL_CLOCK_LIMIT",
+                    "ERR_AGENTOS_WASM_WALL_CLOCK_LIMIT",
                     "Wasmtime execution exceeded its wall-clock budget",
                 )
                 .with_details(serde_json::json!({
@@ -708,7 +665,7 @@ async fn run_execution(
         if let Some(line) = diagnostics.line(reason, &module_path) {
             if let Err(error) = host.publish_stderr(line).await {
                 eprintln!(
-                    "ERR_AGENTOS_WASMTIME_DIAGNOSTICS_PUBLISH: failed to publish phase diagnostics: {}: {}",
+                    "ERR_AGENTOS_WASM_DIAGNOSTICS_PUBLISH: failed to publish phase diagnostics: {}: {}",
                     error.code, error.message
                 );
             }
@@ -862,7 +819,7 @@ async fn run_loaded_module_bytes(
             .instantiate_async(&mut store, &module)
             .await
             .map_err(|error| {
-                super::error::normalize("ERR_AGENTOS_WASMTIME_INSTANTIATE", &error, false)
+                super::error::normalize("ERR_AGENTOS_WASM_INSTANTIATE", &error, false)
             })?;
         store.data().check_active_cpu_budget()?;
         diagnostics.phase("Instance", instantiate_started.elapsed());
@@ -874,11 +831,9 @@ async fn run_loaded_module_bytes(
         let start = instance
             .get_typed_func::<(), ()>(&mut store, "_start")
             .map_err(|error| {
-                eprintln!(
-                    "ERR_AGENTOS_WASMTIME_ENTRYPOINT: private entrypoint diagnostic: {error:#}"
-                );
+                eprintln!("ERR_AGENTOS_WASM_ENTRYPOINT: private entrypoint diagnostic: {error:#}");
                 HostServiceError::new(
-                    "ERR_AGENTOS_WASMTIME_ENTRYPOINT",
+                    "ERR_AGENTOS_WASM_ENTRYPOINT",
                     "WebAssembly module does not export a valid _start function",
                 )
             })?;
@@ -983,7 +938,7 @@ async fn run_loaded_module_bytes(
                     ));
                 }
                 let normalized = super::error::normalize(
-                    "ERR_AGENTOS_WASMTIME_TRAP",
+                    "ERR_AGENTOS_WASM_TRAP",
                     &error,
                     store.data().canceled(),
                 );
@@ -1022,7 +977,7 @@ pub(super) async fn run_worker_loaded_module(
     let signal_pending = Arc::new(AtomicBool::new(false));
     let (events, _event_receiver) = flume::bounded(1);
     let host = WasmtimeHostClient::new_worker(
-        worker,
+        Arc::new(worker),
         store::max_host_reply_bytes(&request)?,
         cancelled,
         cancel_notify,
@@ -1089,7 +1044,7 @@ async fn wait_for_host(
             .lock()
             .map_err(|_| {
                 HostServiceError::new(
-                    "ERR_AGENTOS_WASMTIME_HOST_LATCH_POISONED",
+                    "ERR_AGENTOS_WASM_HOST_LATCH_POISONED",
                     "Wasmtime host capability latch is poisoned",
                 )
             })?
@@ -1104,263 +1059,6 @@ async fn wait_for_host(
             ));
         }
         notified.await;
-    }
-}
-
-async fn load_module(
-    host: &WasmtimeHostClient,
-    module_path: &str,
-    request: &StartWasmExecutionRequest,
-) -> Result<Vec<u8>, HostServiceError> {
-    let path_limit = PayloadLimit::new("runtime.filesystem.maxPathBytes", 4096)?;
-    let source = if let Some(path) = module_path.strip_prefix(super::TRUSTED_INITIAL_MODULE_PREFIX)
-    {
-        ExecutableImageSource::TrustedInitialPath(BoundedString::try_new(
-            path.to_owned(),
-            &path_limit,
-        )?)
-    } else {
-        ExecutableImageSource::Path(BoundedString::try_new(module_path.to_owned(), &path_limit)?)
-    };
-    let maximum = request
-        .limits
-        .max_module_file_bytes
-        .map(usize::try_from)
-        .transpose()
-        .map_err(|_| HostServiceError::new("EFBIG", "module byte limit does not fit usize"))?
-        .unwrap_or(DEFAULT_MAX_MODULE_FILE_BYTES);
-    load_executable_image(host, source, maximum).await
-}
-
-pub(super) async fn load_executable_image(
-    host: &WasmtimeHostClient,
-    source: ExecutableImageSource,
-    maximum: usize,
-) -> Result<Vec<u8>, HostServiceError> {
-    let retained_request_bytes = match &source {
-        ExecutableImageSource::TrustedInitialPath(path) | ExecutableImageSource::Path(path) => {
-            path.as_str().len()
-        }
-        ExecutableImageSource::Descriptor(_) => std::mem::size_of::<u32>(),
-    };
-    let open = host
-        .submit(
-            HostOperation::Process(ProcessOperation::OpenExecutableImage {
-                source,
-                resolution: None,
-            }),
-            retained_request_bytes,
-        )
-        .await?;
-    let (bytes, _) = read_open_executable_image(host, open, maximum).await?;
-    Ok(bytes)
-}
-
-/// Both replacement launchers use the kernel's commit acknowledgment. A missing
-/// tier is a protocol error after commit, so callers must retire the old image.
-pub(super) fn committed_exec_tier(
-    reply: HostCallReply,
-) -> Result<agentos_executor_wasm_abi::WasmPermissionTier, HostServiceError> {
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Commit {
-        committed: bool,
-        permission_tier: agentos_executor_wasm_abi::WasmPermissionTier,
-    }
-    if let HostCallReply::Json(value) = reply {
-        if let Ok(Commit {
-            committed: true,
-            permission_tier,
-        }) = serde_json::from_value(value)
-        {
-            return Ok(permission_tier);
-        }
-    }
-    Err(HostServiceError::new(
-        "EIO",
-        "exec commit omitted confirmation or a valid kernel permission tier",
-    ))
-}
-
-#[cfg(test)]
-#[test]
-fn replacement_uses_only_a_confirmed_kernel_tier() {
-    use agentos_executor_wasm_abi::WasmPermissionTier::*;
-    use serde_json::json;
-    for (label, tier) in [
-        ("isolated", Isolated),
-        ("read-only", ReadOnly),
-        ("read-write", ReadWrite),
-        ("full", Full),
-    ] {
-        assert_eq!(
-            committed_exec_tier(HostCallReply::Json(
-                json!({"committed": true, "permissionTier": label})
-            ))
-            .unwrap(),
-            tier
-        );
-    }
-    for incomplete in [
-        json!({"committed": true}),
-        json!({"committed": false, "permissionTier": "full"}),
-        json!({"committed": true, "permissionTier": "unknown"}),
-    ] {
-        assert_eq!(
-            committed_exec_tier(HostCallReply::Json(incomplete))
-                .unwrap_err()
-                .code,
-            "EIO"
-        );
-    }
-}
-
-pub(super) async fn read_open_executable_image(
-    host: &WasmtimeHostClient,
-    open: HostCallReply,
-    maximum: usize,
-) -> Result<(Vec<u8>, Option<Vec<String>>), HostServiceError> {
-    read_open_executable_image_for_exec(host, open, maximum, false).await
-}
-
-pub(super) async fn read_open_executable_image_for_exec(
-    host: &WasmtimeHostClient,
-    open: HostCallReply,
-    maximum: usize,
-    retain: bool,
-) -> Result<(Vec<u8>, Option<Vec<String>>), HostServiceError> {
-    let (handle, size, argv) = decode_open_image(open)?;
-    let result = read_module_image(host, handle, size, maximum).await;
-    if retain && result.is_ok() {
-        return result.map(|bytes| (bytes, argv));
-    }
-    let close = host
-        .submit(
-            HostOperation::Process(ProcessOperation::CloseExecutableImage { handle }),
-            std::mem::size_of::<u64>(),
-        )
-        .await;
-    match (result, close) {
-        (Ok(bytes), Ok(_)) => Ok((bytes, argv)),
-        (Err(error), Ok(_)) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-        (Err(error), Err(close_error)) => {
-            eprintln!(
-                "ERR_AGENTOS_WASMTIME_IMAGE_CLOSE: primary module-load error {}; image-close error {}",
-                error, close_error
-            );
-            Err(error)
-        }
-    }
-}
-
-fn decode_open_image(
-    reply: HostCallReply,
-) -> Result<(u64, usize, Option<Vec<String>>), HostServiceError> {
-    let HostCallReply::Json(value) = reply else {
-        return Err(HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_IMAGE_REPLY",
-            "executable-image open returned a non-JSON reply",
-        ));
-    };
-    let handle = value
-        .get("handle")
-        .and_then(Value::as_str)
-        .ok_or_else(|| HostServiceError::new("EIO", "image reply is missing handle"))?
-        .parse::<u64>()
-        .map_err(|_| HostServiceError::new("EIO", "image handle is not a u64"))?;
-    let size = value
-        .get("size")
-        .and_then(Value::as_u64)
-        .and_then(|size| usize::try_from(size).ok())
-        .ok_or_else(|| HostServiceError::new("EFBIG", "image size does not fit this platform"))?;
-    let argv = value
-        .get("argv")
-        .filter(|value| !value.is_null())
-        .map(|value| {
-            serde_json::from_value::<Vec<String>>(value.clone()).map_err(|error| {
-                HostServiceError::new("EIO", format!("executable-image argv is invalid: {error}"))
-            })
-        })
-        .transpose()?;
-    Ok((handle, size, argv))
-}
-
-async fn read_module_image(
-    host: &WasmtimeHostClient,
-    handle: u64,
-    size: usize,
-    maximum: usize,
-) -> Result<Vec<u8>, HostServiceError> {
-    if size > maximum {
-        return Err(HostServiceError::new(
-            "ERR_AGENTOS_WASMTIME_MODULE_FILE_LIMIT",
-            "WebAssembly module exceeds the configured executable-image limit",
-        )
-        .with_details(serde_json::json!({
-            "limitName": "limits.resources.maxWasmModuleFileBytes",
-            "limit": maximum,
-            "observed": size,
-        })));
-    }
-    // This bound describes the fixed chunk size selected by the runtime, not
-    // guest consumption of a configurable resource. Using the normal warning
-    // hook here would warn on every full-sized internal transfer.
-    let read_limit = PayloadLimit::with_warning_hook(
-        "limits.wasm.moduleReadChunkBytes",
-        MODULE_READ_CHUNK_BYTES,
-        None,
-    )?;
-    let mut bytes = Vec::with_capacity(size);
-    while bytes.len() < size {
-        let requested = (size - bytes.len()).min(MODULE_READ_CHUNK_BYTES);
-        let reply = host
-            .submit(
-                HostOperation::Process(ProcessOperation::ReadExecutableImage {
-                    handle,
-                    offset: bytes.len() as u64,
-                    max_bytes: BoundedUsize::try_new(requested, &read_limit)?,
-                }),
-                std::mem::size_of::<u64>() * 2 + std::mem::size_of::<usize>(),
-            )
-            .await?;
-        let chunk = decode_image_bytes(reply)?;
-        if chunk.is_empty() {
-            return Err(HostServiceError::new(
-                "EIO",
-                "executable-image read returned EOF before its declared size",
-            ));
-        }
-        if chunk.len() > requested || bytes.len().saturating_add(chunk.len()) > size {
-            return Err(HostServiceError::new(
-                "EIO",
-                "executable-image read exceeded its requested or declared size",
-            ));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
-}
-
-fn decode_image_bytes(reply: HostCallReply) -> Result<Vec<u8>, HostServiceError> {
-    match reply {
-        HostCallReply::Raw(bytes) => Ok(bytes),
-        HostCallReply::Json(value) => {
-            let encoded = value
-                .get("base64")
-                .and_then(Value::as_str)
-                .filter(|_| value.get("__agentOSType").and_then(Value::as_str) == Some("bytes"))
-                .ok_or_else(|| {
-                    HostServiceError::new("EIO", "image read returned invalid encoded bytes")
-                })?;
-            base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .map_err(|_| HostServiceError::new("EIO", "image read returned invalid base64"))
-        }
-        HostCallReply::Empty => Err(HostServiceError::new(
-            "EIO",
-            "image read returned an empty reply envelope",
-        )),
     }
 }
 
@@ -1426,7 +1124,7 @@ fn publish_worker_event(
         }
     };
     if sender.send(event).is_err() {
-        eprintln!("ERR_AGENTOS_WASMTIME_EVENT_CHANNEL: execution event receiver was dropped");
+        eprintln!("ERR_AGENTOS_WASM_EVENT_CHANNEL: execution event receiver was dropped");
     } else if let Some(notify) = notify {
         notify.notify_one();
     }
@@ -1488,7 +1186,7 @@ mod tests {
             QueuedWasmtimeEvent::new(&resources, Ok(WasmExecutionEvent::Stderr(vec![0])), 1)
                 .err()
                 .expect("over-bound event must fail");
-        assert_eq!(error.code, "ERR_AGENTOS_WASMTIME_EVENT_BYTES_LIMIT");
+        assert_eq!(error.code, "ERR_AGENTOS_WASM_EVENT_BYTES_LIMIT");
         drop(event);
         assert_eq!(resources.usage(ResourceClass::AsyncCompletionBytes).used, 0);
     }

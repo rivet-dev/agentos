@@ -20,7 +20,9 @@ pub mod host {
 }
 
 mod cache;
-mod diagnostics;
+mod diagnostics {
+    pub(crate) use agentos_executor_wasm_host::ExecutionDiagnostics;
+}
 mod engine;
 mod error;
 mod lifecycle;
@@ -46,4 +48,4 @@ pub use limits::DEFAULT_TABLE_ACCOUNTING_BYTES;
 pub use worker::{run_worker_entry, WORKER_MODE_ARGUMENT};
 
 pub const PINNED_WASMTIME_VERSION: &str = "48.0.3";
-pub const TRUSTED_INITIAL_MODULE_PREFIX: &str = "agentos-trusted-initial:";
+pub use agentos_executor_wasm_host::image::TRUSTED_INITIAL_MODULE_PREFIX;

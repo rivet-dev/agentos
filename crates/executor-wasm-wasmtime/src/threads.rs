@@ -63,6 +63,23 @@ impl std::fmt::Debug for ThreadGroup {
     }
 }
 
+impl agentos_executor_wasm_host::ThreadGroupHooks<Arc<wasmtime::Module>> for ThreadGroup {
+    fn request_process_exit(&self, code: i32) -> Result<(), HostServiceError> {
+        ThreadGroup::request_process_exit(self, code)
+    }
+
+    fn request_exec(
+        &self,
+        replacement: Option<PendingExecReplacement>,
+    ) -> Result<(), HostServiceError> {
+        ThreadGroup::request_exec(self, replacement)
+    }
+
+    fn is_shutting_down(&self) -> bool {
+        ThreadGroup::is_shutting_down(self)
+    }
+}
+
 impl ThreadGroup {
     #[allow(clippy::too_many_arguments)]
     pub fn new(

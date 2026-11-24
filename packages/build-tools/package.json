@@ -16,7 +16,7 @@
 		"check:generated": "node ./scripts/compile-sidecar-protocol.mjs --check && node ./scripts/compile-package-format.mjs --check",
 		"check-types": "node --check ./scripts/build-base-filesystem.mjs && node --check ./scripts/build-v8-bridge.mjs && node --check ./scripts/compile-sidecar-protocol.mjs",
 		"build": "pnpm run check-types",
-		"test": "pnpm run check-types && node --test ./scripts/tty-config.test.mjs ./scripts/stdin-pump.test.mjs ./scripts/generated-artifacts.test.mjs ./scripts/wasm-memory-limit.test.mjs ./scripts/with-owned-esbuild.test.mjs",
+		"test": "pnpm run check-types && node --test ./scripts/tty-config.test.mjs ./scripts/stdin-pump.test.mjs ./scripts/generated-artifacts.test.mjs ./scripts/with-owned-esbuild.test.mjs",
 		"build:package-format": "node ./scripts/compile-package-format.mjs"
 	},
 	"dependencies": {

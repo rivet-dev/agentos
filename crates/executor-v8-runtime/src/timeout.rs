@@ -64,7 +64,7 @@ const CPU_BUDGET_POLL_INTERVAL: Duration = Duration::from_millis(50);
 #[cfg(all(unix, not(target_os = "macos")))]
 #[cfg_attr(test, allow(dead_code))]
 #[derive(Clone, Copy)]
-pub(crate) struct ThreadCpuClock {
+pub struct ThreadCpuClock {
     clockid: libc::clockid_t,
 }
 
@@ -75,7 +75,7 @@ pub(crate) struct ThreadCpuClock {
 /// which case no CPU budget can be enforced.
 #[cfg(all(unix, not(target_os = "macos")))]
 #[cfg_attr(test, allow(dead_code))]
-pub(crate) fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
+pub fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
     // SAFETY: `pthread_self` is always callable; `pthread_getcpuclockid` writes
     // a valid clockid into `clockid` on success (return 0).
     unsafe {
@@ -94,7 +94,7 @@ impl ThreadCpuClock {
     /// Read accumulated CPU time for the captured thread, in milliseconds.
     /// Returns `None` if the clock read fails.
     #[cfg_attr(test, allow(dead_code))]
-    fn elapsed_ms(self) -> Option<u64> {
+    pub fn elapsed_ms(self) -> Option<u64> {
         // SAFETY: `clockid` came from a successful `pthread_getcpuclockid`; the
         // timespec is fully written by `clock_gettime` on success.
         unsafe {
@@ -118,13 +118,13 @@ impl ThreadCpuClock {
 #[cfg(target_os = "macos")]
 #[cfg_attr(test, allow(dead_code))]
 #[derive(Clone, Copy)]
-pub(crate) struct ThreadCpuClock {
+pub struct ThreadCpuClock {
     port: libc::mach_port_t,
 }
 
 #[cfg(target_os = "macos")]
 #[cfg_attr(test, allow(dead_code))]
-pub(crate) fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
+pub fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
     // SAFETY: `pthread_mach_thread_np` returns the Mach thread port for the
     // calling pthread; the port is valid for the thread's lifetime.
     let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
@@ -141,7 +141,7 @@ impl ThreadCpuClock {
     /// Read accumulated CPU time (user + system) for the captured thread, in
     /// milliseconds. Returns `None` if the Mach query fails.
     #[cfg_attr(test, allow(dead_code))]
-    fn elapsed_ms(self) -> Option<u64> {
+    pub fn elapsed_ms(self) -> Option<u64> {
         // SAFETY: `thread_info` fully initialises `info` when it returns
         // KERN_SUCCESS; the count is the documented THREAD_BASIC_INFO length.
         unsafe {
@@ -287,10 +287,10 @@ impl Drop for CpuBudgetGuard {
 // CPU budget is requested, rather than silently running uncapped.
 #[cfg(not(unix))]
 #[derive(Clone, Copy)]
-pub(crate) struct ThreadCpuClock;
+pub struct ThreadCpuClock;
 
 #[cfg(not(unix))]
-pub(crate) fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
+pub fn current_thread_cpu_clock() -> Option<ThreadCpuClock> {
     None
 }
 

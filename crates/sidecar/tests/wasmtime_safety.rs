@@ -836,7 +836,7 @@ fn process_exit_and_wall_timeout_reap_threads_parked_in_atomic_wait() {
     );
     assert_eq!(exit_code, 1, "stderr={stderr}");
     assert!(
-        stderr.contains("ERR_AGENTOS_WASMTIME_WALL_CLOCK_LIMIT"),
+        stderr.contains("ERR_AGENTOS_WASM_WALL_CLOCK_LIMIT"),
         "stderr={stderr}"
     );
     assert!(started.elapsed() < Duration::from_secs(2));
@@ -1095,7 +1095,7 @@ fn memory_table_stack_fuel_cpu_and_wall_limits_fail_closed() {
     );
     assert_eq!(exit_code, 1);
     assert!(
-        stderr.contains("ERR_AGENTOS_WASMTIME_MEMORY_LIMIT"),
+        stderr.contains("ERR_AGENTOS_WASM_MEMORY_LIMIT"),
         "stderr: {stderr}"
     );
 
@@ -1106,7 +1106,7 @@ fn memory_table_stack_fuel_cpu_and_wall_limits_fail_closed() {
         run_wasmtime("wasmtime-table-limit", &oversized_table, HashMap::new());
     assert_eq!(exit_code, 1);
     assert!(
-        stderr.contains("ERR_AGENTOS_WASMTIME_TABLE_LIMIT"),
+        stderr.contains("ERR_AGENTOS_WASM_TABLE_LIMIT"),
         "stderr: {stderr}"
     );
 
@@ -1126,7 +1126,7 @@ fn memory_table_stack_fuel_cpu_and_wall_limits_fail_closed() {
     );
     assert_eq!(exit_code, 1);
     assert!(
-        stderr.contains("ERR_AGENTOS_WASMTIME_STACK_EXHAUSTED"),
+        stderr.contains("ERR_AGENTOS_WASM_STACK_EXHAUSTED"),
         "stderr: {stderr}"
     );
 
@@ -1135,19 +1135,19 @@ fn memory_table_stack_fuel_cpu_and_wall_limits_fail_closed() {
             "fuel",
             "limits.wasm.deterministic_fuel",
             "1000",
-            "ERR_AGENTOS_WASMTIME_FUEL_EXHAUSTED",
+            "ERR_AGENTOS_WASM_FUEL_EXHAUSTED",
         ),
         (
             "active-cpu",
             "limits.wasm.active_cpu_time_limit_ms",
             "20",
-            "ERR_AGENTOS_WASMTIME_ACTIVE_CPU_LIMIT",
+            "ERR_AGENTOS_WASM_ACTIVE_CPU_LIMIT",
         ),
         (
             "wall-clock",
             "limits.wasm.wall_clock_limit_ms",
             "20",
-            "ERR_AGENTOS_WASMTIME_WALL_CLOCK_LIMIT",
+            "ERR_AGENTOS_WASM_WALL_CLOCK_LIMIT",
         ),
     ] {
         let (_, stderr, exit_code) = run_wasmtime(

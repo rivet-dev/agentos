@@ -108,6 +108,7 @@ fn resolve_execute_request(
         guest_executable_paths: Vec::new(),
         guest_input_path: None,
         adapter_policy,
+        wasm_image: None,
     })
 }
 
@@ -143,6 +144,7 @@ fn resolve_command_execution(
             guest_executable_paths: Vec::new(),
             guest_input_path: None,
             adapter_policy: ExecutionAdapterPolicy::HOST_FUNCTION,
+            wasm_image: None,
         });
     }
 
@@ -183,6 +185,7 @@ fn resolve_command_execution(
                 guest_executable_paths: Vec::new(),
                 guest_input_path: None,
                 adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+                wasm_image: None,
             });
         }
 
@@ -207,6 +210,7 @@ fn resolve_command_execution(
                 guest_executable_paths: Vec::new(),
                 guest_input_path: None,
                 adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+                wasm_image: None,
             });
         }
 
@@ -271,6 +275,7 @@ fn resolve_command_execution(
             guest_executable_paths: Vec::new(),
             guest_input_path: None,
             adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+            wasm_image: None,
         });
     }
 
@@ -321,6 +326,7 @@ fn resolve_command_execution(
             guest_executable_paths: Vec::new(),
             guest_input_path: None,
             adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+            wasm_image: None,
         });
     }
 
@@ -376,6 +382,7 @@ fn resolve_command_execution(
             guest_executable_paths: Vec::new(),
             guest_input_path: None,
             adapter_policy: ExecutionAdapterPolicy::DIRECT_RUNTIME,
+            wasm_image: None,
         });
     }
     prepare_guest_runtime_env(
@@ -402,6 +409,7 @@ fn resolve_command_execution(
         guest_executable_paths: Vec::new(),
         guest_input_path: None,
         adapter_policy: ExecutionAdapterPolicy::KERNEL_HOST_CALL_POSIX,
+        wasm_image: None,
     })
 }
 
@@ -924,6 +932,7 @@ pub(super) fn resolve_python_command_execution(
         guest_executable_paths: Vec::new(),
         guest_input_path: None,
         adapter_policy: ExecutionAdapterPolicy::DIRECT_PYTHON_RUNTIME,
+        wasm_image: None,
     })
 }
 
@@ -3327,6 +3336,7 @@ pub(super) fn stage_kernel_wasm_launch_asset(
     vm: &mut VmState,
     resolved: &mut ResolvedChildProcessExecution,
     authority: WasmLaunchAuthority,
+    backend: ExecutionStandaloneWasmBackend,
 ) -> Result<(), VmError> {
     if resolved.host_function_command || resolved.runtime != GuestRuntimeKind::WebAssembly {
         return Ok(());
@@ -3364,6 +3374,16 @@ pub(super) fn stage_kernel_wasm_launch_asset(
                 format,
             },
         ));
+    }
+    if backend == ExecutionStandaloneWasmBackend::V8 && image.bytes.starts_with(b"\0asm") {
+        // Like execve, reject a malformed module before the spawn returns.
+        // The engine then reuses these bytes instead of reading the image
+        // through the kernel again, and needs no host copy. Other images
+        // (an in-place shebang exec stages its script) keep the staged path.
+        let image = crate::executor::preflight_native_wasm_image(image.bytes)
+            .map_err(|error| wasm_error(crate::executor::WasmExecutionError::Host(error)))?;
+        resolved.wasm_image = Some(image);
+        return Ok(());
     }
     let asset_path = runtime_asset_path_for_guest(vm, &real_entrypoint);
     prepare_launch_asset_parent(&vm.runtime_scratch_root, &asset_path)?;
@@ -5263,6 +5283,7 @@ where
         &mut vm,
         &mut resolved,
         WasmLaunchAuthority::TrustedInitialImage,
+        standalone_wasm_backend,
     )?;
     let resolved = resolved;
     executors
@@ -5286,11 +5307,6 @@ where
             String::from("AGENTOS_FORWARD_KERNEL_STDIN_RPC"),
             String::from("1"),
         );
-    } else if resolved.adapter_policy.encodes_inherited_fd_bootstrap {
-        env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
-    }
-    if resolved.adapter_policy.supports_prepared_in_place_exec {
-        env.insert(String::from(WASM_EXEC_COMMIT_RPC_ENV), String::from("1"));
     }
     let provisional_launch_entrypoint = if resolved
         .adapter_policy
@@ -5714,24 +5730,19 @@ where
                     .map_err(kernel_error),
                 "top-level compatibility-WASM permission lookup"
             );
-            let module_path = match payload.wasm_backend {
-                _ if matches!(
-                    standalone_wasm_backend,
-                    ExecutionStandaloneWasmBackend::Wasmtime
-                        | ExecutionStandaloneWasmBackend::WasmtimeThreads
-                ) =>
-                {
-                    env.get("AGENTOS_GUEST_ENTRYPOINT")
-                        .map(|path| format!("{TRUSTED_INITIAL_MODULE_PREFIX}{path}"))
-                        .unwrap_or_else(|| resolved.entrypoint.clone())
-                }
-                _ => resolved.entrypoint.clone(),
-            };
+            // Every engine loads its module through the kernel VFS.
+            let module_path = env
+                .get("AGENTOS_GUEST_ENTRYPOINT")
+                .map(|path| format!("{TRUSTED_INITIAL_MODULE_PREFIX}{path}"))
+                .unwrap_or_else(|| resolved.entrypoint.clone());
             let context = wasm_engine.create_context(CreateWasmContextRequest {
                 vm_id: vm_id.clone(),
                 module_path: Some(module_path),
             });
             let context_id = context.context_id;
+            if let Some(image) = resolved.wasm_image.clone() {
+                wasm_engine.attach_module_image(&context_id, image);
+            }
             let pending_execution = wasm_engine.start_execution_with_runtime_async_for_backend(
                 StartWasmExecutionRequest {
                     vm_id: vm_id.clone(),

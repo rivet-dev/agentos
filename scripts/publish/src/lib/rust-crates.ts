@@ -11,6 +11,7 @@ export const RUST_CRATE_ORDER = [
 	"agentos-resource-accounting",
 	"agentos-executor-wasm-abi",
 	"agentos-driver-tokio",
+	"agentos-executor-wasm-host",
 	"agentos-vfs-core",
 	"agentos-vfs-storage",
 	"agentos-vm-kernel",

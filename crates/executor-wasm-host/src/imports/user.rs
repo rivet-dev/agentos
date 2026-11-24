@@ -6,20 +6,20 @@ use super::preview1::{
 };
 use super::{i32_arg, set_i32_result};
 use crate::abi::{AbiBinding, ImportId};
-use crate::{memory, store::WasmtimeStoreState};
+use crate::memory;
+use crate::{Val, WasmGuest};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use wasmtime::{Caller, Val};
 
 const MAX_GROUPS: usize = 64;
 const MAX_ACCOUNT_NAME_BYTES: usize = 4096;
 
-pub async fn dispatch(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+pub async fn dispatch<C: WasmGuest>(
+    caller: &mut C,
     abi: AbiBinding,
     params: &[Val],
     results: &mut [Val],
-) -> wasmtime::Result<bool> {
+) -> crate::Result<bool> {
     use ImportId::*;
     let fixed_limit = match abi.id {
         HostUserGetgroups | HostUserSetgroups => i32_arg(params, 0).ok().map(|count| {
@@ -77,7 +77,7 @@ pub async fn dispatch(
     Ok(true)
 }
 
-async fn scalar(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], method: &str) -> i32 {
+async fn scalar<C: WasmGuest>(caller: &mut C, params: &[Val], method: &str) -> i32 {
     let Ok(output) = i32_arg(params, 0) else {
         return ERRNO_FAULT;
     };
@@ -101,7 +101,7 @@ async fn scalar(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], met
     }
 }
 
-async fn triple(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], method: &str) -> i32 {
+async fn triple<C: WasmGuest>(caller: &mut C, params: &[Val], method: &str) -> i32 {
     let pointers = match (0..3)
         .map(|index| i32_arg(params, index))
         .collect::<Result<Vec<_>, _>>()
@@ -148,7 +148,7 @@ async fn triple(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], met
     }
 }
 
-async fn set_one(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], method: &str) -> i32 {
+async fn set_one<C: WasmGuest>(caller: &mut C, params: &[Val], method: &str) -> i32 {
     let Ok(value) = i32_arg(params, 0) else {
         return ERRNO_INVAL;
     };
@@ -163,8 +163,8 @@ fn optional_id(value: u32) -> Value {
     }
 }
 
-async fn set_optional(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn set_optional<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     method: &str,
     count: usize,
@@ -179,7 +179,7 @@ async fn set_optional(
     simple_call(caller, method, args).await
 }
 
-async fn getgroups(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn getgroups<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(capacity), Ok(groups), Ok(count_output)) =
         (i32_arg(params, 0), i32_arg(params, 1), i32_arg(params, 2))
     else {
@@ -235,7 +235,7 @@ async fn getgroups(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     }
 }
 
-async fn setgroups(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn setgroups<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(count), Ok(pointer)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_FAULT;
     };
@@ -256,7 +256,7 @@ async fn setgroups(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) 
     simple_call(caller, "process.setgroups", vec![Value::Array(values)]).await
 }
 
-async fn isatty(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val]) -> i32 {
+async fn isatty<C: WasmGuest>(caller: &mut C, params: &[Val]) -> i32 {
     let (Ok(fd), Ok(output)) = (i32_arg(params, 0), i32_arg(params, 1)) else {
         return ERRNO_FAULT;
     };
@@ -280,8 +280,8 @@ enum AccountKey {
     Name,
 }
 
-async fn account(
-    caller: &mut Caller<'_, WasmtimeStoreState>,
+async fn account<C: WasmGuest>(
+    caller: &mut C,
     params: &[Val],
     method: &str,
     key: AccountKey,
