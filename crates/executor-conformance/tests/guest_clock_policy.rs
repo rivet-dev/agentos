@@ -37,6 +37,10 @@ if (typeof __agentOsHrNowUs !== "undefined") {
 }
 for (let attempt = 0; attempt < 20; attempt++) {
   const now = process.hrtime.bigint();
+  // Node's hrtime starts from an arbitrary past point, never at 0.
+  if (now <= 0n) {
+    throw new Error("process.hrtime.bigint was not positive: " + now);
+  }
   if (now % 1000000n !== 0n) {
     throw new Error("process.hrtime.bigint was not millisecond aligned: " + now);
   }
