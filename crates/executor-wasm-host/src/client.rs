@@ -146,6 +146,12 @@ impl WasmHostClient {
         if let Some(diagnostics) = self.diagnostics.as_ref() {
             diagnostics.first_host_call();
         }
+        // Register for the cancel wake-up before reading the flag: `interrupt`
+        // wakes only registered waiters, so a cancel between the check and the
+        // wait would otherwise leave this call parked until the host replies.
+        let cancel = self.cancel_notify.notified();
+        tokio::pin!(cancel);
+        cancel.as_mut().enable();
         if self.canceled() {
             return Err(HostServiceError::new(
                 "ECANCELED",
@@ -180,7 +186,7 @@ impl WasmHostClient {
         host.submit(operation, reply, admission)?;
         tokio::select! {
             reply = receiver => reply,
-            () = self.cancel_notify.notified() => Err(HostServiceError::new(
+            () = &mut cancel => Err(HostServiceError::new(
                 "ECANCELED",
                 "WebAssembly execution was canceled while awaiting a host operation",
             )),
@@ -209,6 +215,10 @@ impl WasmHostClient {
                 diagnostics.first_output();
             }
         }
+        // See `submit`: register before reading the flag.
+        let cancel = self.cancel_notify.notified();
+        tokio::pin!(cancel);
+        cancel.as_mut().enable();
         if self.canceled() {
             return Err(HostServiceError::new(
                 "ECANCELED",
@@ -279,7 +289,7 @@ impl WasmHostClient {
                 "EPIPE",
                 "WebAssembly host-call event receiver was dropped",
             ))?,
-            () = self.cancel_notify.notified() => return Err(HostServiceError::new(
+            () = &mut cancel => return Err(HostServiceError::new(
                 "ECANCELED",
                 "WebAssembly execution was canceled while admitting an adapter call",
             )),
@@ -289,7 +299,7 @@ impl WasmHostClient {
         }
         tokio::select! {
             reply = receiver => reply,
-            () = self.cancel_notify.notified() => Err(HostServiceError::new(
+            () = &mut cancel => Err(HostServiceError::new(
                 "ECANCELED",
                 "WebAssembly execution was canceled while awaiting an adapter call",
             )),
