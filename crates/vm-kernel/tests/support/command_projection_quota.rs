@@ -419,6 +419,45 @@ fn replace_driver_partial_failure_preserves_prior_command_bytes_and_registry() {
 }
 
 #[test]
+fn command_projection_follows_final_symlink_to_mounted_target() {
+    let mut root = MemoryFileSystem::new();
+    root.mkdir("/tools", true).unwrap();
+    root.symlink("/tools", "/bin").unwrap();
+    root.mkdir("/elsewhere", true).unwrap();
+    root.symlink("/elsewhere/first", "/tools/first").unwrap();
+    let mut mounts = MountTable::new(root);
+    mounts
+        .mount(
+            "/elsewhere",
+            MemoryFileSystem::new(),
+            MountOptions::new("memory"),
+        )
+        .unwrap();
+    let mut config = KernelVmConfig::new("projection-final-symlink");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(mounts, config);
+    let before = kernel.filesystem_usage().unwrap();
+    // The stub lands on the mounted link target, so the root needs no room.
+    kernel.resources = ResourceAccountant::new(ResourceLimits {
+        max_inode_count: Some(before.inode_count),
+        max_filesystem_bytes: Some(before.total_bytes),
+        ..ResourceLimits::default()
+    });
+    kernel
+        .register_driver_for_operator(CommandDriver::new("quota", ["first"]))
+        .unwrap();
+    assert_eq!(kernel.read_file("/elsewhere/first").unwrap(), COMMAND_STUB);
+    assert_eq!(
+        kernel.raw_filesystem_mut().read_link("/tools/first").unwrap(),
+        "/elsewhere/first"
+    );
+    assert_eq!(
+        kernel.filesystem_usage().unwrap().inode_count,
+        before.inode_count
+    );
+}
+
+#[test]
 fn replace_driver_preserves_final_symlink_root_target() {
     replacement_final_symlink_control(false);
 }

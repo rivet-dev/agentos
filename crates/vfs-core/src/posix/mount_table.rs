@@ -2159,25 +2159,39 @@ impl MountTable {
         // mkdir resolves symlinks inside the already selected backend. Global
         // MountTable resolution could cross a nested mount and count another tree.
         let filesystem = &self.mounts[index].filesystem;
+        // A VM configure mounts ~150 leaves under existing directories. When
+        // the parent resolves to a directory (lstat follows only its
+        // ancestors) and the leaf is absent, mkdir creates exactly the leaf;
+        // skip the full walk below.
+        let parent = parent_path(relative_path);
+        if parent != relative_path
+            && filesystem
+                .lstat(&parent)
+                .is_ok_and(|stat| stat.is_directory)
+            && filesystem
+                .lstat(relative_path)
+                .is_err_and(|error| error.code() == "ENOENT")
+        {
+            return Ok(1);
+        }
         let resolved = resolve_path_for_creation_with(
             relative_path,
             |path| filesystem.realpath(path),
             |path| filesystem.lstat(path),
             |path| filesystem.read_link(path),
         )?;
+        let components = path_components(&resolved);
         let mut current = String::from("/");
-        let mut missing = 0usize;
-        for component in path_components(&resolved) {
-            current = join_path(&current, &component);
+        for (position, component) in components.iter().enumerate() {
+            current = join_path(&current, component);
             match filesystem.lstat(&current) {
                 Ok(_) => {}
-                Err(error) if error.code() == "ENOENT" => {
-                    missing = missing.saturating_add(1);
-                }
+                // Nothing exists below a missing directory.
+                Err(error) if error.code() == "ENOENT" => return Ok(components.len() - position),
                 Err(error) => return Err(error),
             }
         }
-        Ok(missing)
+        Ok(0)
     }
 
     // Match the selected backend used by write_file, including dangling leaf

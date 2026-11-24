@@ -67,9 +67,9 @@ use crate::user::{
     passwd_record_by_name, passwd_record_by_uid, ProcessIdentity, UserConfig, UserManager,
 };
 use crate::vfs::{
-    normalize_path, resolve_path_for_creation, ReservedUnnamedInode, VfsError, VfsResult,
-    VirtualDirEntry, VirtualFileSystem, VirtualStat, VirtualTimeSpec, VirtualUtimeSpec,
-    MAX_PATH_LENGTH, RENAME_EXCHANGE, S_IFDIR, S_IFLNK, S_IFREG,
+    normalize_path, resolve_child_for_creation, resolve_path_for_creation, ReservedUnnamedInode,
+    VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat, VirtualTimeSpec,
+    VirtualUtimeSpec, MAX_PATH_LENGTH, RENAME_EXCHANGE, S_IFDIR, S_IFLNK, S_IFREG,
 };
 use hickory_proto::rr::RecordType;
 use std::any::Any;
@@ -1778,8 +1778,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
         let mut checked = BTreeSet::new();
         for command in driver.commands() {
-            let path =
-                resolve_path_for_creation(self.raw_filesystem_mut(), &format!("/bin/{command}"))?;
+            let path = resolve_child_for_creation(self.raw_filesystem_mut(), &bin_path, command)?;
             if !checked.insert(path.clone()) {
                 continue;
             }

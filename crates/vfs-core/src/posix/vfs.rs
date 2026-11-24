@@ -1288,6 +1288,17 @@ impl MemoryFileSystem {
         self.resolve_path_with_options(path, false, 0)
     }
 
+    /// Stat the entry stored at exactly this normalized path, following no
+    /// symlink. Callers resolve the ancestors themselves.
+    pub(crate) fn lstat_entry(&self, path: &str) -> Option<VirtualStat> {
+        let ino = self.path_index.get(path)?;
+        let inode = self
+            .inodes
+            .get(ino)
+            .expect("path index should always point at a valid inode");
+        Some(self.build_stat(inode))
+    }
+
     fn inode_id_for_existing_path(
         &self,
         path: &str,
@@ -2556,6 +2567,30 @@ pub fn resolve_path_for_creation<F: VirtualFileSystem>(
         |path| filesystem.lstat(path),
         |path| filesystem.read_link(path),
     )
+}
+
+/// Resolve `name` inside a parent that `resolve_path_for_creation` already
+/// resolved, with the same result as resolving `{parent}/{name}` from `/`.
+/// Batch callers resolve the shared parent once: only a leaf symlink, or a
+/// leaf whose lookup fails with anything but ENOENT, needs the full walk.
+pub fn resolve_child_for_creation<F: VirtualFileSystem>(
+    filesystem: &F,
+    resolved_parent: &str,
+    name: &str,
+) -> VfsResult<String> {
+    let candidate = if resolved_parent == "/" {
+        format!("/{name}")
+    } else {
+        format!("{resolved_parent}/{name}")
+    };
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+        return resolve_path_for_creation(filesystem, &candidate);
+    }
+    match filesystem.lstat(&candidate) {
+        Ok(stat) if !stat.is_symbolic_link => Ok(candidate),
+        Err(error) if error.code() == "ENOENT" => Ok(candidate),
+        _ => resolve_path_for_creation(filesystem, &candidate),
+    }
 }
 
 // Keep creation semantics shared without requiring mounted backends to implement
