@@ -413,7 +413,7 @@ impl OverlayFileSystem {
         let mut current = String::from("/");
         while let Some(component) = pending.pop_front() {
             if component == "." || component == ".." {
-                if !self.merged_lstat(&current)?.is_directory {
+                if !self.merged_entry_lstat(&current)?.is_directory {
                     return Err(Self::not_directory(&current));
                 }
                 if component == ".." {
@@ -423,7 +423,7 @@ impl OverlayFileSystem {
             }
             let candidate = Self::join_path(&current, &component);
             validate_path(&candidate)?;
-            let stat = self.merged_lstat(&candidate)?;
+            let stat = self.merged_entry_lstat(&candidate)?;
             if stat.is_symbolic_link && (follow_final_symlink || !pending.is_empty()) {
                 followed += 1;
                 if followed > MAX_SYMLINK_DEPTH {
@@ -984,6 +984,23 @@ impl OverlayFileSystem {
             .iter()
             .enumerate()
             .find_map(|(index, lower)| lower.lstat(path).ok().map(|stat| (index, stat)))
+    }
+
+    /// `merged_lstat` for a normalized path whose ancestors the merged walk
+    /// already resolved to merged-view directories. Like overlayfs, each layer
+    /// is asked for the entry inside that directory, not to re-resolve the
+    /// whole path through its own namespace: re-resolving made every merged
+    /// walk quadratic in depth, and followed a lower-layer symlink hidden by
+    /// an upper directory.
+    fn merged_entry_lstat(&self, path: &str) -> VfsResult<VirtualStat> {
+        if self.is_whited_out(path) {
+            return Err(Self::entry_not_found(path));
+        }
+        self.upper
+            .iter()
+            .chain(self.lowers.iter())
+            .find_map(|layer| layer.lstat_entry(path))
+            .ok_or_else(|| Self::entry_not_found(path))
     }
 
     fn merged_lstat(&self, path: &str) -> VfsResult<VirtualStat> {
@@ -1810,7 +1827,7 @@ impl VirtualFileSystem for OverlayFileSystem {
 
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat> {
         let resolved = self.resolve_merged_path(path, false, 0)?;
-        self.merged_lstat(&resolved)
+        self.merged_entry_lstat(&resolved)
     }
 
     // Every ancestor is already a resolved, non-symlink directory of the
@@ -1821,7 +1838,7 @@ impl VirtualFileSystem for OverlayFileSystem {
         if Self::normalized(path) != path {
             return self.lstat(path);
         }
-        self.merged_lstat(path)
+        self.merged_entry_lstat(path)
     }
 
     fn link(&mut self, old_path: &str, new_path: &str) -> VfsResult<()> {

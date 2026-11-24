@@ -381,6 +381,33 @@ fn rejected_root_mount_admission_shuts_down_backend_without_parent_mutation() {
 }
 
 #[test]
+fn mount_below_dangling_symlink_admits_every_directory_it_creates() {
+    let mut root = MemoryFileSystem::new();
+    root.symlink("/missing", "/link").unwrap();
+    let mut table = MountTable::new(root);
+    let before = table.root_usage().unwrap().inode_count;
+    let mut admitted = None;
+    let growth = table
+        .mount_boxed_with_root_admission(
+            "/link/leaf",
+            Box::new(agentos_vfs_core::posix::MountedVirtualFileSystem::new(
+                MemoryFileSystem::new(),
+            )),
+            MountOptions::new("child"),
+            |added| {
+                admitted = Some(added);
+                Ok(())
+            },
+        )
+        .unwrap();
+    // mkdir -p follows the link and creates /missing and /missing/leaf.
+    assert_eq!(admitted, Some(2));
+    assert_eq!(growth, Some(2));
+    assert!(table.exists("/missing/leaf"));
+    assert_eq!(table.root_usage().unwrap().inode_count, before + 2);
+}
+
+#[test]
 fn mounted_parent_quota_rejection_shuts_down_child_backend() {
     let mut table = MountTable::new(MemoryFileSystem::new());
     table

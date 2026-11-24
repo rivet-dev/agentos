@@ -282,3 +282,22 @@ fn overlay_directory_alias_reads_observe_merged_children() {
     assert_eq!(fs.lstat("/alias/new").unwrap().size, 3);
     assert_eq!(fs.read_link("/alias/child-link").unwrap(), "new");
 }
+
+#[test]
+fn overlay_hides_lower_symlink_under_upper_directory() {
+    let mut lower = MemoryFileSystem::new();
+    lower.mkdir("/usr/bin", true).unwrap();
+    lower
+        .write_file("/usr/bin/tool", b"lower".to_vec())
+        .unwrap();
+    lower.symlink("/usr/bin", "/bin").unwrap();
+    let mut upper = MemoryFileSystem::new();
+    upper.mkdir("/bin", false).unwrap();
+    let overlay = OverlayFileSystem::with_upper(vec![lower], upper);
+
+    // Like Linux overlayfs, an upper directory merges only with lower
+    // directories; the lower symlink at the same path contributes nothing.
+    assert_eq!(overlay.lstat("/bin/tool").unwrap_err().code(), "ENOENT");
+    assert!(!overlay.exists("/bin/tool"));
+    assert!(overlay.exists("/usr/bin/tool"));
+}

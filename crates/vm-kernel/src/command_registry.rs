@@ -1,4 +1,6 @@
-use crate::vfs::{resolve_path_for_creation, VfsError, VfsResult, VirtualFileSystem};
+use crate::vfs::{
+    resolve_child_for_creation, resolve_path_for_creation, VfsError, VfsResult, VirtualFileSystem,
+};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -169,7 +171,7 @@ impl CommandRegistry {
         }
 
         for command in commands {
-            let path = resolve_path_for_creation(vfs, &format!("/bin/{command}"))?;
+            let path = resolve_child_for_creation(vfs, &bin_path, &command)?;
             if !vfs.exists(&path) {
                 vfs.write_file(&path, COMMAND_STUB.to_vec())?;
                 if let Err(error) = vfs.chmod(&path, 0o755) {
