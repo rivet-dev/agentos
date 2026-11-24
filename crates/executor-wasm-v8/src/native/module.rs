@@ -24,6 +24,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// never a failure.
 const ADMITTED_IMAGE_CACHE_CAPACITY: usize = 64;
 
+/// Image bytes the cache may retain across all entries. Each entry keeps V8's
+/// copy of the module and its compiled code alive for the whole process, and
+/// guests can admit images they write themselves, so the cache is bounded by
+/// size as well as count. Matches the per-VM module cache it replaced.
+const ADMITTED_IMAGE_CACHE_MAX_BYTES: usize = 256 * 1024 * 1024;
+
 /// One admitted, compiled guest image.
 pub struct NativeImage {
     pub(super) compiled: Arc<v8::CompiledWasmModule>,
@@ -78,9 +84,10 @@ pub(super) fn admit_image(
     if let Some(entry) = admitted_images()
         .lock()
         .map_err(cache_poisoned)?
+        .entries
         .iter()
-        .find(|(cached, _)| *cached == key)
-        .map(|(_, entry)| Arc::clone(entry))
+        .find(|(cached, _, _)| *cached == key)
+        .map(|(_, _, entry)| Arc::clone(entry))
     {
         if let Some(tier) = launch_tier {
             entry.launch[tier_index(tier)].clone()?;
@@ -128,12 +135,21 @@ pub(super) fn admit_image(
         has_valid_start: info.has_valid_start,
         launch,
     });
+    let size = bytes.len();
     let mut cache = admitted_images().lock().map_err(cache_poisoned)?;
-    if !cache.iter().any(|(cached, _)| *cached == key) {
-        if cache.len() >= ADMITTED_IMAGE_CACHE_CAPACITY {
-            cache.pop_front();
+    if size <= ADMITTED_IMAGE_CACHE_MAX_BYTES
+        && !cache.entries.iter().any(|(cached, _, _)| *cached == key)
+    {
+        while cache.entries.len() >= ADMITTED_IMAGE_CACHE_CAPACITY
+            || cache.bytes + size > ADMITTED_IMAGE_CACHE_MAX_BYTES
+        {
+            let Some((_, evicted, _)) = cache.entries.pop_front() else {
+                break;
+            };
+            cache.bytes -= evicted;
         }
-        cache.push_back((key, Arc::clone(&entry)));
+        cache.bytes += size;
+        cache.entries.push_back((key, size, Arc::clone(&entry)));
     }
     Ok(Admitted {
         tiers,
@@ -190,11 +206,19 @@ fn validate_profile_digest(bytes: &[u8], digest: [u8; 32]) -> Result<(), HostSer
     Ok(())
 }
 
-type AdmittedCache = Mutex<VecDeque<(([u8; 32], Option<u64>), Arc<AdmittedEntry>)>>;
+/// An image digest and the memory limit it was admitted under.
+type AdmittedKey = ([u8; 32], Option<u64>);
 
-fn admitted_images() -> &'static AdmittedCache {
-    static CACHE: OnceLock<AdmittedCache> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(VecDeque::new()))
+/// Admitted images in insertion order, with their byte sizes and total.
+#[derive(Default)]
+struct AdmittedCache {
+    entries: VecDeque<(AdmittedKey, usize, Arc<AdmittedEntry>)>,
+    bytes: usize,
+}
+
+fn admitted_images() -> &'static Mutex<AdmittedCache> {
+    static CACHE: OnceLock<Mutex<AdmittedCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(AdmittedCache::default()))
 }
 
 fn cache_poisoned<T>(_: T) -> HostServiceError {
