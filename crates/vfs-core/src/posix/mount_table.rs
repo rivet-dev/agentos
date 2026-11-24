@@ -1965,6 +1965,16 @@ impl MountTable {
             .collect()
     }
 
+    /// Read-only root handle: unlike the mutable handle it leaves the
+    /// mutation generation and usage caches valid.
+    pub fn root_virtual_filesystem<T: VirtualFileSystem + 'static>(&self) -> Option<&T> {
+        let root = self.mounts.iter().find(|mount| mount.path == "/")?;
+        root.filesystem
+            .as_any()
+            .downcast_ref::<MountedVirtualFileSystem<T>>()
+            .map(MountedVirtualFileSystem::inner)
+    }
+
     pub fn root_virtual_filesystem_mut<T: VirtualFileSystem + 'static>(
         &mut self,
     ) -> Option<&mut T> {

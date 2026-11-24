@@ -419,6 +419,33 @@ fn replace_driver_partial_failure_preserves_prior_command_bytes_and_registry() {
 }
 
 #[test]
+fn successive_registrations_may_fill_the_inode_limit_exactly() {
+    let mut root = MemoryFileSystem::new();
+    root.mkdir("/bin", true).unwrap();
+    let mut config = KernelVmConfig::new("projection-exact-fill");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+    let before = kernel.filesystem_usage().unwrap();
+    kernel.resources = ResourceAccountant::new(ResourceLimits {
+        max_inode_count: Some(before.inode_count + 2),
+        ..ResourceLimits::default()
+    });
+    kernel
+        .register_driver_for_operator(CommandDriver::new("first", ["one"]))
+        .unwrap();
+    // The second stub takes the last inode; the first registration's
+    // accounting must not overstate what it used.
+    kernel
+        .register_driver_for_operator(CommandDriver::new("second", ["two"]))
+        .unwrap();
+    let error = kernel
+        .register_driver_for_operator(CommandDriver::new("third", ["three"]))
+        .unwrap_err();
+    assert_eq!(error.code(), "ENOSPC");
+    assert_eq!(kernel.read_file("/bin/two").unwrap(), COMMAND_STUB);
+}
+
+#[test]
 fn command_projection_follows_final_symlink_to_mounted_target() {
     let mut root = MemoryFileSystem::new();
     root.mkdir("/tools", true).unwrap();

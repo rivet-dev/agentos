@@ -5430,7 +5430,7 @@ where
     use agentos_vm_kernel::vfs::VirtualFileSystem as _;
     if !vm
         .kernel
-        .root_filesystem_mut()
+        .root_filesystem()
         .is_some_and(|root| root.is_read_only_mode())
     {
         return Ok(Vec::new());
@@ -5769,7 +5769,7 @@ where
 {
     let root_read_only = vm
         .kernel
-        .root_filesystem_mut()
+        .root_filesystem()
         .is_some_and(|root| root.is_read_only_mode());
     let mut parent_mount_modes = vm
         .kernel
