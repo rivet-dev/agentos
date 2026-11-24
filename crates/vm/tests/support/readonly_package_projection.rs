@@ -62,9 +62,18 @@ fn rp_link(
     id: &str,
     package: &tempfile::TempDir,
 ) -> Result<(), crate::VmError> {
+    rp_link_as(manager, id, package, "live-projection")
+}
+
+fn rp_link_as(
+    manager: &mut VmManager<LocalBridge>,
+    id: &str,
+    package: &tempfile::TempDir,
+    package_id: &str,
+) -> Result<(), crate::VmError> {
     let payload = LinkPackageRequest {
         package: rp_descriptor(package),
-        package_id: "live-projection".into(),
+        package_id: package_id.into(),
     };
     let request = RequestFrame::new(
         11,
@@ -526,13 +535,14 @@ fn readonly_package_projection_canonical_bin_parent_and_root_mount_at() {
         rp_configure(manager, id, config)
             .expect("existing planned /bin leaf needs no duplicate alias");
         let mut vm = manager.vms.get_mut(id).unwrap();
+        // The projection's own link, not an absolute alias to it.
         assert_eq!(
             vm.kernel
-                .mounted_filesystems()
-                .iter()
-                .filter(|m| m.path == "/bin/projection-a")
-                .count(),
-            1
+                .filesystem()
+                .inner()
+                .read_link("/bin/projection-a")
+                .unwrap(),
+            "../pkgs/projection-canonical/current/bin/projection-a"
         );
         assert_eq!(
             vm.kernel.read_file("/bin/projection-a").unwrap(),
@@ -679,4 +689,82 @@ fn readonly_package_projection_rejects_invalid_command_names_before_mount_public
             assert_eq!(rp_state(manager, id), before);
         });
     }
+}
+
+#[test]
+fn package_command_dir_follows_live_link_unlink_and_failed_link() {
+    let boot = rp_package("projection-boot", &["projection-boot"]);
+    let live = rp_package("projection-live", &["projection-live"]);
+    // Linking this fails after the command dir swap began: its provides
+    // target sits under a regular file.
+    let blocked = rp_package("projection-blocked", &["projection-blocked"]);
+    fs::create_dir(blocked.path().join("config")).unwrap();
+    fs::write(
+        blocked.path().join("agentos-package.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "name": "projection-blocked",
+            "version": "1.0.0",
+            "provides": {"files": [{"source": "config", "target": "/tmp/projection-blocker/config"}]}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let command = |name: &str| format!("/opt/agentos/bin/{name}");
+    rp_with_vm(false, serde_json::json!([]), |manager, id| {
+        rp_configure(manager, id, rp_configuration(&[&boot])).unwrap();
+        {
+            let mut vm = manager.vms.get_mut(id).unwrap();
+            vm.kernel
+                .write_file(&command("guest-tool"), b"guest".to_vec())
+                .unwrap();
+            vm.kernel
+                .write_file("/tmp/projection-blocker", b"file".to_vec())
+                .unwrap();
+        }
+
+        rp_link(manager, id, &live).unwrap();
+        {
+            let mut vm = manager.vms.get_mut(id).unwrap();
+            for (name, package) in [("projection-boot", &boot), ("projection-live", &live)] {
+                assert_eq!(
+                    vm.kernel.read_file(&command(name)).unwrap(),
+                    fs::read(package.path().join("bin").join(name)).unwrap()
+                );
+            }
+            let listing = vm.kernel.read_dir("/opt/agentos/bin").unwrap();
+            for name in ["guest-tool", "projection-boot", "projection-live"] {
+                assert!(listing.contains(&name.to_owned()), "{listing:?}");
+            }
+        }
+
+        let before = rp_state(manager, id);
+        let error = rp_link_as(manager, id, &blocked, "blocked-projection").unwrap_err();
+        assert!(!error.to_string().contains("rollback failed"), "{error}");
+        assert_eq!(rp_state(manager, id), before);
+        {
+            let mut vm = manager.vms.get_mut(id).unwrap();
+            assert_eq!(
+                vm.kernel.read_file(&command("projection-live")).unwrap(),
+                fs::read(live.path().join("bin/projection-live")).unwrap()
+            );
+            assert!(!vm.kernel.exists_for_operator(&command("projection-blocked")).unwrap());
+        }
+
+        rp_unlink(manager, id, "live-projection").unwrap();
+        let mut vm = manager.vms.get_mut(id).unwrap();
+        assert_eq!(
+            vm.kernel
+                .filesystem()
+                .inner()
+                .lstat(&command("projection-live"))
+                .unwrap_err()
+                .code(),
+            "ENOENT"
+        );
+        assert_eq!(
+            vm.kernel.read_file(&command("projection-boot")).unwrap(),
+            fs::read(boot.path().join("bin/projection-boot")).unwrap()
+        );
+        assert_eq!(vm.kernel.read_file(&command("guest-tool")).unwrap(), b"guest");
+    });
 }

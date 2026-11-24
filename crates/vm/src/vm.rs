@@ -4091,13 +4091,14 @@ where
                 vm.limits.agentos_packages.max_mounts,
             )?;
             // The builder has checked this sum before appending each leaf.
-            owned_mount_count += mounts.len();
+            owned_mount_count += mounts.len() + descriptor.commands.len();
             package_mountpoint_paths.insert(
                 id.clone(),
                 mounts.iter().map(|mount| mount.guest_path.clone()).collect::<BTreeSet<_>>(),
             );
             effective_mounts.extend(mounts);
         }
+        effective_mounts.extend(package_command_dir_descriptors(&package_descriptors, &package_mount_roots)?);
         check_package_mount_limit(
             &vm_id,
             0,
@@ -4360,13 +4361,7 @@ where
             vm.package_descriptors.iter().map(|(_, descriptor)| descriptor)
                 .chain(std::iter::once(&descriptor)),
         )?;
-        let existing_mounts = vm.package_mount_paths.values().try_fold(0usize, |total, paths| {
-            total.checked_add(paths.len()).ok_or(VmError::PackageMountLimit {
-                used: total,
-                requested: paths.len(),
-                limit: vm.limits.agentos_packages.max_mounts,
-            })
-        })?;
+        let existing_mounts = package_projection_entries(vm)?;
         let new_mounts = build_complete_package_projection(
             &vm_id,
             &descriptor,
@@ -4377,7 +4372,7 @@ where
         check_package_mount_limit(
             &vm_id,
             existing_mounts,
-            new_mounts.len(),
+            new_mounts.len() + descriptor.commands.len(),
             vm.limits.agentos_packages.max_mounts,
         )?;
         let mut new_mount_paths = BTreeSet::new();
@@ -4393,19 +4388,22 @@ where
                 .iter()
                 .any(|existing| normalize_path(&existing.guest_path) == normalize_path(&mount.guest_path))
             {
-                if let Some(command) = mount
-                    .guest_path
-                    .strip_prefix(crate::package_projection::OPT_AGENTOS_BIN)
-                    .and_then(|path| path.strip_prefix('/'))
-                    .filter(|path| !path.is_empty())
-                {
-                    return Err(VmError::InvalidState(format!(
-                        "command {command:?} is already provided by another package"
-                    )));
-                }
                 return Err(VmError::InvalidState(format!(
                     "agentos package mount already exists at {}",
                     mount.guest_path
+                )));
+            }
+        }
+        // A mount at a command's path would shadow its link in the command dir.
+        let links = crate::package_projection::package_command_links(
+            &descriptor,
+            crate::package_projection::OPT_AGENTOS_ROOT,
+        );
+        for (target, link) in descriptor.commands.iter().zip(links) {
+            if vm.configuration.mounts.iter().any(|existing| normalize_path(&existing.guest_path) == link.guest_path) {
+                return Err(VmError::InvalidState(format!(
+                    "command {:?} is already provided by another mount",
+                    target.command
                 )));
             }
         }
@@ -4426,7 +4424,13 @@ where
         next_roots.insert(payload.package_id.clone(), crate::package_projection::OPT_AGENTOS_ROOT.to_owned());
         let mut next_paths = vm.package_mount_paths.clone();
         next_paths.insert(payload.package_id.clone(), new_mount_paths);
-        reconcile_mounts(&mount_plugins, vm, &[], &new_mounts, mount_context,
+        // Swap the shared command dirs for ones that include the new commands.
+        let previous_command_dirs = vm.configuration.mounts.iter()
+            .filter(|mount| is_command_dir_mount(mount)).cloned().collect::<Vec<_>>();
+        let next_command_dirs = package_command_dir_descriptors(&next_packages, &next_roots)?;
+        let mut desired_mounts = new_mounts.clone();
+        desired_mounts.extend(next_command_dirs.iter().cloned());
+        reconcile_mounts(&mount_plugins, vm, &previous_command_dirs, &desired_mounts, mount_context,
             |vm, context, mounted, created| {
                 let aliases = mount_readonly_package_bin_aliases(
                     &mount_plugins, vm, &next_packages, &next_roots, &mut next_paths,
@@ -4436,7 +4440,9 @@ where
                     .ok_or_else(|| VmError::InvalidState(String::from("new package paths were not staged")))?
                     .intersection(created).cloned().collect();
                 refresh_package_runtime_state_for(vm, &next_packages, &next_roots)?;
+                vm.configuration.mounts.retain(|mount| !is_command_dir_mount(mount));
                 vm.configuration.mounts.extend(new_mounts.iter().cloned());
+                vm.configuration.mounts.extend(next_command_dirs.iter().cloned());
                 vm.configuration.mounts.extend(aliases);
                 vm.package_descriptors = next_packages;
                 vm.runtime_linked_package_ids.insert(payload.package_id.clone());
@@ -4541,10 +4547,18 @@ where
             database: vm.database.clone(), max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
             initial_root_metadata: None,
         };
-        reconcile_mounts(&mount_plugins, vm, &removed_mounts, &[], context,
+        // Swap the shared command dirs for ones without this package's commands.
+        let mut previous_mounts = removed_mounts;
+        previous_mounts.extend(vm.configuration.mounts.iter()
+            .filter(|mount| is_command_dir_mount(mount)).cloned());
+        let next_command_dirs = package_command_dir_descriptors(&next_packages, &next_roots)?;
+        reconcile_mounts(&mount_plugins, vm, &previous_mounts, &next_command_dirs, context,
             |vm, _, _, _| {
                 refresh_package_runtime_state_for(vm, &next_packages, &next_roots)?;
-                vm.configuration.mounts.retain(|mount| !target_paths.contains(&mount.guest_path));
+                vm.configuration.mounts.retain(|mount| {
+                    !target_paths.contains(&mount.guest_path) && !is_command_dir_mount(mount)
+                });
+                vm.configuration.mounts.extend(next_command_dirs.iter().cloned());
                 vm.package_descriptors = next_packages;
                 vm.runtime_linked_package_ids.remove(&payload.package_id);
                 vm.package_mount_roots = next_roots;
@@ -5441,14 +5455,21 @@ where
         .inner()
         .realpath("/bin")
         .map_err(vfs_error)?;
-    let mut used = owned_paths.values().try_fold(0usize, |used, paths| {
-        used.checked_add(paths.len())
-            .ok_or(VmError::PackageMountLimit {
+    // Command links count as entries though the shared command dir serves them.
+    let commands = packages
+        .iter()
+        .map(|(_, descriptor)| descriptor.commands.len());
+    let mut used = owned_paths
+        .values()
+        .map(BTreeSet::len)
+        .chain(commands)
+        .try_fold(0usize, |used, entries| {
+            used.checked_add(entries).ok_or(VmError::PackageMountLimit {
                 used,
-                requested: paths.len(),
+                requested: entries,
                 limit: vm.limits.agentos_packages.max_mounts,
             })
-    })?;
+        })?;
     let mut aliases = Vec::new();
     for (id, descriptor) in packages {
         let mount_root = mount_roots.get(id).ok_or_else(|| {
@@ -5839,6 +5860,7 @@ where
                     .guest_source(mount.guest_source.clone())
                     .guest_fstype(mount.guest_fstype.clone())
                     .read_only(mount.read_only)
+                    .entry_overlay(is_symlink_dir_mount_config(&mount.plugin.id, &config_value))
                     .max_bytes(max_filesystem_bytes)
                     .max_inodes(max_inode_count),
             )
@@ -5922,7 +5944,8 @@ fn mount_path_depth(path: &str) -> usize {
 /// The projection mounts the package tar directly and serves derived aliases as
 /// synthetic symlink leaves. This eliminates extraction and the old host-disk
 /// symlink farm: the tar VFS indexes member offsets once and reads mmap-backed
-/// byte ranges. Each managed entry is a granular leaf mount, while parent dirs
+/// byte ranges. Each `current`/manpage alias is a granular leaf mount; command
+/// links are served by `package_command_dir_descriptors` instead. Parent dirs
 /// such as `/opt/agentos/bin` and `/opt/agentos/pkgs/<pkg>` remain writable
 /// overlay dirs so guest-installed commands can coexist beside managed entries.
 fn build_packages_projection(
@@ -5962,7 +5985,13 @@ fn build_complete_package_projection(
         },
         other => other,
     })?;
-    append_package_provides_mounts(&mut mounts, std::slice::from_ref(package), used, max_mounts)?;
+    // Command links are served by the shared command dir but count as entries.
+    append_package_provides_mounts(
+        &mut mounts,
+        std::slice::from_ref(package),
+        used.saturating_add(package.commands.len()),
+        max_mounts,
+    )?;
     Ok(mounts)
 }
 
@@ -6112,7 +6141,90 @@ fn package_leaf_mount_to_descriptor(
                 },
             }
         }
+        crate::package_projection::PackageLeafMount::SymlinkDir {
+            guest_path,
+            entries,
+        } => MountDescriptor {
+            guest_path,
+            guest_source: String::from("agentos_packages"),
+            guest_fstype: String::from("agentos_packages"),
+            read_only: true,
+            plugin: MountPluginDescriptor {
+                id: String::from("agentos_packages"),
+                config: serde_json::json!({
+                    "kind": SYMLINK_DIR_MOUNT_KIND,
+                    "entries": entries,
+                })
+                .to_string(),
+            },
+        },
     }
+}
+
+const SYMLINK_DIR_MOUNT_KIND: &str = "symlinkDir";
+
+/// The package `symlinkDir` mounts are entry overlays: they own only their
+/// command names, and the directory stays on the parent filesystem.
+fn is_symlink_dir_mount_config(plugin_id: &str, config: &serde_json::Value) -> bool {
+    plugin_id == "agentos_packages"
+        && config.get("kind").and_then(serde_json::Value::as_str) == Some(SYMLINK_DIR_MOUNT_KIND)
+}
+
+/// Shared `<root>/bin` command dirs are rebuilt from the package set on every
+/// link and unlink.
+pub(crate) fn is_command_dir_mount(mount: &MountDescriptor) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Kind {
+        kind: Option<String>,
+    }
+    mount.plugin.id == "agentos_packages"
+        && serde_json::from_str::<Kind>(&mount.plugin.config)
+            .is_ok_and(|config| config.kind.as_deref() == Some(SYMLINK_DIR_MOUNT_KIND))
+}
+
+/// One `symlinkDir` mount per projection root that has commands.
+fn package_command_dir_descriptors(
+    packages: &[(String, crate::package_projection::PackageDescriptor)],
+    mount_roots: &BTreeMap<String, String>,
+) -> Result<Vec<MountDescriptor>, VmError> {
+    let mut links = Vec::new();
+    for (id, descriptor) in packages {
+        let mount_root = mount_roots.get(id).ok_or_else(|| {
+            VmError::InvalidState(format!(
+                "software package {id:?} is missing its projection root"
+            ))
+        })?;
+        links.extend(crate::package_projection::package_command_links(
+            descriptor, mount_root,
+        ));
+    }
+    Ok(crate::package_projection::command_dir_mounts(links)
+        .into_iter()
+        .map(package_leaf_mount_to_descriptor)
+        .collect())
+}
+
+/// Projection entries counted by `limits.agentosPackages.maxMounts`: each
+/// package-owned mount plus each command link.
+fn package_projection_entries(vm: &VmState) -> Result<usize, VmError> {
+    let limit = vm.limits.agentos_packages.max_mounts;
+    let commands = vm
+        .package_descriptors
+        .iter()
+        .map(|(_, descriptor)| descriptor.commands.len());
+    vm.package_mount_paths
+        .values()
+        .map(BTreeSet::len)
+        .chain(commands)
+        .try_fold(0usize, |total, entries| {
+            total
+                .checked_add(entries)
+                .ok_or(VmError::PackageMountLimit {
+                    used: total,
+                    requested: entries,
+                    limit,
+                })
+        })
 }
 
 fn package_descriptors_from_wire(

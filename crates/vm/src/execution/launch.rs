@@ -424,7 +424,7 @@ pub(super) fn resolve_javascript_command_entrypoint(
         .configuration
         .mounts
         .iter()
-        .filter(|mount| mount.plugin.id == "agentos_packages")
+        .filter(|mount| is_package_content_mount(mount))
         .map(|mount| normalize_path(&mount.guest_path))
         .collect::<Vec<_>>();
     let resolved_guest_entrypoint = resolve_javascript_command_entrypoint_inner(
@@ -3705,10 +3705,16 @@ pub(super) fn resolve_agentos_package_javascript_launch_entrypoint(
     Ok(package_entrypoint.then_some(module_mode_entrypoint))
 }
 
+/// Package mounts that hold package files. The shared command dir holds only
+/// links into them, and guest files beside those links are not package files.
+fn is_package_content_mount(mount: &crate::protocol::MountDescriptor) -> bool {
+    mount.plugin.id == "agentos_packages" && !crate::vm::is_command_dir_mount(mount)
+}
+
 fn guest_path_is_within_agentos_package_mount(vm: &VmState, guest_path: &str) -> bool {
     let normalized = normalize_path(guest_path);
     vm.configuration.mounts.iter().any(|mount| {
-        mount.plugin.id == "agentos_packages" && {
+        is_package_content_mount(mount) && {
             let guest_root = normalize_path(&mount.guest_path);
             normalized == guest_root || normalized.starts_with(&format!("{guest_root}/"))
         }

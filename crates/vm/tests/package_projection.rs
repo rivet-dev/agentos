@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 
 use agentos_vfs_core::package_format::pack::pack_aospkg_from_tar;
 use agentos_vm::package_projection::{
-    build_package_leaf_mounts, package_provides_file_mount, read_package_manifest,
-    read_package_manifest_from_path, PackageLeafMount, DEFAULT_PACKAGE_TAR_NAME,
+    build_package_leaf_mounts, command_dir_mounts, package_command_links,
+    package_provides_file_mount, read_package_manifest, read_package_manifest_from_path,
+    PackageLeafMount, DEFAULT_PACKAGE_TAR_NAME,
 };
 use tar::Builder;
 
@@ -172,7 +173,8 @@ fn builds_tar_current_bin_and_manpage_leaf_mounts() {
     finalize_package_tar(&pkg);
     let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
 
-    let mounts = build_package_leaf_mounts(&[descriptor], "/opt/agentos").unwrap();
+    let mounts =
+        build_package_leaf_mounts(std::slice::from_ref(&descriptor), "/opt/agentos").unwrap();
     assert!(mounts.iter().any(|mount| matches!(
         mount,
         PackageLeafMount::Tar { guest_path, root, .. }
@@ -183,12 +185,7 @@ fn builds_tar_current_bin_and_manpage_leaf_mounts() {
         PackageLeafMount::SingleSymlink { guest_path, target }
             if guest_path == "/opt/agentos/pkgs/demo/current" && target == "2.0.0"
     )));
-    assert!(mounts.iter().any(|mount| matches!(
-        mount,
-        PackageLeafMount::SingleSymlink { guest_path, target }
-            if guest_path == "/opt/agentos/bin/demo"
-                && target == "../pkgs/demo/current/bin/demo"
-    )));
+    assert_demo_command_dir(&descriptor);
     assert!(mounts.iter().any(|mount| matches!(
         mount,
         PackageLeafMount::SingleSymlink { guest_path, target }
@@ -203,7 +200,8 @@ fn builds_host_dir_leaf_mount_for_dir_only_transition_packages() {
     write_package(&pkg, "demo", "2.0.0", &["demo"]);
     let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
 
-    let mounts = build_package_leaf_mounts(&[descriptor], "/opt/agentos").unwrap();
+    let mounts =
+        build_package_leaf_mounts(std::slice::from_ref(&descriptor), "/opt/agentos").unwrap();
     assert!(mounts.iter().any(|mount| matches!(
         mount,
         PackageLeafMount::HostDir { guest_path, host_path }
@@ -215,12 +213,23 @@ fn builds_host_dir_leaf_mount_for_dir_only_transition_packages() {
         PackageLeafMount::SingleSymlink { guest_path, target }
             if guest_path == "/opt/agentos/pkgs/demo/current" && target == "2.0.0"
     )));
-    assert!(mounts.iter().any(|mount| matches!(
-        mount,
-        PackageLeafMount::SingleSymlink { guest_path, target }
-            if guest_path == "/opt/agentos/bin/demo"
-                && target == "../pkgs/demo/current/bin/demo"
-    )));
+    assert_demo_command_dir(&descriptor);
+}
+
+/// Command links are not leaf mounts: one shared dir mount serves them.
+fn assert_demo_command_dir(descriptor: &agentos_vm::package_projection::PackageDescriptor) {
+    let dirs = command_dir_mounts(package_command_links(descriptor, "/opt/agentos"));
+    assert_eq!(
+        dirs,
+        vec![PackageLeafMount::SymlinkDir {
+            guest_path: String::from("/opt/agentos/bin"),
+            entries: [(
+                String::from("demo"),
+                String::from("../pkgs/demo/current/bin/demo"),
+            )]
+            .into(),
+        }]
+    );
 }
 
 #[test]
@@ -263,7 +272,8 @@ fn package_leaf_builder_honors_adjustable_limit() {
         3,
     )
     .unwrap();
-    assert_eq!(mounts.len(), 3);
+    // The command link counts toward the limit but is served by the shared dir.
+    assert_eq!(mounts.len(), 2);
 }
 
 #[test]

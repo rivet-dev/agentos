@@ -22,7 +22,9 @@ The verified content digest becomes the package identity.
 
 The sidecar projects installed packages under
 `/opt/agentos/pkgs/<name>/<version>` and command links under
-`/opt/agentos/bin`. `software.list` reads the current installed set.
+`/opt/agentos/bin`. One read-only mount serves all command links, so
+`/proc/mounts` lists `/opt/agentos/bin` once; the directory stays writable for
+files the guest adds beside them. `software.list` reads the current installed set.
 `software.install` and `software.uninstall` are durable config mutations, so
 they use the same revision checks and reconciliation as `config.patch`.
 
