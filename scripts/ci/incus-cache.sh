@@ -4,13 +4,10 @@ set -euo pipefail
 test -n "${CI_CACHE_ROOT:-}"
 test -n "${GITHUB_ENV:-}"
 scope=$(printf '%s' "$GITHUB_REPOSITORY/$GITHUB_WORKFLOW/$GITHUB_JOB" | sha256sum | cut -c1-20)
+# PRs and main share one scope: each runner slot runs one job at a time, so its
+# cache directory is never used concurrently, and fork PRs never reach these
+# runners. Outputs stay correct because every cache below is keyed by inputs.
 docker_scope=$CI_SLOT
-if [[ ${GITHUB_REF:-} == refs/pull/*/merge ]]; then
-  pr=${GITHUB_REF#refs/pull/}
-  pr=${pr%/merge}
-  scope="$scope-pr-$pr"
-  docker_scope="$CI_SLOT-pr-$pr"
-fi
 cache="$CI_CACHE_ROOT/$scope"
 mkdir -p "$cache"
 touch "$cache"
@@ -35,8 +32,7 @@ echo "$cache/cargo/bin" >> "$GITHUB_PATH"
 if [ "${1:-raw}" = wasm ]; then
   # Toolchain/C caches are exact-input namespaces: a new SDK/patch/lockfile or
   # software source cannot accidentally reuse a stale vendor/sysroot directory.
-  digest=$(git ls-files -z toolchain software Cargo.lock rust-toolchain.toml |
-    xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+  digest=$(bash scripts/ci/wasm-inputs-digest.sh)
   wasm="$cache/wasm-$digest"
   for dir in target vendor .cargo c/vendor c/libs c/.cache c/build c/sysroot; do
     attach "$wasm/$dir" "toolchain/$dir"

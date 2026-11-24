@@ -32,6 +32,8 @@ function evaluate(expression, { event, base = "main", labels = [] }) {
 			String(labels.includes("aggregate-ci")),
 		)
 		.replaceAll("always()", "true")
+		// Selection is asserted for a cache miss, where every build step runs.
+		.replaceAll("steps.wasm-outputs.outputs.cache-matched-key == ''", "true")
 		.replaceAll("github.event_name", JSON.stringify(event))
 		.replaceAll("github.base_ref", JSON.stringify(base));
 	assert.match(resolved, /^(?:true|false|"[\w-]+"|'[\w-]+'|[\s!=&|()])+$/);

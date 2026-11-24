@@ -133,23 +133,50 @@ jobs:
           workspaces: toolchain -> target
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...' --filter '@agentos-software/*'
+      # The WASM build only depends on the toolchain and per-package native
+      # sources. Restore its finished outputs by the digest of those inputs and
+      # skip every make step on a hit. GitHub scopes caches by branch: PRs read
+      # main's entries, and nothing a PR saves is visible to main.
+      - name: Hash the WASM build inputs
+        id: wasm-inputs
+        run: |
+          if ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')) }}; then mode=full; else mode=pr; fi
+          digest=$(bash scripts/ci/wasm-inputs-digest.sh)
+          echo "key=wasm-outputs-v1-${{ runner.os }}-${{ runner.arch }}-$mode-$digest" >> "$GITHUB_OUTPUT"
+          echo "full-key=wasm-outputs-v1-${{ runner.os }}-${{ runner.arch }}-full-$digest" >> "$GITHUB_OUTPUT"
+      - name: Restore WASM build outputs
+        id: wasm-outputs
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ steps.wasm-inputs.outputs.key }}
+          # A PR-mode build can reuse a complete build of the same inputs.
+          restore-keys: ${{ steps.wasm-inputs.outputs.full-key }}
+          path: |
+            toolchain/target/wasm32-wasip1/release/commands
+            toolchain/c/build/awk.COPYING
+            toolchain/c/build/pthread_conformance.wasm
+            toolchain/c/build/pthread_benchmark.wasm
+            toolchain/c/build/exec_variants
+            toolchain/c/build/conformance
+            ${{ runner.temp }}/agentos-software-build-inputs.tar.gz
+            ${{ runner.temp }}/agentos-software-build-inputs.sha256
       - name: Build the default software PR command corpus
-        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: steps.wasm-outputs.outputs.cache-matched-key == '' && (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'aggregate-ci'))
         run: make -C toolchain pr-commands
       - name: Build the complete command corpus
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: steps.wasm-outputs.outputs.cache-matched-key == '' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci'))
         run: make -C toolchain commands
       # DuckDB and Vim are intentionally outside the default command set because
       # they are heavy builds, but the runtime/parity suites require their real
       # command artifacts.
       - name: Build required heavy integration commands
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: steps.wasm-outputs.outputs.cache-matched-key == '' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci'))
         run: make -C toolchain cmd/duckdb cmd/vim
       - name: Build mandatory threaded-WASM conformance fixtures
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: steps.wasm-outputs.outputs.cache-matched-key == '' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci'))
         run: make -C toolchain/c pthread-conformance-wasm pthread-benchmark-wasm
       - name: Stage native/WASM C parity fixtures
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: steps.wasm-outputs.outputs.cache-matched-key == '' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci'))
         run: make -C toolchain/c conformance-artifacts
       - name: Stage the default software PR command corpus
         if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
@@ -175,7 +202,7 @@ jobs:
           for artifact in "${default_packages[@]}"; do test -s "$artifact" || exit 1; done
           tar -czf /tmp/agentos-default-software.tar.gz "${default_packages[@]}"
       - name: Package pinned software build inputs
-        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
+        if: steps.wasm-outputs.outputs.cache-matched-key == '' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci'))
         run: |
           # Both sources already exist from this job's real Git/Vim builds.
           test -f toolchain/c/libs/vim/runtime/defaults.vim
@@ -216,6 +243,20 @@ jobs:
           ) > "$RUNNER_TEMP/agentos-software-build-inputs.sha256"
           cp "$RUNNER_TEMP/agentos-software-build-inputs.sha256" "$RUNNER_TEMP/agentos-software-build-inputs/"
           tar -C "$RUNNER_TEMP/agentos-software-build-inputs" -czf "$RUNNER_TEMP/agentos-software-build-inputs.tar.gz" .
+      - name: Save WASM build outputs
+        if: steps.wasm-outputs.outputs.cache-matched-key == ''
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: ${{ steps.wasm-inputs.outputs.key }}
+          path: |
+            toolchain/target/wasm32-wasip1/release/commands
+            toolchain/c/build/awk.COPYING
+            toolchain/c/build/pthread_conformance.wasm
+            toolchain/c/build/pthread_benchmark.wasm
+            toolchain/c/build/exec_variants
+            toolchain/c/build/conformance
+            ${{ runner.temp }}/agentos-software-build-inputs.tar.gz
+            ${{ runner.temp }}/agentos-software-build-inputs.sha256
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
         with:
