@@ -73,7 +73,7 @@ fn validate(limits: &GuestBridgeLimits) -> Result<(), String> {
 }
 
 fn limits_from_object(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     object: v8::Local<v8::Object>,
 ) -> Result<GuestBridgeLimits, String> {
     let mut values = [0; 4];
@@ -115,7 +115,7 @@ fn limits_from_object(
 }
 
 fn invoke(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     installer: v8::Local<v8::Function>,
     limits: &GuestBridgeLimits,
 ) -> Result<(), String> {
@@ -135,7 +135,7 @@ fn invoke(
             return Err("bridge policy object installation failed".into());
         }
     }
-    let tc = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(tc, scope);
     let receiver = v8::undefined(tc);
     if installer
         .call(tc, receiver.into(), &[object.into()])
@@ -153,7 +153,7 @@ fn invoke(
 /// Capture/hide and install BEFORE any snapshot userland. The serialized tuple
 /// contains a V8 function plus exactly four primitives, never a VM id or Global.
 pub(crate) fn capture_installer<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
 ) -> Result<Option<v8::Local<'s, v8::Array>>, String> {
     let context = scope.get_current_context();
     let global = context.global(scope);
@@ -217,7 +217,7 @@ pub(crate) fn capture_installer<'s>(
 /// Preserve the existing cold bridge compiler/cache and its original errors.
 /// The session calls this inside the original watchdog lifecycle.
 pub(crate) fn prepare(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     supplied: Option<&GuestBridgePolicy>,
     from_snapshot: bool,
     bridge_code: &str,
@@ -260,7 +260,7 @@ pub(crate) fn prepare(
 /// Called after bridge bindings are ready, before trusted init/prelude or guest.
 /// The context slot contains plain Rust values only, with no rooting-handle cycle.
 pub(crate) fn install(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     supplied: Option<&GuestBridgePolicy>,
     from_snapshot: bool,
     bridge_code: &str,
@@ -274,7 +274,7 @@ pub(crate) fn install(
     validate(&expected.limits)?;
     let context = scope.get_current_context();
     if let Some(installed) = context.get_slot::<InstalledPolicy>() {
-        return if installed == &expected {
+        return if installed.as_ref() == &expected {
             Ok(())
         } else {
             Err("bridge policy owner or limits changed; create a new execution context".into())
@@ -326,7 +326,10 @@ pub(crate) fn install(
         // An actual policy-aware bridge must never silently skip installation.
         return Err("required native bridge policy initializer unavailable".into());
     }
-    if !context.set_slot(expected) {
+    // The initializer ran guest callbacks above. Preserve any policy installed
+    // during that call rather than overwriting a newly pinned owner.
+    if let Some(previous) = context.set_slot(std::rc::Rc::new(expected)) {
+        drop(context.set_slot(previous));
         return Err("bridge policy context state unexpectedly replaced".into());
     }
     Ok(())

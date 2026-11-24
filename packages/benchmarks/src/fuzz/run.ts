@@ -12,9 +12,13 @@ export async function runFuzz(options: { iterations: number; warmup: number }) {
 	const findings: Finding[] = [];
 	const refuted: RefutedCandidate[] = [];
 	const programs = generateSeedCorpus();
+	const skipped = programs
+		.filter((program) => program.family !== "process")
+		.map(({ id, family }) => ({ id, family, reason: "No benchmark driver" }));
 	const vm = await createBenchVm();
 	try {
 		for (const program of programs) {
+			if (program.family !== "process") continue;
 			const result = await runProgram(
 				program,
 				vm,
@@ -55,7 +59,7 @@ export async function runFuzz(options: { iterations: number; warmup: number }) {
 	} finally {
 		await vm.dispose();
 	}
-	const out = { programs, findings, refuted };
+	const out = { programs, findings, refuted, skipped };
 	writeJson(`${RESULTS_DIR}/fuzz-findings.json`, out);
 	return out;
 }
@@ -66,16 +70,9 @@ async function runProgram(
 	iters: number,
 	warmup: number,
 ) {
-	if (program.family === "process") {
-		const node = stats(await runProcessProgramNode(program, iters, warmup));
-		const guest = stats(
-			await runProcessProgramGuest(program, vm, iters, warmup),
-		);
-		return { node, guest, emulation_ratio: round(guest.p50 / node.p50) };
-	}
-	const node = stats([1]);
-	const guest = stats([1]);
-	return { node, guest, emulation_ratio: 1 };
+	const node = stats(await runProcessProgramNode(program, iters, warmup));
+	const guest = stats(await runProcessProgramGuest(program, vm, iters, warmup));
+	return { node, guest, emulation_ratio: round(guest.p50 / node.p50) };
 }
 
 async function runProcessProgramNode(

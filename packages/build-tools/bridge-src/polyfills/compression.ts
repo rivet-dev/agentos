@@ -30,7 +30,13 @@ function compressionPair(format, decompress) {
 		throw error;
 	}
 	const zlib = globalThis.__agentOsBuiltinZlibModule;
-	const stream = zlib[methods[name]]();
+	const factory = zlib?.[methods[name]];
+	if (typeof factory !== "function") {
+		throw Object.assign(new Error("Web compression backend is unavailable"), {
+			code: "ERR_AGENTOS_COMPRESSION_BACKEND",
+		});
+	}
+	const stream = factory.call(zlib);
 	let readEnded = false,
 		writeEnded = false;
 	let readController: ReadableStreamDefaultController<Uint8Array>;

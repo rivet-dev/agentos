@@ -257,14 +257,17 @@ fn assert_command_parity(command: &str, args: &[&str]) -> (String, String, i32) 
         args,
         StandaloneWasmBackend::V8,
     );
-    let wasmtime = run_command(
-        &format!("software-{command}-wasmtime"),
-        command,
-        args,
-        StandaloneWasmBackend::Wasmtime,
-    );
-    assert_eq!(wasmtime, v8, "software command {command} diverged");
-    wasmtime
+    #[cfg(feature = "wasm-wasmtime")]
+    {
+        let wasmtime = run_command(
+            &format!("software-{command}-wasmtime"),
+            command,
+            args,
+            StandaloneWasmBackend::Wasmtime,
+        );
+        assert_eq!(wasmtime, v8, "software command {command} diverged");
+    }
+    v8
 }
 
 fn assert_command_parity_with_files(
@@ -279,15 +282,18 @@ fn assert_command_parity_with_files(
         extra_commands,
         StandaloneWasmBackend::V8,
     );
-    let wasmtime = run_command_with_files(
-        &format!("software-{command}-wasmtime"),
-        command,
-        args,
-        extra_commands,
-        StandaloneWasmBackend::Wasmtime,
-    );
-    assert_eq!(wasmtime, v8, "software command {command} diverged");
-    wasmtime
+    #[cfg(feature = "wasm-wasmtime")]
+    {
+        let wasmtime = run_command_with_files(
+            &format!("software-{command}-wasmtime"),
+            command,
+            args,
+            extra_commands,
+            StandaloneWasmBackend::Wasmtime,
+        );
+        assert_eq!(wasmtime, v8, "software command {command} diverged");
+    }
+    v8
 }
 
 fn run_curl_http_backend(backend: StandaloneWasmBackend) -> (String, String, i32) {
@@ -508,8 +514,11 @@ fn vim_batch_edit_matches_v8_wasm() {
 #[ignore = "requires the generated curl command artifact"]
 fn curl_network_path_matches_v8_wasm() {
     let v8 = run_curl_http_backend(StandaloneWasmBackend::V8);
-    let wasmtime = run_curl_http_backend(StandaloneWasmBackend::Wasmtime);
-    assert_eq!(wasmtime, v8, "curl HTTP behavior diverged");
-    assert_eq!(wasmtime.2, 0, "stderr: {}", wasmtime.1);
-    assert_eq!(wasmtime.0, "agentos-network-path\n");
+    #[cfg(feature = "wasm-wasmtime")]
+    {
+        let wasmtime = run_curl_http_backend(StandaloneWasmBackend::Wasmtime);
+        assert_eq!(wasmtime, v8, "curl HTTP behavior diverged");
+    }
+    assert_eq!(v8.2, 0, "stderr: {}", v8.1);
+    assert_eq!(v8.0, "agentos-network-path\n");
 }

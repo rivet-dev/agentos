@@ -23,14 +23,16 @@ jobs:
       AGENTOS_SKIP_NATIVE_META_BUILD: '1'
       AGENTOS_CI_CODE_ONLY_BUILD: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: dtolnay/rust-toolchain@01e2821fc38dbca62c2557c927b33938a2e005fd # 1.98.1
         with:
           components: rustfmt
       - run: pnpm install --frozen-lockfile
@@ -41,6 +43,7 @@ jobs:
             --concurrency=4
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
+      - run: python3 -B -m unittest discover -s scripts/ci/v8
       - run: node --test scripts/check-rust-package-metadata.test.mjs
       - run: node scripts/check-rust-package-metadata.mjs
       - run: node --test scripts/check-agentos-client-protocol-compat.test.mjs
@@ -71,7 +74,7 @@ jobs:
             --exclude='software/*/dist/package.aospkg' \
             -czf /tmp/agentos-js-dist.tar.gz \
             packages/*/dist software/*/dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: js-dist
           path: /tmp/agentos-js-dist.tar.gz
@@ -84,9 +87,11 @@ jobs:
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: depot-ubuntu-24.04-8
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -106,12 +111,12 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"channel={channel}\n")
           PYTHON
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
         with:
           toolchain: ${{ steps.wasm-toolchain.outputs.channel }}
           components: rust-src
           targets: wasm32-wasip1
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: toolchain -> target
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
@@ -199,7 +204,7 @@ jobs:
           ) > "$RUNNER_TEMP/agentos-software-build-inputs.sha256"
           cp "$RUNNER_TEMP/agentos-software-build-inputs.sha256" "$RUNNER_TEMP/agentos-software-build-inputs/"
           tar -C "$RUNNER_TEMP/agentos-software-build-inputs" -czf "$RUNNER_TEMP/agentos-software-build-inputs.tar.gz" .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
         with:
           name: software-build-inputs
@@ -207,28 +212,28 @@ jobs:
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
         with:
           name: wasm-commands
           path: packages/core/commands
           retention-days: 1
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: default-software
           path: /tmp/agentos-default-software.tar.gz
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
         with:
           name: wasm-command-licenses
           path: toolchain/c/build/awk.COPYING
           retention-days: 1
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
         with:
           name: wasm-thread-fixtures
@@ -237,7 +242,7 @@ jobs:
             toolchain/c/build/pthread_benchmark.wasm
             toolchain/c/build/exec_variants
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
         with:
           name: wasm-c-parity-fixtures
@@ -245,6 +250,9 @@ jobs:
           if-no-files-found: error
 
   executor-feature-isolation:
+    permissions:
+      contents: read
+      actions: read
     name: Executor Feature Isolation
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: ubuntu-latest
@@ -252,17 +260,23 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: feature-isolation-${{ hashFiles('Cargo.lock') }}
       - name: Install V8 bridge build dependencies
@@ -298,6 +312,9 @@ jobs:
           done
 
   rust-clippy:
+    permissions:
+      contents: read
+      actions: read
     name: Rust Clippy
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: ubuntu-latest
@@ -305,22 +322,31 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: dtolnay/rust-toolchain@01e2821fc38dbca62c2557c927b33938a2e005fd # 1.98.1
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Install V8 bridge build dependencies
         run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-build-tools...'
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   rust:
+    permissions:
+      contents: read
+      actions: read
     name: Rust
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     runs-on: ubuntu-latest
@@ -328,17 +354,23 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: dtolnay/rust-toolchain@01e2821fc38dbca62c2557c927b33938a2e005fd # 1.98.1
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Install V8 bridge build dependencies
         run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-build-tools...'
       - name: Verify generated VM config bindings
@@ -408,7 +440,7 @@ jobs:
           mkdir -p ci-artifacts/agentos-sidecar
           cp target/debug/agentos-sidecar ci-artifacts/agentos-sidecar/agentos-sidecar
           strip --strip-all ci-artifacts/agentos-sidecar/agentos-sidecar
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agentos-sidecar
           path: ci-artifacts/agentos-sidecar/agentos-sidecar
@@ -422,15 +454,17 @@ jobs:
     env:
       AGENTOS_SKIP_NATIVE_META_BUILD: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: js-dist
           path: ci-artifacts/js
@@ -447,23 +481,25 @@ jobs:
     env:
       AGENTOS_SKIP_NATIVE_META_BUILD: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...' --filter 'secure-exec...' --filter '@rivet-dev/agentos-toolchain...'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: js-dist
           path: ci-artifacts/js
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: agentos-sidecar
           path: ci-artifacts/agentos-sidecar
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: default-software
           path: ci-artifacts/default-software
@@ -515,8 +551,9 @@ jobs:
     outputs:
       changed: ${{ steps.changes.outputs.changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - id: changes
         env:
@@ -542,14 +579,16 @@ jobs:
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - run: pnpm install --frozen-lockfile
       - name: Rehearse crate publish
         run: pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates --rehearse
@@ -563,8 +602,9 @@ jobs:
     outputs:
       changed: ${{ steps.changes.outputs.changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - id: changes
         env:
@@ -583,6 +623,9 @@ jobs:
 
   # Slower than the PR budget, so it stays out of CI / Required.
   hosted-tests:
+    permissions:
+      contents: read
+      actions: read
     name: Hosted integration
     needs: [hosted-changes, checks, wasm-commands]
     if: ${{ always() && needs.checks.result == 'success' && needs.wasm-commands.result == 'success' && (github.event_name != 'pull_request' || needs.hosted-changes.outputs.changed == 'true') }}
@@ -593,23 +636,31 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@1.98.1
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: hosted-${{ hashFiles('Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos...' --filter '@rivet-dev/agentos-build-tools...' --filter '@rivet-dev/agentos-example-hosted...'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: js-dist
           path: ci-artifacts/js
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: default-software
           path: ci-artifacts/default-software
@@ -680,6 +731,9 @@ jobs:
           fi
 
   wasm-backend-matrix:
+    permissions:
+      contents: read
+      actions: read
     name: "WASM backend (${{ matrix.backend }})"
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
     needs: [wasm-commands]
@@ -698,35 +752,72 @@ jobs:
       AGENTOS_C_WASM_COMMANDS_DIR: ${{ github.workspace }}/toolchain/c/build/conformance
       XFSTESTS_ROOT: ${{ github.workspace }}/tests/xfstests/.work/xfstests
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install reviewed V8 archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: wasm-backend-${{ matrix.backend }}
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - name: Install native protocol fixture prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends g++-14 pkg-config openssh-server curl
+          sudo mkdir -p /run/sshd
+          /usr/bin/curl --version | grep -w sftp
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: curl-protocol-fixtures
+        with:
+          path: ${{ runner.temp }}/agentos-curl-protocol-fixtures
+          key: native-curl-protocol-v1-${{ runner.os }}-${{ runner.arch }}-gcc14-${{ hashFiles('toolchain/c/scripts/build-native-http3-fixture.sh', 'toolchain/c/scripts/check-generation-limit.sh') }}
+      - name: Build pinned native HTTP/3 fixtures
+        if: steps.curl-protocol-fixtures.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        env:
+          PREFIX: ${{ runner.temp }}/agentos-http3
+          CACHE_DIR: ${{ runner.temp }}/agentos-http3-sources
+          JOBS: '4'
+          NATIVE_CC: gcc-14
+          NATIVE_CXX: g++-14
+        run: |
+          bash toolchain/c/scripts/build-native-http3-fixture.sh
+          mkdir -p "$RUNNER_TEMP/agentos-curl-protocol-fixtures"
+          cp -L "$PREFIX/bin/curl" "$PREFIX/bin/nghttpx" "$RUNNER_TEMP/agentos-curl-protocol-fixtures/"
+      - name: Select native protocol fixtures
+        run: |
+          fixture_dir="$RUNNER_TEMP/agentos-curl-protocol-fixtures"
+          "$fixture_dir/curl" --version | grep -w HTTP3
+          "$fixture_dir/nghttpx" --version
+          printf 'AGENTOS_NATIVE_HTTP3_CURL=%s/curl\nAGENTOS_NGHTTPX_HTTP3_SERVER=%s/nghttpx\n' "$fixture_dir" "$fixture_dir" >> "$GITHUB_ENV"
+          printf 'SSHD=/usr/sbin/sshd\n' >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-commands
           path: packages/core/commands
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-command-licenses
           path: toolchain/c/build
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-thread-fixtures
           path: toolchain/c/build
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: wasm-c-parity-fixtures
           path: toolchain/c/build/conformance
       - name: Restore native C parity executable modes
         run: find toolchain/c/build/conformance/native -maxdepth 1 -type f -exec chmod 0755 '{}' +
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: software-build-inputs
           path: ci-artifacts/software-build-inputs
@@ -785,7 +876,7 @@ jobs:
           cargo test --release --locked -p agentos-actor --lib runtime::tests:: \
             -- --ignored --nocapture --test-threads=1
       - name: Run all sidecar tests through the selected VM backend
-        run: cargo test --release -p agentos-vm --features all-executors --tests -- --test-threads=1
+        run: cargo test --release -p agentos-vm --features all-executors --tests --no-fail-fast -- --test-threads=1
       - name: Run native-vs-WASM C conformance through the selected VM backend
         run: pnpm --dir packages/core exec vitest run --root ../.. toolchain/conformance/c-parity.test.ts --reporter=verbose --maxWorkers=1 --minWorkers=1
       - name: Run core WASM and cross-runtime integration serially

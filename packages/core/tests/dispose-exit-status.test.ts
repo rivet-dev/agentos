@@ -49,6 +49,12 @@ test("a process that exits while another process prints reports its real exit st
 	expect(exits).toEqual([{ pid, outcome: "exited", exitCode: 3 }]);
 	// The flood was still running, so the dispose killed it.
 	expect(floodExits).toEqual([
-		{ pid: flood.pid, outcome: "signalled", signal: "SIGKILL" },
+		{
+			pid: flood.pid,
+			outcome: "signalled",
+			signal: "SIGKILL",
+			exitCode: 137,
+			exitSignal: 9,
+		},
 	]);
 }, 60_000);

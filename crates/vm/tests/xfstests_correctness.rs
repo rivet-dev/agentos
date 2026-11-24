@@ -1784,6 +1784,17 @@ fn xfstests_wasi_xfs_io_links_open_and_unnamed_files() {
     );
     assert_eq!(exit_code, 0, "stdout: {stdout}\nstderr: {stderr}");
 
+    // Unnamed inodes belong to the default root filesystem. Custom writable
+    // mounts intentionally reject O_TMPFILE instead of exposing a backing file.
+    guest_filesystem_call(
+        &mut sidecar,
+        9,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        filesystem_request(GuestFilesystemOperation::CreateDir, "/unnamed-probe"),
+    );
+
     let (stdout, stderr, exit_code) = execute_command(
         &mut sidecar,
         6,
@@ -1799,8 +1810,8 @@ fn xfstests_wasi_xfs_io_links_open_and_unnamed_files() {
             "-c",
             "pread 0 4096",
             "-c",
-            "flink /mnt/test/unnamed-link",
-            "/mnt/test",
+            "flink /unnamed-probe/unnamed-link",
+            "/unnamed-probe",
         ],
     );
     assert_eq!(exit_code, 0, "stdout: {stdout}\nstderr: {stderr}");
@@ -1817,7 +1828,7 @@ fn xfstests_wasi_xfs_io_links_open_and_unnamed_files() {
         "sh",
         &[
             "-c",
-            "test -f /mnt/test/named-link && test -f /mnt/test/unnamed-link && test $(wc -c < /mnt/test/unnamed-link) -eq 4096 && ! ls -A /mnt/test | grep '^.agentos-tmpfile-'",
+            "test -f /mnt/test/named-link && test -f /unnamed-probe/unnamed-link && test $(wc -c < /unnamed-probe/unnamed-link) -eq 4096 && ! ls -A /unnamed-probe | grep '^.agentos-tmpfile-'",
         ],
     );
     assert_eq!(exit_code, 0, "stdout: {stdout}\nstderr: {stderr}");
@@ -1830,11 +1841,27 @@ fn xfstests_wasi_xfs_io_links_open_and_unnamed_files() {
         &vm_id,
         "xfstests-tmpfile-read-only",
         "xfs_io",
-        &["-Tr", "/mnt/test", "-c", "close"],
+        &["-Tr", "/unnamed-probe", "-c", "close"],
     );
     assert_ne!(exit_code, 0, "read-only O_TMPFILE unexpectedly succeeded");
     assert!(
         stderr.contains("Invalid argument"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+
+    let (stdout, stderr, exit_code) = execute_command(
+        &mut sidecar,
+        10,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "xfstests-tmpfile-custom-mount",
+        "xfs_io",
+        &["-T", "/mnt/test", "-c", "close"],
+    );
+    assert_ne!(exit_code, 0, "custom mount unexpectedly accepted O_TMPFILE");
+    assert!(
+        stderr.to_ascii_lowercase().contains("not supported"),
         "stdout: {stdout}\nstderr: {stderr}"
     );
 

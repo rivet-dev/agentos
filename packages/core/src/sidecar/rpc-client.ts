@@ -9,6 +9,7 @@ import type {
 	RootLowerInput,
 } from "../agent-os.js";
 import type { FilesystemEntry } from "../filesystem-snapshot.js";
+import { HostTextOutputCapture } from "../host-output-capture.js";
 import type { RootSnapshotExport } from "../layers.js";
 import type { ProcessForestRecord } from "../process-forest.js";
 import {
@@ -770,8 +771,7 @@ export class SidecarKernelProxy {
 			);
 		}
 
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
+		const capture = new HostTextOutputCapture(options?.maxCapturedOutputBytes);
 		const deadlineMs =
 			typeof options?.timeout === "number" &&
 			Number.isFinite(options.timeout) &&
@@ -810,12 +810,7 @@ export class SidecarKernelProxy {
 			return {
 				exitCode,
 				...(proc.exitSignal != null ? { exitSignal: proc.exitSignal } : {}),
-				stdout: Buffer.concat(
-					stdoutChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
-				stderr: Buffer.concat(
-					stderrChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
+				...capture.finish(),
 			};
 		};
 		const parsedCommandDriver = parsedCommand
@@ -839,11 +834,11 @@ export class SidecarKernelProxy {
 					stdin: undefined,
 					cwd: effectiveCwd,
 					onStdout: (chunk) => {
-						stdoutChunks.push(chunk);
+						capture.append("stdout", chunk);
 						options?.onStdout?.(chunk);
 					},
 					onStderr: (chunk) => {
-						stderrChunks.push(chunk);
+						capture.append("stderr", chunk);
 						options?.onStderr?.(chunk);
 					},
 				}),
@@ -854,11 +849,11 @@ export class SidecarKernelProxy {
 			stdin: undefined,
 			cwd: effectiveCwd,
 			onStdout: (chunk) => {
-				stdoutChunks.push(chunk);
+				capture.append("stdout", chunk);
 				options?.onStdout?.(chunk);
 			},
 			onStderr: (chunk) => {
-				stderrChunks.push(chunk);
+				capture.append("stderr", chunk);
 				options?.onStderr?.(chunk);
 			},
 		});
@@ -870,8 +865,7 @@ export class SidecarKernelProxy {
 		args: readonly string[] = [],
 		options?: KernelExecOptions,
 	): Promise<KernelExecResult> {
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
+		const capture = new HostTextOutputCapture(options?.maxCapturedOutputBytes);
 		const deadlineMs =
 			typeof options?.timeout === "number" &&
 			Number.isFinite(options.timeout) &&
@@ -898,12 +892,7 @@ export class SidecarKernelProxy {
 			return {
 				exitCode,
 				...(proc.exitSignal != null ? { exitSignal: proc.exitSignal } : {}),
-				stdout: Buffer.concat(
-					stdoutChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
-				stderr: Buffer.concat(
-					stderrChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
+				...capture.finish(),
 			};
 		};
 
@@ -918,11 +907,11 @@ export class SidecarKernelProxy {
 				stdin: undefined,
 				cwd: effectiveCwd,
 				onStdout: (chunk) => {
-					stdoutChunks.push(chunk);
+					capture.append("stdout", chunk);
 					options?.onStdout?.(chunk);
 				},
 				onStderr: (chunk) => {
-					stderrChunks.push(chunk);
+					capture.append("stderr", chunk);
 					options?.onStderr?.(chunk);
 				},
 			}),
@@ -1125,8 +1114,8 @@ export class SidecarKernelProxy {
 				}
 			},
 			onStderr: (chunk) => {
-				// `onData` is the ordered PTY rendering stream. `onStderr` remains an
-				// optional channel-specific diagnostic tap and must not also be rendered.
+				// Guest fd 1 and fd 2 share the ordered PTY stream. Non-PTY runtime
+				// diagnostics can still arrive here; do not render the tap a second time.
 				for (const handler of terminalHandlers) {
 					handler(chunk);
 				}
@@ -2031,7 +2020,11 @@ export class SidecarKernelProxy {
 		// a typed failure (pump, VM lifecycle, signal), or disposal wakes this.
 		// No timer and no sidecar request is held while the process runs.
 		entry.waitPromise = (async () => {
-			while (entry.exitCode === null && !entry.waitError && !this.disposed) {
+			while (
+				entry.exitCode === null &&
+				((this.disposing && !entry.launchRejected) ||
+					(!entry.waitError && !this.disposed))
+			) {
 				await new Promise<void>((resolve) => {
 					entry.wakeWait = () => {
 						entry.wakeWait = null;
@@ -2040,31 +2033,9 @@ export class SidecarKernelProxy {
 				});
 			}
 
-			if (entry.exitCode === null && this.disposing && !entry.launchRejected) {
-				// Disposal starts before TERM/KILL can publish an exit. Preserve a
-				// bounded opportunity for authoritative status instead of declaring
-				// failure at the moment disposal closes request admission.
-				await new Promise<void>((resolve) => {
-					const finish = () => {
-						clearTimeout(timer);
-						if (entry.wakeWait === wake) entry.wakeWait = null;
-						resolve();
-					};
-					const wake = () => {
-						if (
-							entry.exitCode !== null ||
-							entry.launchRejected ||
-							!this.disposing
-						)
-							finish();
-					};
-					const timer = setTimeout(
-						finish,
-						DEFAULT_VM_DISPOSE_EXIT_CONFIRMATION_TIMEOUT_MS,
-					);
-					entry.wakeWait = wake;
-				});
-			}
+			// disposeInternal owns the bounded TERM/KILL and final event drain.
+			// Its terminal transition wakes this waiter; starting a second timer
+			// here could reject before the sidecar's authoritative exit arrives.
 
 			if (entry.exitCode !== null) return entry.exitCode;
 			throw (

@@ -206,6 +206,13 @@ impl ProcessHostCapabilitySet {
         self.process
     }
 
+    /// Fixed request ceiling when this capability uses the common event lane.
+    pub fn request_byte_limit(&self) -> Option<usize> {
+        self.event_submission
+            .as_ref()
+            .map(ExecutionEventSubmitHandle::request_byte_limit)
+    }
+
     pub fn admit_request(
         &self,
         retained_bytes: usize,

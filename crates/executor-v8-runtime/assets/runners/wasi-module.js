@@ -62,6 +62,17 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
   const __agentOSWasiFdflagsNonblock = 4;
   const __agentOSWasiRightFdRead = 1n << 1n;
   const __agentOSWasiRightFdWrite = 1n << 6n;
+  const __agentOSWasiRightPathCreateDirectory = 1n << 9n;
+  const __agentOSWasiRightPathCreateFile = 1n << 10n;
+  const __agentOSWasiRightPathLinkSource = 1n << 11n;
+  const __agentOSWasiRightPathLinkTarget = 1n << 12n;
+  const __agentOSWasiRightPathOpen = 1n << 13n;
+  const __agentOSWasiRightPathFilestatSetSize = 1n << 19n;
+  const __agentOSWasiRightPathRenameSource = 1n << 16n;
+  const __agentOSWasiRightPathRenameTarget = 1n << 17n;
+  const __agentOSWasiRightPathSymlink = 1n << 24n;
+  const __agentOSWasiRightPathRemoveDirectory = 1n << 25n;
+  const __agentOSWasiRightPathUnlinkFile = 1n << 26n;
   const __agentOSWasiDefaultRightsBase = 0xffffffffffffffffn;
   const __agentOSWasiDefaultRightsInheriting = 0xffffffffffffffffn;
   const __agentOSWasiWhenceSet = 0;
@@ -386,6 +397,10 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         entry?.rightsBase,
         __agentOSWasiDefaultRightsBase,
       );
+    }
+
+    _descriptorHasRight(fd, right) {
+      return (this._descriptorRightsBase(this._descriptorEntry(fd)) & right) !== 0n;
     }
 
     _descriptorRightsInheriting(entry) {
@@ -817,6 +832,10 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         case "EACCES":
         case "EPERM":
           return __agentOSWasiErrnoAcces;
+        case "EBADF":
+          return __agentOSWasiErrnoBadf;
+        case "EAGAIN":
+          return __agentOSWasiErrnoAgain;
         case "ENOENT":
           return __agentOSWasiErrnoNoent;
         case "ENOTDIR":
@@ -920,17 +939,8 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
     }
 
     _sidecarManagedProcess() {
-      if (
-        typeof globalThis.__agentOSWasmInternalEnv?.AGENTOS_SANDBOX_ROOT ===
-          "string" &&
-        globalThis.__agentOSWasmInternalEnv.AGENTOS_SANDBOX_ROOT.length > 0
-      ) {
-        return true;
-      }
-      return (
-        typeof process?.env?.AGENTOS_SANDBOX_ROOT === "string" &&
-        process.env.AGENTOS_SANDBOX_ROOT.length > 0
-      );
+      // Installed by the trusted executor before this execution starts.
+      return globalThis.__agentOSManagedKernelHost === true;
     }
 
     _descriptorDirectoryFsPath(entry) {
@@ -1220,6 +1230,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
       if (!entry) {
         return { error: __agentOSWasiErrnoBadf };
       }
+      if (options.requiredRight && (this._descriptorRightsBase(entry) & options.requiredRight) === 0n) {
+        return { error: __agentOSWasiErrnoNotcapable };
+      }
       const target = this._measureWasiPhase("readString", () => this._readString(pathPtr, pathLen));
       const base = this._measureWasiPhase("descriptorPathBase", () => this._descriptorPathBase(entry, target));
       if (!base || typeof base.guestPath !== "string") {
@@ -1414,8 +1427,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
     _fdWrite(fd, iovs, iovsLen, nwrittenPtr) {
       try {
-        const bytes = this._measureWasiPhase("collectIovs", () => this._collectIovs(iovs, iovsLen));
         const descriptor = Number(fd) >>> 0;
+        if (!this._descriptorHasRight(descriptor, __agentOSWasiRightFdWrite)) {
+          return __agentOSWasiErrnoNotcapable;
+        }
+        const bytes = this._measureWasiPhase("collectIovs", () => this._collectIovs(iovs, iovsLen));
         const handle = this._measureWasiPhase("externalFdHandle", () => this._externalFdHandle(descriptor));
         if (handle?.kind === "pipe-write" && handle.pipe) {
           if (bytes.length > 0 && !this._pipeHasReaders(handle.pipe)) {
@@ -1433,9 +1449,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
             return __agentOSWasiErrnoRofs;
           }
           if (descriptor === 1 || descriptor === 2) {
-            const sidecarManagedProcess =
-              typeof process?.env?.AGENTOS_SANDBOX_ROOT === "string" &&
-              process.env.AGENTOS_SANDBOX_ROOT.length > 0;
+            const sidecarManagedProcess = this._sidecarManagedProcess();
             const useKernelStdioSyncRpc =
               sidecarManagedProcess || __agentOSKernelStdioSyncRpcEnabled();
             if (useKernelStdioSyncRpc) {
@@ -1506,9 +1520,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         if (handle?.kind === "stdio" && typeof handle.targetFd === "number") {
           const targetFd = Number(handle.targetFd) >>> 0;
           if (targetFd === 1 || targetFd === 2) {
-            const sidecarManagedProcess =
-              typeof process?.env?.AGENTOS_SANDBOX_ROOT === "string" &&
-              process.env.AGENTOS_SANDBOX_ROOT.length > 0;
+            const sidecarManagedProcess = this._sidecarManagedProcess();
             const useKernelStdioSyncRpc =
               sidecarManagedProcess || __agentOSKernelStdioSyncRpcEnabled();
             const written = useKernelStdioSyncRpc
@@ -1527,9 +1539,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           return __agentOSWasiErrnoBadf;
         }
         if (entry.kind === "stdout") {
-          const sidecarManagedProcess =
-            typeof process?.env?.AGENTOS_SANDBOX_ROOT === "string" &&
-            process.env.AGENTOS_SANDBOX_ROOT.length > 0;
+          const sidecarManagedProcess = this._sidecarManagedProcess();
           const useKernelStdioSyncRpc =
             sidecarManagedProcess || __agentOSKernelStdioSyncRpcEnabled();
           const written = useKernelStdioSyncRpc
@@ -1542,9 +1552,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           return this._measureWasiPhase("writeResultPtr", () => this._writeUint32(nwrittenPtr, written));
         }
         if (entry.kind === "stderr") {
-          const sidecarManagedProcess =
-            typeof process?.env?.AGENTOS_SANDBOX_ROOT === "string" &&
-            process.env.AGENTOS_SANDBOX_ROOT.length > 0;
+          const sidecarManagedProcess = this._sidecarManagedProcess();
           const useKernelStdioSyncRpc =
             sidecarManagedProcess || __agentOSKernelStdioSyncRpcEnabled();
           const written = useKernelStdioSyncRpc
@@ -1600,8 +1608,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
     _fdPwrite(fd, iovs, iovsLen, offset, nwrittenPtr) {
       try {
-        const bytes = this._collectIovs(iovs, iovsLen);
         const descriptor = Number(fd) >>> 0;
+        if (!this._descriptorHasRight(descriptor, __agentOSWasiRightFdWrite)) {
+          return __agentOSWasiErrnoNotcapable;
+        }
+        const bytes = this._collectIovs(iovs, iovsLen);
         const explicitOffset = this._positionedIoOffset(offset);
         if (explicitOffset === null) {
           return __agentOSWasiErrnoInval;
@@ -1646,6 +1657,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
     _fdPread(fd, iovs, iovsLen, offset, nreadPtr) {
       try {
         const descriptor = Number(fd) >>> 0;
+        if (!this._descriptorHasRight(descriptor, __agentOSWasiRightFdRead)) {
+          return __agentOSWasiErrnoNotcapable;
+        }
         const explicitOffset = this._positionedIoOffset(offset);
         if (explicitOffset === null) {
           return __agentOSWasiErrnoInval;
@@ -1688,6 +1702,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
     _fdRead(fd, iovs, iovsLen, nreadPtr) {
       try {
         const descriptor = Number(fd) >>> 0;
+        if (!this._descriptorHasRight(descriptor, __agentOSWasiRightFdRead)) {
+          return __agentOSWasiErrnoNotcapable;
+        }
         const handle = this._externalFdHandle(descriptor);
         if (handle?.kind === "pipe-read" && handle.pipe) {
           const totalLength = this._boundedReadLength(iovs, iovsLen);
@@ -1701,7 +1718,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           const written = this._writeToIovs(iovs, iovsLen, chunk);
           return this._writeUint32(nreadPtr, written);
         }
-        if (handle?.kind === "stdio" && Number(handle.targetFd) === 0) {
+        if (handle?.kind === "stdio" && Number(handle.targetFd) === 0 && !this._sidecarManagedProcess()) {
           const totalLength = this._boundedReadLength(iovs, iovsLen);
           if (typeof __agentOSWasiHost.readStdin === "function") {
             const value = __agentOSWasiHost.readStdin(totalLength);
@@ -1726,70 +1743,63 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           return this._writeUint32(nreadPtr, written);
         }
         const entry = this.fdTable.get(descriptor);
-        if (!entry) {
+        const stdinHandle = handle?.kind === "stdio" && Number(handle.targetFd) === 0;
+        if (!entry && !stdinHandle) {
           return __agentOSWasiErrnoBadf;
         }
-        if (entry.kind === "stdin") {
+        if (entry?.kind === "stdin" || stdinHandle) {
           const totalLength = this._boundedReadLength(iovs, iovsLen);
-          const syncRpc =
-            typeof globalThis?.__agentOSSyncRpc?.callSync === "function"
-              ? __agentOSWasiSyncRpc()
-              : null;
-          const sidecarManagedProcess =
-            typeof process?.env?.AGENTOS_SANDBOX_ROOT === "string" &&
-            process.env.AGENTOS_SANDBOX_ROOT.length > 0;
-          if (syncRpc && (sidecarManagedProcess || __agentOSKernelStdioSyncRpcEnabled())) {
-            try {
-              const nonblocking =
-                ((Number(entry.fdFlags) >>> 0) & __agentOSWasiFdflagsNonblock) !== 0;
-              const waitMs = nonblocking ? 0 : 10;
-              let chunk = null;
-              while (true) {
-                let response;
-                try {
-                  response = syncRpc.callSync("__kernel_stdin_read", [
-                    totalLength,
-                    waitMs,
-                  ]);
-                } catch (error) {
-                  if (error?.code === "EINTR") {
-                    // Node/libuv retries interrupted stream reads. A caught
-                    // guest signal must not turn an open kernel PTY into EOF.
-                    continue;
-                  }
-                  throw error;
-                }
-                if (
-                  response &&
-                  typeof response === "object" &&
-                  typeof response.dataBase64 === "string"
-                ) {
-                  chunk = Buffer.from(response.dataBase64, "base64");
-                  break;
-                }
-                if (response && typeof response === "object" && response.done === true) {
-                  chunk = Buffer.alloc(0);
-                  break;
-                }
-                if (nonblocking) {
-                  return __agentOSWasiErrnoAgain;
-                }
-                if (
-                  typeof Atomics?.wait === "function" &&
-                  typeof syntheticWaitArray !== "undefined"
-                ) {
-                  Atomics.wait(syntheticWaitArray, 0, 0, 10);
-                }
-              }
-              if (!chunk || chunk.length === 0) {
-                return this._writeUint32(nreadPtr, 0);
-              }
-              const written = this._writeToIovs(iovs, iovsLen, chunk);
-              return this._writeUint32(nreadPtr, written);
-            } catch {
-              // Fall back to direct stdin reads when the sync bridge is unavailable
-              // in the standalone runner bootstrap.
+          if (this._sidecarManagedProcess() || __agentOSKernelStdioSyncRpcEnabled()) {
+            const syncRpc = __agentOSWasiSyncRpc();
+            if (typeof syncRpc?.callSync !== "function") {
+              return __agentOSWasiErrnoIo;
             }
+            const nonblocking =
+              ((Number(entry?.fdFlags) >>> 0) & __agentOSWasiFdflagsNonblock) !== 0;
+            const waitMs = nonblocking ? 0 : 10;
+            let chunk = null;
+            while (true) {
+              let response;
+              try {
+                response = syncRpc.callSync("__kernel_stdin_read", [
+                  totalLength,
+                  waitMs,
+                ]);
+              } catch (error) {
+                if (error?.code === "EINTR") {
+                  // Node/libuv retries interrupted stream reads. A caught
+                  // guest signal must not turn an open kernel PTY into EOF.
+                  continue;
+                }
+                throw error;
+              }
+              if (
+                response &&
+                typeof response === "object" &&
+                typeof response.dataBase64 === "string"
+              ) {
+                chunk = Buffer.from(response.dataBase64, "base64");
+                break;
+              }
+              if (response && typeof response === "object" && response.done === true) {
+                chunk = Buffer.alloc(0);
+                break;
+              }
+              if (nonblocking) {
+                return __agentOSWasiErrnoAgain;
+              }
+              if (
+                typeof Atomics?.wait === "function" &&
+                typeof syntheticWaitArray !== "undefined"
+              ) {
+                Atomics.wait(syntheticWaitArray, 0, 0, 10);
+              }
+            }
+            if (!chunk || chunk.length === 0) {
+              return this._writeUint32(nreadPtr, 0);
+            }
+            const written = this._writeToIovs(iovs, iovsLen, chunk);
+            return this._writeUint32(nreadPtr, written);
           }
           // Host-seam stdin (a non-native backend whose stdin is delivered through
           // the runtime process object, not a kernel fd): read the queued bytes
@@ -1856,13 +1866,6 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         }
         if (entry.kind !== "file") {
           return __agentOSWasiErrnoBadf;
-        }
-        // WASI rights: a descriptor opened without FD_READ cannot be read.
-        if (
-          typeof entry.rightsBase === "bigint" &&
-          (entry.rightsBase & __agentOSWasiRightFdRead) === 0n
-        ) {
-          return __agentOSWasiErrnoNotcapable;
         }
         const totalLength = this._boundedReadLength(iovs, iovsLen);
         const buffer = Buffer.alloc(totalLength);
@@ -2247,6 +2250,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
       try {
         const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen, {
           preferCreateParent: true,
+          requiredRight: __agentOSWasiRightPathCreateDirectory,
         });
         if (resolved.error !== __agentOSWasiErrnoSuccess) {
           return resolved.error;
@@ -2264,11 +2268,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
     _pathLink(oldFd, _oldFlags, oldPathPtr, oldPathLen, newFd, newPathPtr, newPathLen) {
       try {
-        const source = this._resolveDescriptorPath(oldFd, oldPathPtr, oldPathLen);
+        const source = this._resolveDescriptorPath(oldFd, oldPathPtr, oldPathLen, { requiredRight: __agentOSWasiRightPathLinkSource });
         if (source.error !== __agentOSWasiErrnoSuccess) {
           return source.error;
         }
-        const destination = this._resolveDescriptorPath(newFd, newPathPtr, newPathLen);
+        const destination = this._resolveDescriptorPath(newFd, newPathPtr, newPathLen, { requiredRight: __agentOSWasiRightPathLinkTarget });
         if (destination.error !== __agentOSWasiErrnoSuccess) {
           return destination.error;
         }
@@ -2315,6 +2319,10 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         const fsPath = this._resolvedFsPath(resolved);
         const openDirectory = (requestedFlags & __agentOSWasiOpenDirectory) !== 0;
         const allowedRightsBase = this._descriptorRightsBase(entry);
+        let requiredRights = __agentOSWasiRightPathOpen;
+        if (requestedFlags & __agentOSWasiOpenCreate) requiredRights |= __agentOSWasiRightPathCreateFile;
+        if (requestedFlags & __agentOSWasiOpenTruncate) requiredRights |= __agentOSWasiRightPathFilestatSetSize;
+        if ((allowedRightsBase & requiredRights) !== requiredRights) return __agentOSWasiErrnoNotcapable;
         const allowedRightsInheriting = this._descriptorRightsInheriting(entry);
         const requestedRightsBase = this._normalizeRights(rightsBase, allowedRightsInheriting);
         const requestedRightsInheriting = this._normalizeRights(
@@ -2402,7 +2410,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
     _pathSymlink(targetPtr, targetLen, fd, pathPtr, pathLen) {
       try {
-        const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen);
+        const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen, { requiredRight: __agentOSWasiRightPathSymlink });
         if (resolved.error !== __agentOSWasiErrnoSuccess) {
           return resolved.error;
         }
@@ -2420,7 +2428,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
     _pathRemoveDirectory(fd, pathPtr, pathLen) {
       try {
-        const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen);
+        const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen, { requiredRight: __agentOSWasiRightPathRemoveDirectory });
         if (resolved.error !== __agentOSWasiErrnoSuccess) {
           return resolved.error;
         }
@@ -2437,11 +2445,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
     _pathRename(oldFd, oldPathPtr, oldPathLen, newFd, newPathPtr, newPathLen) {
       try {
-        const source = this._resolveDescriptorPath(oldFd, oldPathPtr, oldPathLen);
+        const source = this._resolveDescriptorPath(oldFd, oldPathPtr, oldPathLen, { requiredRight: __agentOSWasiRightPathRenameSource });
         if (source.error !== __agentOSWasiErrnoSuccess) {
           return source.error;
         }
-        const destination = this._resolveDescriptorPath(newFd, newPathPtr, newPathLen);
+        const destination = this._resolveDescriptorPath(newFd, newPathPtr, newPathLen, { requiredRight: __agentOSWasiRightPathRenameTarget });
         if (destination.error !== __agentOSWasiErrnoSuccess) {
           return destination.error;
         }
@@ -2458,7 +2466,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
 
     _pathUnlinkFile(fd, pathPtr, pathLen) {
       try {
-        const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen);
+        const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen, { requiredRight: __agentOSWasiRightPathUnlinkFile });
         if (resolved.error !== __agentOSWasiErrnoSuccess) {
           return resolved.error;
         }

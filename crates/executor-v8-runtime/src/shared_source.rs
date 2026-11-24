@@ -38,7 +38,7 @@ type Digest32 = [u8; 32];
 extern "C" {
     fn agentos_v8_static_twobyte_resource(data: *const u16, length: usize) -> *mut c_void;
     fn agentos_v8_new_static_twobyte_string(
-        isolate: *mut v8::Isolate,
+        isolate: v8::UnsafeRawIsolatePtr,
         resource: *mut c_void,
     ) -> *const v8::String;
 }
@@ -68,7 +68,7 @@ impl SharedSource {
 
     fn new_string<'s>(
         self,
-        scope: &mut v8::HandleScope<'s, ()>,
+        scope: &mut v8::PinScope<'s, '_, ()>,
     ) -> Option<v8::Local<'s, v8::String>> {
         match self {
             Self::OneByte(constant) => v8::String::new_from_onebyte_const(scope, constant),
@@ -78,7 +78,10 @@ impl SharedSource {
                 // and is never freed. The string is created in `scope`'s handle
                 // scope, and `Local` is a `repr(C)` wrapper of the handle pointer.
                 unsafe {
-                    let raw = agentos_v8_new_static_twobyte_string(isolate, resource);
+                    let raw = agentos_v8_new_static_twobyte_string(
+                        isolate.as_raw_isolate_ptr(),
+                        resource,
+                    );
                     let raw = std::ptr::NonNull::new(raw as *mut v8::String)?;
                     Some(std::mem::transmute::<
                         std::ptr::NonNull<v8::String>,
@@ -279,22 +282,45 @@ fn shared_source_entry(
 /// Shared sources and the external reference table of one snapshot. A
 /// snapshot blob owns it and each restored isolate keeps it alive.
 pub(crate) struct SnapshotSources {
-    refs: SnapshotRefs,
+    refs: Arc<SnapshotRefs>,
     _backings: Vec<Arc<SourceBacking>>,
 }
 
-enum SnapshotRefs {
-    Base(&'static v8::ExternalReferences),
-    Shared(Arc<v8::ExternalReferences>),
+/// Immutable callback and external string resource addresses shared by snapshots.
+/// The callbacks have process lifetime. SnapshotSources holds the string backing
+/// allocations for as long as a snapshot or restored isolate uses the table.
+struct SnapshotRefs(Box<[v8::ExternalReference]>);
+
+// SAFETY: only static callbacks and the immutable resource headers described
+// above enter this table. Reading the table never mutates the referenced data.
+unsafe impl Sync for SnapshotRefs {}
+unsafe impl Send for SnapshotRefs {}
+
+impl SnapshotRefs {
+    fn new(sources: &[SharedSource]) -> Self {
+        let mut refs = crate::bridge::base_external_references();
+        refs.extend(sources.iter().map(|source| v8::ExternalReference {
+            pointer: source.address(),
+        }));
+        refs.push(v8::ExternalReference {
+            pointer: std::ptr::null_mut(),
+        });
+        Self(refs.into_boxed_slice())
+    }
+}
+
+fn base_refs() -> &'static Arc<SnapshotRefs> {
+    static BASE: OnceLock<Arc<SnapshotRefs>> = OnceLock::new();
+    BASE.get_or_init(|| Arc::new(SnapshotRefs::new(&[])))
+}
+
+pub(crate) fn base_references() -> &'static [v8::ExternalReference] {
+    &base_refs().0
 }
 
 impl SnapshotSources {
-    /// The external references for restoring this snapshot.
-    pub(crate) fn refs(&self) -> &v8::ExternalReferences {
-        match &self.refs {
-            SnapshotRefs::Base(refs) => refs,
-            SnapshotRefs::Shared(refs) => refs,
-        }
+    pub(crate) fn refs(&self) -> &[v8::ExternalReference] {
+        &self.refs.0
     }
 }
 
@@ -320,7 +346,7 @@ pub(crate) fn snapshot_sources(sources: &[&str]) -> Result<SnapshotSources, Stri
 /// creator's external reference table, and it is pinned for the life of the
 /// process. Code in the sidecar process must use a plain `v8::String`.
 pub(crate) fn snapshot_source_string<'s>(
-    scope: &mut v8::HandleScope<'s, ()>,
+    scope: &mut v8::PinScope<'s, '_, ()>,
     source: &str,
 ) -> Result<v8::Local<'s, v8::String>, String> {
     if is_shareable(source) {
@@ -335,12 +361,11 @@ pub(crate) fn snapshot_source_string<'s>(
 
 /// External references for a snapshot whose shared sources are `sources`, in
 /// order. Interned while in use, so each distinct table is built once.
-fn external_refs_with_sources(sources: &[SharedSource]) -> SnapshotRefs {
+fn external_refs_with_sources(sources: &[SharedSource]) -> Arc<SnapshotRefs> {
     if sources.is_empty() {
-        return SnapshotRefs::Base(crate::bridge::external_refs());
+        return Arc::clone(base_refs());
     }
-    static TABLES: OnceLock<Mutex<HashMap<Vec<usize>, Weak<v8::ExternalReferences>>>> =
-        OnceLock::new();
+    static TABLES: OnceLock<Mutex<HashMap<Vec<usize>, Weak<SnapshotRefs>>>> = OnceLock::new();
     let key: Vec<usize> = sources
         .iter()
         .map(|source| source.address() as usize)
@@ -350,16 +375,10 @@ fn external_refs_with_sources(sources: &[SharedSource]) -> SnapshotRefs {
         .lock()
         .expect("external reference tables poisoned");
     if let Some(table) = tables.get(&key).and_then(Weak::upgrade) {
-        return SnapshotRefs::Shared(table);
+        return table;
     }
     tables.retain(|_, table| table.strong_count() > 0);
-    let mut references = crate::bridge::base_external_references();
-    for source in sources {
-        references.push(v8::ExternalReference {
-            pointer: source.address(),
-        });
-    }
-    let table = Arc::new(v8::ExternalReferences::new(&references));
+    let table = Arc::new(SnapshotRefs::new(sources));
     tables.insert(key, Arc::downgrade(&table));
-    SnapshotRefs::Shared(table)
+    table
 }

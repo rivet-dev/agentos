@@ -67,7 +67,7 @@ pub(crate) fn terminal_callback_owner_controls() {
             isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
             let context = crate::isolate::create_context(&mut isolate);
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let context = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, context);
                 if !restored {
@@ -105,7 +105,7 @@ pub(crate) fn terminal_callback_owner_controls() {
             let mut original_weak = None;
             let sibling_weak;
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 let context = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, context);
                 let global = context.global(scope);
@@ -177,13 +177,13 @@ pub(crate) fn terminal_callback_owner_controls() {
                 .borrow()
                 .occupied());
             {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
+                v8::scope!(scope, &mut *isolate);
                 scope.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
             }
             assert!(sibling_weak.is_empty(), "unowned sibling must collect after same Local scope; restored={restored}, source={source}");
             if let Some(original_weak) = original_weak.as_ref() {
                 {
-                    let scope = &mut v8::HandleScope::new(&mut isolate);
+                    v8::scope!(scope, &mut *isolate);
                     scope.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
                 }
                 assert!(
@@ -204,7 +204,7 @@ pub(crate) fn terminal_callback_owner_controls() {
             );
             if let Some(original_weak) = original_weak {
                 {
-                    let scope = &mut v8::HandleScope::new(&mut isolate);
+                    v8::scope!(scope, &mut *isolate);
                     scope.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
                 }
                 let released = original_weak.is_empty();
@@ -231,7 +231,7 @@ pub(crate) fn terminal_callback_owner_controls() {
                 .generation();
             let _call = begin_call(&mut isolate, generation);
             mark_settled(&mut isolate);
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let context = v8::Local::new(scope, &context);
             let scope = &mut v8::ContextScope::new(scope, context);
             install(scope).expect("native terminal hooks installed");
@@ -333,7 +333,7 @@ fn native_process_exit_owner_controls() {
             {
                 let _call = begin_call(isolate, cycle * 2 + 1);
                 {
-                let scope = &mut v8::HandleScope::new(&mut *isolate);
+                v8::scope!(scope, &mut *isolate);
                 let context = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, context);
                 if !restored {
@@ -368,7 +368,7 @@ fn native_process_exit_owner_controls() {
                 crate::owned_microtasks::discard_failed_call(isolate);
                 isolate.cancel_terminate_execution();
                 acknowledge_stop(isolate);
-                let scope = &mut v8::HandleScope::new(&mut *isolate);
+                v8::scope!(scope, &mut *isolate);
                 let context = v8::Local::new(scope, &context);
                 let scope = &mut v8::ContextScope::new(scope, context);
                 crate::owned_microtasks::checkpoint(scope);
@@ -385,7 +385,7 @@ fn native_process_exit_owner_controls() {
             assert!(result(isolate).is_none());
             let _next_call = begin_call(isolate, cycle * 2 + 2);
             assert!(!is_process_exit(isolate), "next call never inherits exit");
-            let scope = &mut v8::HandleScope::new(&mut *isolate);
+            v8::scope!(scope, &mut *isolate);
             let context = v8::Local::new(scope, &context);
             let scope = &mut v8::ContextScope::new(scope, context);
             let code = v8::String::new(

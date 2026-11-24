@@ -136,7 +136,7 @@ Gate rows:
 | `control/cpu_loop` | `wasm` | WASM runtime lane sanity check. |
 | `ecosystem/ls_100` | `vmCmd` | End-to-end WASM command tier. |
 
-The CI baseline is environment-specific because GitHub-hosted runner hardware differs from the canonical machine. In CI, `bench:gate` uses `packages/benchmarks/results/baseline-ci.json`. If it is missing, PR gates skip loudly. The nightly workflow runs the full matrix, writes a candidate `baseline-ci.json`, and uploads it as an artifact. Bootstrap is:
+The CI baseline is environment-specific because GitHub-hosted runner hardware differs from the canonical machine. In CI, `bench:gate` uses `packages/benchmarks/results/baseline-ci.json`. A missing baseline fails the gate. The nightly workflow runs the full matrix, writes a candidate `baseline-ci.json`, and uploads it as an artifact. Bootstrap is:
 
 1. Let the first nightly workflow finish.
 2. Download `baseline-ci.json` from the `nightly-benchmark-results` artifact.

@@ -205,7 +205,11 @@ embedded capabilities, not actor capabilities.
 - Set timeouts and CPU limits on code you did not write.
 - Harden the host or container that runs the sidecar, and run it as a non-root
   user. Rivet Cloud runs the sidecar unprivileged under gVisor.
-- Give each mutually untrusted tenant its own VM.
+- Give mutually untrusted tenants separate VMs and dedicated sidecar processes
+  when they require OS-level memory isolation. V8 isolates on a shared sidecar
+  share its address space. The embedded V8 build disables the V8 Sandbox.
+  Use a separate `AgentOs.createSidecar()` per trust domain in the
+  [embedded client](/agentos/docs/quickstart-embedded).
 
 See [Permissions](/agentos/docs/permissions),
 [Resource Limits](/agentos/docs/resource-limits), and

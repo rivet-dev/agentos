@@ -1,4 +1,5 @@
 use super::super::*;
+use rustls::pki_types::pem::PemObject;
 
 #[derive(Debug)]
 struct InsecureTlsVerifier {
@@ -618,15 +619,18 @@ fn tls_data_value(value: &TlsDataValue) -> Result<Vec<u8>, VmError> {
     }
 }
 
+fn tls_pem_error(error: rustls::pki_types::pem::Error) -> VmError {
+    sidecar_net_error(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
 fn tls_certificates_from_material(
     material: &TlsMaterial,
 ) -> Result<Vec<CertificateDer<'static>>, VmError> {
     let mut certificates = Vec::new();
     for entry in tls_material_entries(material)? {
-        let mut reader = std::io::BufReader::new(Cursor::new(entry.clone()));
-        let parsed = rustls_pemfile::certs(&mut reader)
+        let parsed = CertificateDer::pem_slice_iter(&entry)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(sidecar_net_error)?;
+            .map_err(tls_pem_error)?;
         if parsed.is_empty() {
             certificates.push(CertificateDer::from(entry));
         } else {
@@ -645,8 +649,11 @@ fn tls_private_key_from_material(
     material: &TlsMaterial,
 ) -> Result<PrivateKeyDer<'static>, VmError> {
     for entry in tls_material_entries(material)? {
-        let mut reader = std::io::BufReader::new(Cursor::new(entry));
-        if let Some(key) = rustls_pemfile::private_key(&mut reader).map_err(sidecar_net_error)? {
+        if let Some(key) = PrivateKeyDer::pem_slice_iter(&entry)
+            .next()
+            .transpose()
+            .map_err(tls_pem_error)?
+        {
             return Ok(key);
         }
     }
@@ -782,10 +789,9 @@ fn tls_root_store(
         return Ok(roots);
     }
 
-    let mut reader = std::io::BufReader::new(Cursor::new(default_ca_bundle));
-    let certificates = rustls_pemfile::certs(&mut reader)
+    let certificates = CertificateDer::pem_slice_iter(default_ca_bundle)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(sidecar_net_error)?;
+        .map_err(tls_pem_error)?;
     if certificates.is_empty() {
         return Err(VmError::InvalidState(format!(
             "VM TLS trust store {CA_CERTIFICATES_GUEST_PATH} did not contain any certificates"

@@ -2371,8 +2371,81 @@ where
 
     pub(crate) fn offer_pending_process_event(
         &mut self,
-        envelope: ProcessEventEnvelope,
+        mut envelope: ProcessEventEnvelope,
     ) -> Result<ProcessEventOffer, VmError> {
+        // Output may fit the execution queue but need smaller chunks once its
+        // routing identity is attached. Admit one prefix and retain the suffix
+        // at the producer, using the same backpressure path as a full queue.
+        self.validate_process_event_envelope_locator(&envelope)?;
+        let limit = self
+            .vms
+            .get(&envelope.vm_id)
+            .map(|vm| vm.limits.process.pending_event_bytes)
+            .unwrap_or(0);
+        let retained = envelope.retained_bytes();
+        let bytes = match &mut envelope.event {
+            ActiveExecutionEvent::Stdout(bytes)
+            | ActiveExecutionEvent::Stderr(bytes)
+            | ActiveExecutionEvent::RoutedStdout(bytes)
+            | ActiveExecutionEvent::RoutedStderr(bytes) => Some(bytes),
+            _ => None,
+        };
+        if let Some(bytes) = bytes {
+            let available = limit.saturating_sub(retained.saturating_sub(bytes.len()));
+            if available > 0 && bytes.len() > available {
+                let suffix = bytes[available..].to_vec();
+                *bytes = bytes[..available].to_vec();
+                let event = match &envelope.event {
+                    ActiveExecutionEvent::Stdout(_) => ActiveExecutionEvent::Stdout(suffix),
+                    ActiveExecutionEvent::Stderr(_) => ActiveExecutionEvent::Stderr(suffix),
+                    ActiveExecutionEvent::RoutedStdout(_) => {
+                        ActiveExecutionEvent::RoutedStdout(suffix)
+                    }
+                    ActiveExecutionEvent::RoutedStderr(_) => {
+                        ActiveExecutionEvent::RoutedStderr(suffix)
+                    }
+                    _ => unreachable!("output prefix preserves its event kind"),
+                };
+                let remainder = ProcessEventEnvelope {
+                    connection_id: envelope.connection_id.clone(),
+                    session_id: envelope.session_id.clone(),
+                    vm_id: envelope.vm_id.clone(),
+                    process_id: envelope.process_id.clone(),
+                    child_path: envelope.child_path.clone(),
+                    event,
+                };
+                match self.try_queue_pending_process_event(envelope) {
+                    Ok(()) => return Ok(ProcessEventOffer::Paused(Box::new(remainder))),
+                    Err((error, mut prefix)) => {
+                        let retry = self.global_process_event_pressure_can_retry(&prefix);
+                        match (&mut prefix.event, remainder.event) {
+                            (
+                                ActiveExecutionEvent::Stdout(bytes),
+                                ActiveExecutionEvent::Stdout(tail),
+                            )
+                            | (
+                                ActiveExecutionEvent::Stderr(bytes),
+                                ActiveExecutionEvent::Stderr(tail),
+                            )
+                            | (
+                                ActiveExecutionEvent::RoutedStdout(bytes),
+                                ActiveExecutionEvent::RoutedStdout(tail),
+                            )
+                            | (
+                                ActiveExecutionEvent::RoutedStderr(bytes),
+                                ActiveExecutionEvent::RoutedStderr(tail),
+                            ) => bytes.extend(tail),
+                            _ => unreachable!("output suffix preserves its event kind"),
+                        }
+                        if retry {
+                            self.pending_process_events.pause_producer();
+                            return Ok(ProcessEventOffer::Paused(Box::new(prefix)));
+                        }
+                        return Err(error);
+                    }
+                }
+            }
+        }
         match self.try_queue_pending_process_event(envelope) {
             Ok(()) => Ok(ProcessEventOffer::Queued),
             Err((_, envelope)) if self.global_process_event_pressure_can_retry(&envelope) => {

@@ -774,7 +774,7 @@ fn maintained_wasm_surfaces_are_mechanically_gated_on_v8() {
         "AGENTOS_TEST_WASM_BACKEND: ${{ matrix.backend }}",
         "EXPECT_WASM_BACKEND_MATRIX:",
         "required WASM backend CI job did not succeed",
-        "cargo test --release -p agentos-vm --features all-executors --tests -- --test-threads=1",
+        "cargo test --release -p agentos-vm --features all-executors --tests --no-fail-fast -- --test-threads=1",
         "toolchain/conformance/c-parity.test.ts",
         "wasm-c-parity-fixtures",
         "packages/core exec vitest run",
@@ -1593,9 +1593,10 @@ impl CfgTestTracker {
             return true;
         }
 
-        if trimmed.starts_with("#[cfg(")
-            && trimmed.contains("test")
-            && !trimmed.contains("not(test)")
+        if trimmed == "#[test]"
+            || (trimmed.starts_with("#[cfg(")
+                && trimmed.contains("test")
+                && !trimmed.contains("not(test)"))
         {
             self.pending_cfg_test = true;
             return false;
@@ -1626,6 +1627,22 @@ impl CfgTestTracker {
 
         false
     }
+}
+
+#[test]
+fn architecture_tracker_excludes_test_functions_but_keeps_production_builders() {
+    let source = r#"
+#[test]
+fn fixture_runtime() {
+    tokio::runtime::Builder::new_current_thread();
+}
+fn production_runtime() {
+    tokio::runtime::Builder::new_multi_thread();
+}
+"#;
+    let production = production_source_text(source);
+    assert!(!production.contains("new_current_thread"));
+    assert!(production.contains("new_multi_thread"));
 }
 
 fn production_source_text(source: &str) -> String {
@@ -4089,8 +4106,8 @@ fn canonical_wasm_exceptions_use_one_finalized_artifact_on_both_engines() {
     let v8 = std::fs::read_to_string(root.join("crates/executor-v8-runtime/src/isolate.rs"))
         .expect("read V8 platform source");
     assert!(
-        v8.contains("v8::V8::set_flags_from_string(\"--experimental-wasm-exnref\")"),
-        "V8 130 must enable the finalized exception encoding used by canonical C++ commands"
+        !v8.contains("--experimental-wasm-exnref"),
+        "finalized exception handling must not depend on the removed V8 experiment flag"
     );
 
     let profile = std::fs::read_to_string(root.join("crates/executor-wasm-abi/src/profile.rs"))
@@ -4135,14 +4152,6 @@ fn production_threads_match_the_reviewed_topology_manifest() {
         (
             "serialized-v8-maintenance",
             "crates/executor-v8-runtime/src/adapter_host.rs",
-        ),
-        (
-            "test-only-stdin-readiness",
-            "crates/executor-v8-runtime/src/javascript.rs",
-        ),
-        (
-            "test-only-backpressure-drainer",
-            "crates/executor-v8-runtime/src/javascript.rs",
         ),
         (
             "process-wasmtime-epoch-ticker",

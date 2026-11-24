@@ -9,7 +9,7 @@
  * before anyone installs the meta.
  */
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 export interface Package {
@@ -126,16 +126,21 @@ export function discoverPackages(
 	//    the meta package resolves at install time. Only the allowlisted
 	//    platforms are included so unbuilt platform dirs are never published.
 	const platformAllowlist = new Set(sidecarPlatforms());
-	for (const packageDir of SIDECAR_BINARY_PACKAGE_DIRS) {
-		const npmDir = join(repoRoot, packageDir);
-		if (existsSync(npmDir)) {
-			for (const entry of readdirSync(npmDir).sort()) {
-				if (!platformAllowlist.has(entry)) continue;
-				const platDir = join(npmDir, entry);
-				if (!statSync(platDir).isDirectory()) continue;
-				add(platDir);
-			}
+	for (const platform of [...platformAllowlist].sort()) {
+		if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(platform)) {
+			throw new Error(`Invalid SIDECAR_PLATFORMS entry: ${platform}`);
 		}
+		let found = false;
+		for (const packageDir of SIDECAR_BINARY_PACKAGE_DIRS) {
+			const dir = join(repoRoot, packageDir, platform);
+			const pkg = readPackageJson(dir);
+			if (!pkg || !isPublishable(pkg) || !META_PACKAGES.some(
+				({ platformPrefix }) => pkg.name === `${platformPrefix}${platform}`,
+			)) continue;
+			add(dir);
+			found = true;
+		}
+		if (!found) throw new Error(`Unknown or unavailable SIDECAR_PLATFORMS entry: ${platform}`);
 	}
 
 	// 2. pnpm workspace packages. Registry software is packed into .aospkg
@@ -152,6 +157,9 @@ export function discoverPackages(
 	}> = JSON.parse(pnpmList);
 	for (const p of workspacePkgs) {
 		if (!p.name) continue;
+		const relDir = relative(repoRoot, resolve(p.path));
+		if (SIDECAR_BINARY_PACKAGE_DIRS.some((dir) => relDir.startsWith(`${dir}/`))) continue;
+		if (META_PACKAGES.some(({ platformPrefix }) => p.name.startsWith(platformPrefix))) continue;
 		if (
 			!p.name.startsWith("@rivet-dev/agentos-") &&
 			p.name !== "@rivet-dev/agentos" &&

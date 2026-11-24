@@ -1,6 +1,6 @@
 # Obscura executor embedding experiment
 
-**This is an unfinished integration, not an installed `obscura` VM command.**
+**Disabled for the V8 158 upgrade.** The standalone experiment requires Deno and V8 130. Its manifest is archived as `Cargo.toml.disabled` until the experiment supports the same V8 as agentOS.
 It runs the real upstream browser against agentOS's executor host-call
 contract. It is deliberately outside the shipping workspace and executor
 registry. Do not pass untrusted pages to this experiment.
@@ -11,7 +11,7 @@ Apache-2.0 license. They are not reimplemented here. Deno is MIT-licensed.
 `prepare.py` verifies both archive checksums, applies the checked-in patches,
 and keeps upstream licenses in the ignored `vendor/` directory.
 
-## Run the fixture
+## Previous fixture on V8 130
 
 From the repository root, with Python 3.12+, GNU patch, the repository Rust
 toolchain, and pnpm installed:

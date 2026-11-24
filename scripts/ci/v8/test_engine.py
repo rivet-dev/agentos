@@ -2,6 +2,7 @@
 import io
 import json
 from pathlib import Path
+import os
 import sys
 import tarfile
 import tempfile
@@ -11,6 +12,19 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import engine
+
+
+class BindingProvenanceTests(unittest.TestCase):
+    def test_published_binding_keeps_reviewed_sources_and_verifier(self):
+        repo = Path(__file__).resolve().parents[3]
+        binding = repo / "crates/v8"
+        upstream = json.loads((binding / "UPSTREAM.json").read_text())
+        self.assertEqual(upstream["revision"], engine.SOURCE["rustyV8"])
+        actual = {p.relative_to(binding).as_posix(): engine.digest(p)
+                  for p in (binding / "src").rglob("*") if p.is_file()}
+        self.assertEqual(actual, upstream["rustSources"])
+        for name in ("engine.py", "source.json", "linux-x64-sysroot.json", "archives.json"):
+            self.assertEqual((binding / "provider" / name).read_bytes(), (engine.HERE / name).read_bytes())
 
 
 class BundleTests(unittest.TestCase):
@@ -32,6 +46,7 @@ class BundleTests(unittest.TestCase):
             gn / "args.gn": '\n'.join(['is_debug = false', 'use_custom_libcxx = true',
                 'v8_enable_sandbox = false', 'v8_enable_pointer_compression = false',
                 'v8_enable_v8_checks = false', 'v8_generate_external_defines_header = true',
+                'sysroot = "/fixture/sysroot"', 'use_glib = false',
                 'target_cpu = "x64"']),
             gn / "obj/librusty_v8.a": "test archive",
             gn / "src_binding.rs": "test binding",
@@ -46,7 +61,7 @@ class BundleTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("test crate " + name)
             crate[name] = path
-        with mock.patch.object(engine, "verify_source"), mock.patch.object(engine, "rust_crate_inputs", return_value=crate), mock.patch.object(sys, "platform", "linux"):
+        with mock.patch.object(engine, "verify_source"), mock.patch.object(engine, "rust_crate_inputs", return_value=crate), mock.patch.object(sys, "platform", "linux"), mock.patch.dict(os.environ, {"AGENTOS_V8_RELEASE_SYSROOT": "/fixture/sysroot"}):
             engine.pack(self.source, build, self.target, self.bundle)
         self.pin = engine.digest(self.bundle)
 
@@ -78,6 +93,16 @@ class BundleTests(unittest.TestCase):
             engine.install(engine.TARGETS[1], self.root / "installed", self.bundle, self.pin)
         with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
             engine.install(self.target, self.root / "installed", self.bundle, "0" * 64)
+
+    def test_rejects_pre_sysroot_linux_archive_even_with_valid_file_hashes(self):
+        root = self.root / "old-bundle"
+        engine.unpack(self.bundle, root)
+        manifest = root / "provenance.json"
+        data = json.loads(manifest.read_text())
+        del data["releaseSysroot"]
+        manifest.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "release sysroot provenance"):
+            engine.verify_bundle(root, self.target)
 
     def test_draft_uses_only_the_reviewed_artifact_id_and_tar_digest(self):
         pin_file = self.root / "archives.json"

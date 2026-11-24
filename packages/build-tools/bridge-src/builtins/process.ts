@@ -725,8 +725,14 @@ exposeCustomGlobal("_stdinDispatch", stdinDispatch);
 
 exposeCustomGlobal("_signalDispatch", signalDispatch);
 
+// Node's hrtime counts from an arbitrary point in the past, so it is never 0.
+// The guest clock starts at 0 per process and may be rounded to whole
+// milliseconds, so a fresh process could otherwise read 0n. A fixed origin
+// keeps the value positive without exposing host uptime.
+const HRTIME_ORIGIN_MS = 1_000_000;
+
 function hrtime(prev) {
-	const now = getNowMs();
+	const now = getNowMs() + HRTIME_ORIGIN_MS;
 	const seconds = Math.floor(now / 1e3);
 	const nanoseconds = Math.floor((now % 1e3) * 1e6);
 	if (prev) {
@@ -742,7 +748,7 @@ function hrtime(prev) {
 }
 
 hrtime.bigint = () => {
-	const now = getNowMs();
+	const now = getNowMs() + HRTIME_ORIGIN_MS;
 	return BigInt(Math.floor(now * 1e6));
 };
 

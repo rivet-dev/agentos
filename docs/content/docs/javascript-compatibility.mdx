@@ -162,11 +162,10 @@ does not establish correct fd0 EOF behavior.
   and `setFromBase64`, with the `alphabet`, `omitPadding`, and
   `lastChunkHandling` options.
   Encoded results use the VM memory budget; oversized results fail before allocation.
-- V8 WebAssembly exception handling with `exnref` (`try_table`, `throw_ref`)
-  is enabled when the `wasm-v8` executor is included. Set
-  `AGENTOS_V8_WASM_EXNREF=0` in the host sidecar environment to disable it.
-  The setting applies to every VM in that sidecar. Modules requiring it fail
-  with `CompileError` when disabled.
+- V8 supports finalized WebAssembly exception handling with `exnref`
+  (`try_table`, `throw_ref`) in every VM. Remove the old host setting
+  `AGENTOS_V8_WASM_EXNREF=0` before upgrading. A sidecar configured to
+  disable this feature fails startup with `ERR_AGENTOS_UNSUPPORTED_V8_OPTION`.
 
 ## `node:sqlite`
 

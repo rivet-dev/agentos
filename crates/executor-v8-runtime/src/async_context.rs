@@ -17,7 +17,7 @@ const SET_GLOBAL: &str = "__agentOsSetAsyncContext";
 /// globals, so guest code never sees them. They are V8 builtins from the extras
 /// binding: TurboFan inlines them, and a snapshot can hold them with no external
 /// reference.
-pub fn install_async_context_globals(scope: &mut v8::HandleScope) {
+pub fn install_async_context_globals(scope: &mut v8::PinScope<'_, '_>) {
     let context = scope.get_current_context();
     let global = context.global(scope);
     let binding = context.get_extras_binding_object(scope);
@@ -35,7 +35,7 @@ pub fn install_async_context_globals(scope: &mut v8::HandleScope) {
 }
 
 /// Starts a host execution or event with no async context.
-pub fn clear_async_context(scope: &mut v8::HandleScope) {
+pub fn clear_async_context(scope: &mut v8::PinScope<'_, '_>) {
     let undefined = v8::undefined(scope);
     scope.set_continuation_preserved_embedder_data(undefined.into());
 }

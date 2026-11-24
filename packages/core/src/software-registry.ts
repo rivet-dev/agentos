@@ -376,11 +376,7 @@ export async function resolveRegistrySoftware(
 		);
 	}
 	const url = new URL(artifact.path, manifestUrl);
-	if (url.protocol !== "https:" && url.protocol !== "http:") {
-		throw new Error(
-			`agentOS software manifest ${manifestUrl} lists ${packageName} at a non-http(s) URL: ${url.href}`,
-		);
-	}
+	assertSecureRegistryUrl(url, "artifact URL");
 	return {
 		name: packageName,
 		version,

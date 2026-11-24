@@ -479,13 +479,9 @@ fn wasm_event_retained_bytes(event: &WasmExecutionEvent) -> usize {
             envelope.saturating_add(bytes.len())
         }
         WasmExecutionEvent::SyncRpcRequest(request)
-        | WasmExecutionEvent::HostCall { request, .. } => envelope
-            .saturating_add(request.method.len())
-            .saturating_add(request.raw_bytes_args.values().map(Vec::len).sum::<usize>())
-            // JSON args arrive through an independently frame-bounded bridge;
-            // retain a conservative envelope without reserializing attacker
-            // input merely to account it.
-            .saturating_add(4 * 1024),
+        | WasmExecutionEvent::HostCall { request, .. } => {
+            envelope.saturating_add(request.heap_bytes())
+        }
         WasmExecutionEvent::SignalState { registration, .. } => envelope.saturating_add(
             registration
                 .mask
@@ -2918,6 +2914,12 @@ fn start_wasm_javascript_execution(
     // diagnostics local and defer kernel IPC discovery until actual execution.
     if options.prewarm_only {
         guest_runtime.kernel_stdio = false;
+        guest_runtime.kernel_ipc = false;
+    }
+    // Restricted WASM processes cannot use process IPC. Do not probe that
+    // capability from the JavaScript host shim before the WASM entrypoint.
+    // The host dispatcher still enforces the permission tier on every call.
+    if request.permission_tier != WasmPermissionTier::Full {
         guest_runtime.kernel_ipc = false;
     }
 
@@ -5676,6 +5678,25 @@ mod tests {
         ));
         assert_eq!(budget.usage(), (1, retained_bytes));
         assert_eq!(queue.pop_front(), Some(event));
+        assert_eq!(budget.usage(), (0, 0));
+    }
+
+    #[test]
+    fn wasm_pending_event_budget_charges_owned_json_capacity() {
+        let mut request = wasm_sync_rpc_request("read");
+        let values = vec![serde_json::Value::Null; 200];
+        let slots = values.capacity() * std::mem::size_of::<serde_json::Value>();
+        request.args.push(serde_json::Value::Array(values));
+        let event = WasmExecutionEvent::SyncRpcRequest(request);
+        let charge = super::wasm_event_retained_bytes(&event);
+        assert!(charge >= std::mem::size_of::<WasmExecutionEvent>() + slots);
+        let budget = WasmPendingEventBudget::new(2, charge - 1);
+        let mut queue = WasmEventQueue::new(Arc::clone(&budget));
+        assert!(
+            matches!(queue.push_back(event), Err(WasmExecutionError::PendingEventLimit {
+            limit_name: "limits.process.pendingEventBytes", observed, ..
+        }) if observed == charge)
+        );
         assert_eq!(budget.usage(), (0, 0));
     }
 

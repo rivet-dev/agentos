@@ -76,7 +76,6 @@ crypto = [
     "dep:openssl",
     "dep:pbkdf2",
     "dep:rustls",
-    "dep:rustls-pemfile",
     "dep:scrypt",
     "dep:sha1",
     "dep:sha2",
@@ -178,7 +177,6 @@ oxc_span = { version = "0.109.0", optional = true }
 oxc_transformer = { version = "0.109.0", optional = true }
 pbkdf2 = { version = "0.12", optional = true }
 rustls = { version = "0.23.37", default-features = false, features = ["aws_lc_rs", "std", "tls12"], optional = true }
-rustls-pemfile = { version = "2.2", optional = true }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"], optional = true }
 rusqlite = { version = "0.43", features = ["backup", "bundled", "fallible_uint", "hooks"], optional = true }
 # `rustix` provides the safe (owned-fd, no `unsafe`) `openat(2)`/`statat`/
@@ -196,7 +194,7 @@ sha2 = { version = "0.10", optional = true }
 shlex = { version = "1.3", optional = true }
 socket2 = { version = "0.6", optional = true }
 thiserror = { version = "2", optional = true }
-tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"], optional = true }
+tokio = { version = "1.53.3", features = ["io-std", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["fmt"], optional = true }
 ureq = { version = "2.10", features = ["json"], optional = true }
@@ -206,7 +204,7 @@ agentos-vfs-core = { workspace = true, features = ["package-filesystem"], option
 
 [build-dependencies]
 base64 = { version = "=0.22.1", optional = true }
-webpki-root-certs = { version = "=1.0.8", optional = true }
+webpki-root-certs = { version = "=1.0.10", optional = true }
 
 [dev-dependencies]
 agentos-executor-wasm-abi-generator = { path = "../executor-wasm-abi-generator" }
@@ -215,7 +213,7 @@ tar = "0.4"
 tempfile = "3"
 vbare.workspace = true
 wat = "1.0"
-v8 = "130"
+v8 = { workspace = true }
 
 [[test]]
 name = "bidirectional_frames"
@@ -231,7 +229,7 @@ required-features = ["runtime"]
 
 [[test]]
 name = "builtin_conformance"
-required-features = ["runtime"]
+required-features = ["runtime", "node-v8"]
 
 [[test]]
 name = "connection_auth"

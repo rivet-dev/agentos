@@ -81,7 +81,25 @@ export function baselinePathForEnvironment(): string {
 
 export function loadMatrixBaseline(path: string): MatrixBaseline | null {
 	if (!existsSync(path)) return null;
-	return JSON.parse(readFileSync(path, "utf8")) as MatrixBaseline;
+	const baseline = JSON.parse(readFileSync(path, "utf8"));
+	if (
+		baseline?.schemaVersion !== 1 ||
+		!["local", "ci"].includes(baseline.kind) ||
+		typeof baseline.engine?.cold !== "boolean" ||
+		typeof baseline.engine?.sharedVm !== "boolean" ||
+		!Array.isArray(baseline.rows) ||
+		!baseline.rows.every(
+			(row: Partial<MatrixBaselineRow>) =>
+				typeof row?.key === "string" &&
+				row.lanes &&
+				typeof row.lanes === "object",
+		) ||
+		new Set(baseline.rows.map((row: Partial<MatrixBaselineRow>) => row.key))
+			.size !== baseline.rows.length
+	) {
+		throw new Error(`Invalid benchmark matrix baseline: ${path}`);
+	}
+	return baseline as MatrixBaseline;
 }
 
 export function rowKey(row: Pick<LatencyResult, "family" | "op">): string {

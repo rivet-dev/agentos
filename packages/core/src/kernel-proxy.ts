@@ -3,6 +3,7 @@ import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { posix as posixPath } from "node:path";
 import type { NativeMountPluginDescriptor } from "./descriptors.js";
+import { HostTextOutputCapture } from "./host-output-capture.js";
 import type {
 	AuthenticatedSession,
 	CreatedVm,
@@ -534,8 +535,7 @@ export class SidecarKernelProxy {
 			);
 		}
 
-		const stdoutChunks: Uint8Array[] = [];
-		const stderrChunks: Uint8Array[] = [];
+		const capture = new HostTextOutputCapture(options?.maxCapturedOutputBytes);
 		const effectiveCwd = options?.cwd ?? this.defaultExecCwd ?? this.cwd;
 		const parsedCommand = parseSimpleExecCommand(command);
 		const resolveExecPath = (targetPath: string) =>
@@ -581,12 +581,7 @@ export class SidecarKernelProxy {
 
 			return {
 				exitCode,
-				stdout: Buffer.concat(
-					stdoutChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
-				stderr: Buffer.concat(
-					stderrChunks.map((chunk) => Buffer.from(chunk)),
-				).toString("utf8"),
+				...capture.finish(),
 			};
 		};
 		if (
@@ -656,11 +651,11 @@ export class SidecarKernelProxy {
 					...options,
 					cwd: effectiveCwd,
 					onStdout: (chunk) => {
-						stdoutChunks.push(chunk);
+						capture.append("stdout", chunk);
 						options?.onStdout?.(chunk);
 					},
 					onStderr: (chunk) => {
-						stderrChunks.push(chunk);
+						capture.append("stderr", chunk);
 						options?.onStderr?.(chunk);
 					},
 				}),
@@ -670,11 +665,11 @@ export class SidecarKernelProxy {
 			...options,
 			cwd: effectiveCwd,
 			onStdout: (chunk) => {
-				stdoutChunks.push(chunk);
+				capture.append("stdout", chunk);
 				options?.onStdout?.(chunk);
 			},
 			onStderr: (chunk) => {
-				stderrChunks.push(chunk);
+				capture.append("stderr", chunk);
 				options?.onStderr?.(chunk);
 			},
 		});
@@ -1167,8 +1162,8 @@ export class SidecarKernelProxy {
 				}
 			},
 			onStderr: (chunk) => {
-				// `onData` is the ordered PTY rendering stream. `onStderr` remains an
-				// optional channel-specific diagnostic tap and must not also be rendered.
+				// Guest fd 1 and fd 2 share the ordered PTY stream. Non-PTY runtime
+				// diagnostics can still arrive here; do not render the tap a second time.
 				for (const handler of terminalHandlers) {
 					handler(chunk);
 				}

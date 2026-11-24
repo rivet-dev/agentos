@@ -11,9 +11,9 @@
 //! the wire, while the public boundary keeps the synthetic `shell-N` id.
 //!
 //! Stream routing mirrors the TS PTY path: the public `data` stream (`on_shell_data`) carries stdout
-//! and stderr in the order received from the sidecar. stderr is also delivered on an optional
-//! channel-specific diagnostic tap (`on_shell_stderr` + [`OpenShellOptions::on_stderr`]); terminal
-//! renderers consume only `data` so prompts and control sequences are neither reordered nor doubled.
+//! and stderr merged by the PTY. The optional diagnostic tap (`on_shell_stderr` +
+//! [`OpenShellOptions::on_stderr`]) receives only explicitly stderr-labelled sidecar events;
+//! it cannot recover descriptor identity from merged PTY bytes. Renderers consume only `data`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -306,7 +306,7 @@ impl AgentOs {
     }
 
     pub(crate) fn finish_terminal(&self, process_id: &str) {
-        if self.inner().terminals.remove(process_id).is_some() {
+        if self.inner().terminals.remove_sync(process_id).is_some() {
             release_counter(&self.inner().terminal_count);
         }
     }
@@ -381,8 +381,8 @@ impl AgentOs {
     /// pending-shell-exit set so `dispose` can drain it (two-phase teardown).
     ///
     /// Stdout and stderr are fanned into the shell's ordered `data` broadcast (`on_shell_data`).
-    /// Stderr is also fanned into a dedicated diagnostic broadcast (`on_shell_stderr` and the
-    /// [`OpenShellOptions::on_stderr`] callback); terminal renderers should consume only `data`.
+    /// The PTY merges both descriptors. Only explicitly stderr-labelled sidecar events also reach
+    /// `on_shell_stderr` and [`OpenShellOptions::on_stderr`]; renderers should consume only `data`.
     pub fn open_shell(&self, mut options: OpenShellOptions) -> Result<ShellHandle> {
         let inner = self.inner();
         if inner.disposed.load(Ordering::SeqCst) {
@@ -416,7 +416,7 @@ impl AgentOs {
             exit_tx: exit_tx.clone(),
         };
         // `insert` fails only if the key already exists; the monotonic counter guarantees it cannot.
-        let _ = inner.shells.insert(shell_id.clone(), entry);
+        let _ = inner.shells.insert_sync(shell_id.clone(), entry);
 
         let command = options
             .command
@@ -489,8 +489,8 @@ impl AgentOs {
                     );
                     spawned_tx.send_replace(Some(Err(error.clone())));
                     publish_shell_outcome(&exit_tx, Err(error));
-                    agent.inner().shells.remove(&exit_shell_id);
-                    agent.inner().pending_shell_exits.remove(&exit_key);
+                    agent.inner().shells.remove_sync(&exit_shell_id);
+                    agent.inner().pending_shell_exits.remove_sync(&exit_key);
                     return;
                 }
             };
@@ -500,7 +500,7 @@ impl AgentOs {
             agent
                 .inner()
                 .shells
-                .update(&exit_shell_id, |_, existing| existing.pid = kernel_pid);
+                .update_sync(&exit_shell_id, |_, existing| existing.pid = kernel_pid);
             // send_replace, not send: `watch::Sender::send` REFUSES to store the
             // value while no receiver exists (and the initial receiver is dropped
             // at channel creation), which left the spawn gate permanently false
@@ -556,7 +556,7 @@ impl AgentOs {
                         // control sequences retain their original stdout/stderr order.
                         let _ = data_tx.send(output.chunk.clone());
                         if output.channel == StreamChannel::Stderr {
-                            // Channel identity remains available as an optional diagnostic tap.
+                            // Forward only explicit diagnostic events, never guess from PTY bytes.
                             let _ = stderr_tx.send(output.chunk);
                         }
                     }
@@ -596,14 +596,17 @@ impl AgentOs {
 
             // The `.finally` equivalent: remove from both the tracking set and the shells map (only
             // if it is still our entry, matching the TS identity check).
-            agent.inner().pending_shell_exits.remove(&exit_key);
-            agent.inner().shells.remove_if(&exit_shell_id, |existing| {
-                existing.process_id == route_process_id
-            });
+            agent.inner().pending_shell_exits.remove_sync(&exit_key);
+            agent
+                .inner()
+                .shells
+                .remove_if_sync(&exit_shell_id, |existing| {
+                    existing.process_id == route_process_id
+                });
             // remove_if takes `&mut V`; the comparison only reads, which is fine.
         });
 
-        let _ = inner.pending_shell_exits.insert(
+        let _ = inner.pending_shell_exits.insert_sync(
             shell_id.clone(),
             PendingShellExit {
                 task: handle,
@@ -769,7 +772,7 @@ impl AgentOs {
             match self
                 .inner()
                 .terminals
-                .insert(process_id.clone(), TerminalEntry { exit_task })
+                .insert_sync(process_id.clone(), TerminalEntry { exit_task })
             {
                 Ok(()) => {}
                 Err((_, entry)) => {
@@ -835,7 +838,7 @@ impl AgentOs {
     /// List actor-addressable shells currently retained by Core.
     pub fn list_shells(&self) -> Vec<TerminalInfo> {
         let mut shells = Vec::new();
-        self.inner().shells.scan(|shell_id, entry| {
+        self.inner().shells.iter_sync(|shell_id, entry| {
             let outcome = entry.exit_tx.borrow();
             let exit = outcome
                 .as_ref()
@@ -848,6 +851,8 @@ impl AgentOs {
                 exit_code: exit.map(|exit| exit.exit_code),
                 exit_signal: exit.and_then(|exit| exit.exit_signal),
             });
+
+            true
         });
         shells.sort_by(|left, right| left.shell_id.cmp(&right.shell_id));
         shells
@@ -880,12 +885,12 @@ impl AgentOs {
         let spawned = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.spawned_tx.subscribe());
+            .read_sync(shell_id, |_, entry| entry.spawned_tx.subscribe());
         if let Some(spawned) = spawned {
             wait_for_spawn(spawned).await?;
         }
         // Re-read after admission so the snapshot carries the confirmed kernel pid.
-        let live = self.inner().shells.read(shell_id, |_, entry| {
+        let live = self.inner().shells.read_sync(shell_id, |_, entry| {
             (
                 entry.pid,
                 entry.process_id.clone(),
@@ -943,7 +948,7 @@ impl AgentOs {
                     };
                     // Retain the same pair before waking any live waiter.
                     self.retain_shell_outcome(shell_id, &process_id, pid, Ok(exit));
-                    self.inner().shells.read(shell_id, |_, entry| {
+                    self.inner().shells.read_sync(shell_id, |_, entry| {
                         if entry.process_id == process_id {
                             publish_shell_outcome(&entry.exit_tx, Ok(exit));
                         }
@@ -1015,7 +1020,7 @@ impl AgentOs {
         let mut rx = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.data_tx.subscribe())
+            .read_sync(shell_id, |_, entry| entry.data_tx.subscribe())
             .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))?;
         let shell_id = shell_id.to_string();
         let task = tokio::spawn(async move {
@@ -1042,7 +1047,7 @@ impl AgentOs {
         let rx = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.event_tx.subscribe());
+            .read_sync(shell_id, |_, entry| entry.event_tx.subscribe());
         let Some(mut rx) = rx else {
             // A fast exit can race actor event registration. The final output
             // is available through replay; no future hints will be emitted.
@@ -1068,7 +1073,7 @@ impl AgentOs {
 
     /// Subscribe to a shell's stderr. SYNC register; multi-handler; dropping the returned stream is
     /// the unsubscribe. This is the optional diagnostic channel backing the TS `onStderr` option;
-    /// stderr is also present once in ordered `on_shell_data`. Errors with
+    /// the PTY normally merges stderr into `on_shell_data`, leaving this tap empty. Errors with
     /// [`ClientError::ShellNotFound`].
     pub fn on_shell_stderr(
         &self,
@@ -1078,7 +1083,7 @@ impl AgentOs {
         let mut rx = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.stderr_tx.subscribe())
+            .read_sync(shell_id, |_, entry| entry.stderr_tx.subscribe())
             .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))?;
         let shell_id = shell_id.to_string();
         let task = tokio::spawn(async move {
@@ -1104,7 +1109,7 @@ impl AgentOs {
         let rx = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.exit_tx.subscribe());
+            .read_sync(shell_id, |_, entry| entry.exit_tx.subscribe());
         let Some(mut rx) = rx else {
             let exit = self.retained_shell_outcome(shell_id)?;
             handler(ShellExit {
@@ -1232,11 +1237,11 @@ impl AgentOs {
         let exit_rx = self
             .inner()
             .shells
-            .read(shell_id, |_, entry| entry.exit_tx.subscribe())
+            .read_sync(shell_id, |_, entry| entry.exit_tx.subscribe())
             .or_else(|| {
                 self.inner()
                     .pending_shell_exits
-                    .read(shell_id, |_, pending| pending.exit_tx.subscribe())
+                    .read_sync(shell_id, |_, pending| pending.exit_tx.subscribe())
             });
         let Some(exit_rx) = exit_rx else {
             // Entry already dropped: fall back to the recorded exit code (TS retention behavior).
@@ -1255,7 +1260,7 @@ impl AgentOs {
 
         // Immediate map delete, exactly like the TS `_shells.delete(shellId)`; the pending-exit task
         // remains tracked so `dispose` still drains it (two-phase teardown).
-        self.inner().shells.remove(shell_id);
+        self.inner().shells.remove_sync(shell_id);
 
         // Fire-and-forget kill (SIGTERM) after the spawn lands so the kill addresses a live process.
         let agent = self.clone();
@@ -1296,7 +1301,7 @@ impl AgentOs {
             .await?;
         match response {
             wire::ResponsePayload::ProcessKilledResponse(_) => {
-                self.inner().shells.remove(shell_id);
+                self.inner().shells.remove_sync(shell_id);
                 Ok(())
             }
             wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
@@ -1314,7 +1319,7 @@ impl AgentOs {
     ) -> std::result::Result<(String, ShellSpawnReceiver), ClientError> {
         self.inner()
             .shells
-            .read(shell_id, |_, entry| {
+            .read_sync(shell_id, |_, entry| {
                 (entry.process_id.clone(), entry.spawned_tx.subscribe())
             })
             .ok_or_else(|| {

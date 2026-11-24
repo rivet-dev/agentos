@@ -24,6 +24,7 @@ members = [
     "crates/sidecar-client",
     "crates/sidecar-protocol",
     "crates/executor-v8-runtime",
+    "crates/v8",
     "crates/vfs-core",
     "crates/vfs-storage",
     "crates/vm-config",
@@ -39,6 +40,7 @@ repository = "https://github.com/rivet-dev/agent-os"
 # AgentOS crates are published as a lock-step chain and are self-contained in
 # this workspace.
 [workspace.dependencies]
+v8 = { package = "agentos-v8", path = "crates/v8", version = "0.0.1" }
 agentos-actor = { path = "crates/actor", version = "0.0.1" }
 agentos-actor-contract = { path = "crates/actor-contract", version = "0.0.1" }
 agentos-preload = { path = "crates/preload", version = "0.0.1" }
@@ -89,3 +91,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
+
+# The binding's upstream code requires optimization even with a debug embedder.
+[profile.dev.package.agentos-v8]
+opt-level = 1

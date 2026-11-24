@@ -1,6 +1,6 @@
 use super::*;
 
-fn eval(scope: &mut v8::HandleScope, code: &str) -> String {
+fn eval(scope: &mut v8::PinScope<'_, '_>, code: &str) -> String {
     let source = v8::String::new(scope, code).unwrap();
     let result = v8::Script::compile(scope, source, None)
         .unwrap()
@@ -8,7 +8,7 @@ fn eval(scope: &mut v8::HandleScope, code: &str) -> String {
         .unwrap();
     result.to_rust_string_lossy(scope)
 }
-fn check_history(scope: &mut v8::HandleScope, raised: bool) {
+fn check_history(scope: &mut v8::PinScope<'_, '_>, raised: bool) {
     let result = eval(
         scope,
         r#"(() => {
@@ -99,7 +99,7 @@ pub(crate) fn owner_controls() {
         let mut isolate = crate::isolate::create_isolate(None);
         let context = crate::isolate::create_context(&mut isolate);
         {
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let context = v8::Local::new(scope, &context);
             let scope = &mut v8::ContextScope::new(scope, context);
             crate::bridge::register_stub_bridge_fns(
@@ -144,14 +144,14 @@ pub(crate) fn owner_controls() {
         let context = crate::isolate::create_context(&mut isolate);
         isolate.terminate_execution();
         {
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let context = v8::Local::new(scope, &context);
             let scope = &mut v8::ContextScope::new(scope, context);
             assert!(prepare(scope, None, false, bridge, &mut None).is_err());
         }
         isolate.cancel_terminate_execution();
         {
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let context = v8::Local::new(scope, &context);
             let scope = &mut v8::ContextScope::new(scope, context);
             crate::bridge::register_stub_bridge_fns(
@@ -204,7 +204,7 @@ pub(crate) fn owner_controls() {
                 };
                 let context = crate::isolate::create_context(&mut isolate);
                 {
-                    let scope = &mut v8::HandleScope::new(&mut isolate);
+                    v8::scope!(scope, &mut *isolate);
                     let context = v8::Local::new(scope, &context);
                     let scope = &mut v8::ContextScope::new(scope, context);
                     // First context also exercises legacy default(None); other
@@ -234,7 +234,7 @@ pub(crate) fn owner_controls() {
         let mut isolate = crate::snapshot::create_isolate_from_cached_snapshot(&blob, None);
         let context = crate::isolate::create_context(&mut isolate);
         {
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(scope, &mut *isolate);
             let context = v8::Local::new(scope, &context);
             let scope = &mut v8::ContextScope::new(scope, context);
             let mut wrong = policy.clone();

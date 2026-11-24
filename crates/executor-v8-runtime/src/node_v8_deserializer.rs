@@ -27,7 +27,7 @@ fn registry(scope: &mut v8::Isolate) -> Registry {
     scope.set_slot(registry.clone());
     registry
 }
-fn key<'s>(scope: &mut v8::HandleScope<'s>) -> v8::Local<'s, v8::Private> {
+fn key<'s>(scope: &mut v8::PinScope<'s, '_>) -> v8::Local<'s, v8::Private> {
     let name = v8::String::new(scope, "agentOS.node.v8.deserializer").unwrap();
     v8::Private::for_api(scope, Some(name))
 }
@@ -62,12 +62,12 @@ struct Delegate(v8::Weak<v8::Object>);
 impl v8::ValueDeserializerImpl for Delegate {
     fn read_host_object<'s>(
         &self,
-        scope: &mut v8::HandleScope<'s>,
+        scope: &mut v8::PinScope<'s, '_>,
         _decoder: &dyn ValueDeserializerHelper,
     ) -> Option<v8::Local<'s, v8::Object>> {
         // V8 invokes ReadHostObject under a no-JavaScript scope. Node permits
         // its user hook here; keep that permission scoped to this callback.
-        let scope = &mut v8::AllowJavascriptExecutionScope::new(scope);
+        v8::allow_javascript_execution_scope!(let scope, scope);
         let receiver = self.0.to_local(scope)?;
         let name = v8::String::new(scope, "_readHostObject")?;
         let method = receiver.get(scope, name.into())?;
@@ -80,7 +80,7 @@ impl v8::ValueDeserializerImpl for Delegate {
 }
 
 pub(crate) fn call<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     args: &v8::FunctionCallbackArguments<'s>,
     method: &str,
     limit: usize,
@@ -110,8 +110,7 @@ pub(crate) fn call<'s>(
         let bytes = resources
             .reserve(ResourceClass::ExecutorBytes, input.byte_length())
             .map_err(|error| error.to_string())?;
-        let mut input_bytes = vec![0; input.byte_length()];
-        input.copy_contents(&mut input_bytes);
+        let input_bytes = crate::node_v8_serialization::copy_view(scope, input)?;
         let delegate_receiver = v8::Weak::new(scope, receiver);
         let decoder =
             v8::ValueDeserializer::new(scope, Box::new(Delegate(delegate_receiver)), &input_bytes);
@@ -221,7 +220,7 @@ pub(crate) fn call<'s>(
                 .read_raw_bytes(count as usize)
                 .ok_or("ReadRawBytes failed")?;
             let length = bytes.len();
-            let backing = v8::ArrayBuffer::new_backing_store_from_vec(bytes.to_vec()).make_shared();
+            let backing = crate::node_v8_serialization::copied_backing_store(scope, bytes)?;
             let buffer = v8::ArrayBuffer::with_backing_store(scope, &backing);
             Ok(v8::Uint8Array::new(scope, buffer, 0, length)
                 .ok_or("Unable to allocate raw bytes")?

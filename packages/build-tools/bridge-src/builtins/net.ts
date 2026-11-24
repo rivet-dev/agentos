@@ -23,7 +23,7 @@ import {
 	registerCapabilityReadiness,
 	unregisterCapabilityReadiness,
 } from "./readiness.js";
-import { setImmediate } from "./timers.js";
+import { clearImmediate, setImmediate } from "./timers.js";
 
 const CanonicalDuplex =
 	streamStdlibModuleNs.Duplex ?? streamStdlibModuleNs.default?.Duplex;
@@ -1669,12 +1669,20 @@ exposeCustomGlobal("__agentOSNetBridgeMetrics", {
 	},
 });
 
-function yieldBridgeMacrotask() {
+function yieldBridgeMacrotask(socket = undefined) {
 	return new Promise((resolve) => {
-		if (typeof setImmediate === "function") {
-			setImmediate(resolve);
-		} else {
-			setTimeout(resolve, 0);
+		const finish = () => {
+			if (socket) socket._cancelBridgeReadYield = null;
+			resolve();
+		};
+		const immediate = setImmediate(finish);
+		if (socket) {
+			// The yield belongs to this read pump. Closing its socket must both
+			// cancel the timer and settle the pump, without running unrelated work.
+			socket._cancelBridgeReadYield = () => {
+				clearImmediate(immediate);
+				finish();
+			};
 		}
 	});
 }
@@ -1838,6 +1846,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 	_keepAliveDelaySeconds = 0;
 	_refed = true;
 	_bridgeReadLoopRunning = false;
+	_cancelBridgeReadYield = null;
 	_bridgeReadRpcInFlight = false;
 	_bridgeReadPumpQueued = false;
 	_pendingBridgeWake = false;
@@ -2178,6 +2187,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		this._maybeEmitSocketClose();
 	}
 	_destroy(error, callback) {
+		this._cancelBridgeReadYield?.();
 		debugBridgeNetwork(
 			"socket destroy",
 			this._socketId,
@@ -2442,6 +2452,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 		this._maybeEmitSocketClose();
 	}
 	_releaseBridgeSocket() {
+		this._cancelBridgeReadYield?.();
 		if (
 			this._bridgeReleased ||
 			!this._socketId ||
@@ -2998,7 +3009,7 @@ var NetSocket = class _NetSocket extends CanonicalDuplex {
 				if (deliveredPayloads > 0) {
 					countNetBridgeMetric("readMacrotaskYields");
 					const yieldStartUs = traceMetrics ? netBridgeNowUs() : 0;
-					await yieldBridgeMacrotask();
+					await yieldBridgeMacrotask(this);
 					if (traceMetrics) {
 						const yieldElapsedUs = netBridgeNowUs() - yieldStartUs;
 						countNetBridgeMetric("readMacrotaskYieldElapsedUs", yieldElapsedUs);
@@ -3489,6 +3500,7 @@ var NetServer = class extends (eventsStdlibModuleNs.EventEmitter ??
 	_handleRefId = null;
 	_connections = /* @__PURE__ */ new Set();
 	_closePending = false;
+	_closeAsyncContextFrame = undefined;
 	_closeQueued = false;
 	_pendingTransportCloses = 0;
 	_pendingRelisten = null;
@@ -3650,6 +3662,9 @@ var NetServer = class extends (eventsStdlibModuleNs.EventEmitter ??
 		return this;
 	}
 	close(callback) {
+		if (!this._closePending) {
+			this._closeAsyncContextFrame = getAsyncContextFrame();
+		}
 		countNetBridgeMetric("serverCloseCalls");
 		countNetBridgeMetric(
 			"serverCloseConnectionsAtCall",
@@ -3736,7 +3751,9 @@ var NetServer = class extends (eventsStdlibModuleNs.EventEmitter ??
 			this._closeQueued = false;
 			this._closePending = false;
 			countNetBridgeMetric("serverCloseEmits");
-			this._emit("close");
+			const frame = this._closeAsyncContextFrame;
+			this._closeAsyncContextFrame = undefined;
+			runInAsyncContextFrame(frame, this._emit, this, ["close"]);
 		});
 	}
 	address() {

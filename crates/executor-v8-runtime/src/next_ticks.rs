@@ -8,28 +8,28 @@ const PENDING: &str = "agentos.nextTick.pending";
 const BEFORE: &str = "agentos.nextTick.beforeCheckpoint";
 const ENTRY: &str = "agentos.nextTick.entryIsModule";
 
-fn key<'s>(scope: &mut v8::HandleScope<'s>, name: &str) -> v8::Local<'s, v8::Private> {
+fn key<'s>(scope: &mut v8::PinScope<'s, '_>, name: &str) -> v8::Local<'s, v8::Private> {
     let text = v8::String::new(scope, name).expect("nextTick private key");
     v8::Private::for_api(scope, Some(text))
 }
-fn get<'s>(scope: &mut v8::HandleScope<'s>, name: &str) -> Option<v8::Local<'s, v8::Value>> {
+fn get<'s>(scope: &mut v8::PinScope<'s, '_>, name: &str) -> Option<v8::Local<'s, v8::Value>> {
     let global = scope.get_current_context().global(scope);
     let key = key(scope, name);
     global.get_private(scope, key)
 }
-fn set(scope: &mut v8::HandleScope, name: &str, value: bool) {
+fn set(scope: &mut v8::PinScope<'_, '_>, name: &str, value: bool) {
     let global = scope.get_current_context().global(scope);
     let key = key(scope, name);
     let value = v8::Boolean::new(scope, value);
     assert_eq!(global.set_private(scope, key, value.into()), Some(true));
 }
-fn clear(scope: &mut v8::HandleScope, name: &str) {
+fn clear(scope: &mut v8::PinScope<'_, '_>, name: &str) {
     let global = scope.get_current_context().global(scope);
     let key = key(scope, name);
     assert_eq!(global.delete_private(scope, key), Some(true));
 }
 fn field<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &mut v8::PinScope<'s, '_>,
     object: v8::Local<v8::Object>,
     name: &str,
 ) -> Option<v8::Local<'s, v8::Value>> {
@@ -37,7 +37,7 @@ fn field<'s>(
     object.get(scope, key.into())
 }
 
-pub(crate) fn capture(scope: &mut v8::HandleScope) -> Result<(), String> {
+pub(crate) fn capture(scope: &mut v8::PinScope<'_, '_>) -> Result<(), String> {
     let global = scope.get_current_context().global(scope);
     let name = v8::String::new(scope, BOOTSTRAP).ok_or("nextTick bootstrap key allocation")?;
     let value = global
@@ -62,20 +62,21 @@ pub(crate) fn capture(scope: &mut v8::HandleScope) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn begin_entry(scope: &mut v8::HandleScope, module: bool) {
+pub(crate) fn begin_entry(scope: &mut v8::PinScope<'_, '_>, module: bool) {
     set(scope, ENTRY, module);
 }
 
-pub(crate) fn scheduled(scope: &mut v8::HandleScope) -> Result<(), String> {
+pub(crate) fn scheduled(scope: &mut v8::PinScope<'_, '_>) -> Result<(), String> {
+    let context = scope.get_current_context();
+    let queue = context
+        .get_microtask_queue()
+        .ok_or("ERR_AGENTOS_DETACHED_CONTEXT: nextTick requires an attached context")?;
     if !get(scope, HOOKS).is_some_and(|value| value.is_object()) {
         return Err("nextTick hooks are not installed".into());
     }
     let deferred = match get(scope, ENTRY) {
         Some(value) if value.is_boolean() => value.boolean_value(scope),
-        _ => scope
-            .get_current_context()
-            .get_microtask_queue()
-            .is_running_microtasks(),
+        _ => queue.is_running_microtasks(),
     };
     set(scope, PENDING, true);
     if !deferred {
@@ -84,20 +85,20 @@ pub(crate) fn scheduled(scope: &mut v8::HandleScope) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn pending(scope: &mut v8::HandleScope) -> bool {
+pub(crate) fn pending(scope: &mut v8::PinScope<'_, '_>) -> bool {
     get(scope, PENDING).is_some_and(|value| value.is_true())
 }
 
-fn stopped(scope: &mut v8::HandleScope) -> bool {
+fn stopped(scope: &mut v8::PinScope<'_, '_>) -> bool {
     crate::terminal_callback::pending(scope) || scope.is_execution_terminating()
 }
-fn flush(scope: &mut v8::HandleScope) {
+fn flush(scope: &mut v8::PinScope<'_, '_>) {
     if stopped(scope) || !pending(scope) {
         return;
     }
     let mut storage = std::pin::pin!(MicrotaskSuppressionStorage::new());
     let mut explicit = ExplicitMicrotaskScope::new(scope, storage.as_mut());
-    let tc = &mut v8::TryCatch::new(&mut *explicit);
+    v8::tc_scope!(tc, &mut *explicit);
     let hooks = get(tc, HOOKS)
         .and_then(|value| v8::Local::<v8::Object>::try_from(value).ok())
         .expect("scheduled nextTick hooks");
@@ -123,8 +124,8 @@ fn flush(scope: &mut v8::HandleScope) {
     }
 }
 
-pub(crate) fn checkpoint(scope: &mut v8::HandleScope) {
-    if stopped(scope) {
+pub(crate) fn checkpoint(scope: &mut v8::PinScope<'_, '_>) {
+    if stopped(scope) || scope.get_current_context().get_microtask_queue().is_none() {
         return;
     }
     clear(scope, ENTRY);
@@ -136,7 +137,12 @@ pub(crate) fn checkpoint(scope: &mut v8::HandleScope) {
             return;
         }
         let context = scope.get_current_context();
-        context.get_microtask_queue().perform_checkpoint(scope);
+        // A detached context no longer owns a job queue; never deliver its
+        // pending work on the isolate default or another VM context.
+        let Some(queue) = context.get_microtask_queue() else {
+            return;
+        };
+        queue.perform_checkpoint(scope);
         if stopped(scope) || !pending(scope) {
             return;
         }
@@ -146,7 +152,7 @@ pub(crate) fn checkpoint(scope: &mut v8::HandleScope) {
 
 /// Replaces runtime-owned queue storage without invoking callbacks or setters
 /// supplied by guest code. The private state object never leaves the runtime.
-pub(crate) fn discard(scope: &mut v8::HandleScope) {
+pub(crate) fn discard(scope: &mut v8::PinScope<'_, '_>) {
     if let Some(hooks) =
         get(scope, HOOKS).and_then(|value| v8::Local::<v8::Object>::try_from(value).ok())
     {

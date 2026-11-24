@@ -2346,12 +2346,6 @@
 		"rationale": "Node-compatible 512 KiB FileHandle.writeFile request granularity limits bridge calls for regular files while short writes still retry and yield for timer-driven cancellation."
 	},
 	{
-		"name": "MAX_SYMLINK_DEPTH",
-		"path": "packages/build-tools/bridge-src/builtins/fs.ts",
-		"class": "invariant",
-		"rationale": "Linux ELOOP mirror of the kernel invariant."
-	},
-	{
 		"name": "NET_BRIDGE_MAX_RAW_WRITE_BYTES",
 		"path": "packages/build-tools/bridge-src/builtins/net.ts",
 		"class": "invariant",
@@ -3503,5 +3497,54 @@
 		"path": "crates/executor-v8-runtime/src/snapshot.rs",
 		"class": "policy-deferred",
 		"rationale": "Caps the V8 heap admitted to a one-shot snapshot helper."
+	},
+	{
+		"name": "DEFAULT_HOST_CAPTURE_LIMIT_BYTES",
+		"path": "packages/core/src/host-output-capture.ts",
+		"class": "policy",
+		"rationale": "Default byte ceiling for host-owned output capture, independently configurable from VM output policy.",
+		"wired": "maxCapturedOutputBytes"
+	},
+	{
+		"name": "MAX_BRIDGE_CBOR_NESTING",
+		"path": "crates/executor-v8-runtime/src/adapter_runtime.rs",
+		"class": "invariant",
+		"rationale": "Fixed recursive bridge conversion depth protects the trusted native stack from nested guest values."
+	},
+	{
+		"name": "MAX_HTTP_REQUEST_TIMERS",
+		"path": "packages/build-tools/bridge-src/builtins/timers.ts",
+		"class": "policy-deferred",
+		"rationale": "Existing legacy HTTP request continuation cap; bounded and warns near threshold, but per-request configuration is not yet exposed."
+	},
+	{
+		"name": "MAX_BYTE_LENGTH",
+		"path": "crates/v8/src/array_buffer.rs",
+		"class": "invariant",
+		"rationale": "Upstream V8 ABI constant defining ArrayBuffer byte-length representability; not an agentOS resource-policy default."
+	},
+	{
+		"name": "MAX_BYTE_LENGTH",
+		"path": "crates/v8/src/typed_array.rs",
+		"class": "invariant",
+		"rationale": "Upstream V8 ABI constant defining TypedArray byte-length representability; not an agentOS resource-policy default."
+	},
+	{
+		"name": "MAX_LENGTH",
+		"path": "crates/v8/src/string.rs",
+		"class": "invariant",
+		"rationale": "Upstream V8 ABI constant defining String length representability; not an agentOS resource-policy default."
+	},
+	{
+		"name": "MAX_LENGTH",
+		"path": "crates/v8/src/typed_array.rs",
+		"class": "invariant",
+		"rationale": "Upstream V8 ABI constant defining TypedArray element-count representability; not an agentOS resource-policy default."
+	},
+	{
+		"name": "TYPED_ARRAY_MAX_SIZE_IN_HEAP",
+		"path": "crates/v8/src/lib.rs",
+		"class": "invariant",
+		"rationale": "Upstream V8 ABI constant defining TypedArray inline heap layout; not an agentOS resource-policy default."
 	}
 ]

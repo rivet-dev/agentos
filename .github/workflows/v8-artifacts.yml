@@ -11,34 +11,61 @@ on:
   pull_request:
     types: [labeled]
   workflow_dispatch:
+    inputs:
+      target:
+        description: Archive to rebuild (reuse already qualified targets)
+        type: choice
+        default: all
+        options:
+          - all
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
   workflow_call:
 
 permissions:
   contents: read
 
 jobs:
-  archive:
+  select-targets:
     if: >-
       github.event_name != 'pull_request' ||
       (github.event.label.name == 'build-pinned-v8' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'v8-artifacts/'))
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - id: targets
+        env:
+          SELECTED_TARGET: ${{ inputs.target || 'all' }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          targets = [
+              {"target": "x86_64-unknown-linux-gnu", "runner": "depot-ubuntu-24.04-8"},
+              {"target": "aarch64-unknown-linux-gnu", "runner": "depot-ubuntu-24.04-8"},
+              {"target": "x86_64-apple-darwin", "runner": "macos-15"},
+              {"target": "aarch64-apple-darwin", "runner": "macos-15"},
+          ]
+          selected = os.environ["SELECTED_TARGET"]
+          if selected != "all":
+              targets = [target for target in targets if target["target"] == selected]
+          if not targets:
+              raise SystemExit("unknown archive target")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("matrix=" + json.dumps({"include": targets}) + "\n")
+          PY
+  archive:
+    needs: select-targets
     name: V8 archive (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: depot-ubuntu-24.04-8
-          - target: aarch64-unknown-linux-gnu
-            # Chromium's Linux host toolchain is distributed for x64.
-            runner: depot-ubuntu-24.04-8
-          - target: x86_64-apple-darwin
-            runner: macos-15
-          - target: aarch64-apple-darwin
-            runner: macos-15
+      matrix: ${{ fromJSON(needs.select-targets.outputs.matrix) }}
     env:
       TARGET: ${{ matrix.target }}
       CARGO_BUILD_JOBS: '3'
@@ -71,7 +98,7 @@ jobs:
           gpg --dearmor < "$RUNNER_TEMP/llvm.asc" | sudo tee /usr/share/keyrings/agentos-llvm.gpg >/dev/null
           echo 'deb [signed-by=/usr/share/keyrings/agentos-llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' | sudo tee /etc/apt/sources.list.d/agentos-llvm.list
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clang-21 libclang-21-dev pkg-config libglib2.0-dev
+          sudo apt-get install -y --no-install-recommends clang-21 lld-21 libclang-21-dev pkg-config libglib2.0-dev
           echo 'LIBCLANG_PATH=/usr/lib/llvm-21/lib' >> "$GITHUB_ENV"
           echo "RUSTY_V8_BINDGEN_RESOURCE_DIR=$(clang-21 -print-resource-dir)" >> "$GITHUB_ENV"
       - name: Install arm64 Linux cross compilation and execution tools
@@ -81,6 +108,9 @@ jobs:
           echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
           echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER=qemu-aarch64 -L /usr/aarch64-linux-gnu' >> "$GITHUB_ENV"
           echo 'RUSTY_V8_GLIBC_PREFIX=/usr/aarch64-linux-gnu' >> "$GITHUB_ENV"
+      - name: Prepare verified Linux x64 release headers
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: bash scripts/ci/v8/prepare-linux-x64.sh "$RUNNER_TEMP/v8-sysroot" "$RUNNER_TEMP/v8-linux.env"
       - name: Build release library and bindings
         env:
           V8_FROM_SOURCE: '1'
@@ -88,11 +118,17 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/rusty-v8"
           export CARGO_TARGET_DIR="$RUNNER_TEMP/v8-target"
-          export BINDGEN_EXTRA_CLANG_ARGS="-I$CARGO_TARGET_DIR/$TARGET/release/gn_out/gen/v8/include"
+          if [ "$TARGET" = x86_64-unknown-linux-gnu ]; then
+            . "$RUNNER_TEMP/v8-linux.env"
+          fi
+          export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:-} -I$CARGO_TARGET_DIR/$TARGET/release/gn_out/gen/v8/include"
           cargo +1.98.1 build --locked --lib --release --target "$TARGET"
       - name: Package target inputs and verify the bundle
         run: |
           bundle="$RUNNER_TEMP/$TARGET.tar.gz"
+          if [ "$TARGET" = x86_64-unknown-linux-gnu ]; then
+            . "$RUNNER_TEMP/v8-linux.env"
+          fi
           python3 scripts/ci/v8/engine.py pack "$RUNNER_TEMP/rusty-v8" "$RUNNER_TEMP/v8-target" "$TARGET" "$bundle" > "$RUNNER_TEMP/$TARGET.sha256"
           digest=$(cut -d' ' -f1 "$RUNNER_TEMP/$TARGET.sha256")
           python3 scripts/ci/v8/engine.py install "$TARGET" "$RUNNER_TEMP/v8-verify" --bundle "$bundle" --sha256 "$digest" --github-env "$GITHUB_ENV" --cargo-config "$RUNNER_TEMP/v8-source.toml"
@@ -101,6 +137,15 @@ jobs:
         run: |
           expected=$(python3 -c 'import json;print(json.load(open("scripts/ci/v8/source.json"))["version"])')
           revision=$(python3 -c 'import json;print(json.load(open("scripts/ci/v8/source.json"))["rustyV8"])')
+          if [ "$TARGET" = x86_64-unknown-linux-gnu ]; then
+            . "$RUNNER_TEMP/v8-linux.env"
+            root="$AGENTOS_V8_RELEASE_SYSROOT"
+            export RUSTFLAGS="-C linker=clang-21 -C link-arg=-fuse-ld=lld-21 -C link-arg=--sysroot=$root -C link-arg=-L$root/lib/x86_64-linux-gnu -C link-arg=-L$root/usr/lib/x86_64-linux-gnu"
+            for shim in deno-memfd-create agentos-gettid agentos-renameat2; do
+              clang-21 --sysroot="$root" -fPIC -c "scripts/ci/$shim-shim.c" -o "$RUNNER_TEMP/$shim.o"
+              export RUSTFLAGS="$RUSTFLAGS -C link-arg=$RUNNER_TEMP/$shim.o"
+            done
+          fi
           mkdir -p "$RUNNER_TEMP/consumer/src"
           python3 scripts/ci/v8/engine.py consumer-lock "$RUNNER_TEMP/rusty-v8" "$RUNNER_TEMP/consumer/Cargo.lock"
           cd "$RUNNER_TEMP/consumer"
@@ -116,6 +161,14 @@ jobs:
           fn main() {
               let native = v8::V8::get_version();
               assert_eq!(native, v8::VERSION_STRING, "archive and bindgen disagree");
+              let platform = v8::new_default_platform(4, false).make_shared();
+              v8::V8::initialize_platform(platform);
+              v8::V8::initialize();
+              {
+                  let mut isolate = v8::Isolate::new(Default::default());
+                  v8::scope!(let scope, &mut isolate);
+                  let _context = v8::Context::new(scope, Default::default());
+              }
               println!("{}", native.split('-').next().unwrap());
           }
           RS
@@ -125,6 +178,12 @@ jobs:
           python3 "$GITHUB_WORKSPACE/scripts/ci/v8/engine.py" check-temporal-lock "$RUNNER_TEMP/rusty-v8/Cargo.lock" Cargo.lock
           actual=$(CARGO_TARGET_DIR="$RUNNER_TEMP/v8-consumer" cargo +1.98.1 --config "$RUNNER_TEMP/v8-source.toml" run --locked --release --target "$TARGET")
           test "$actual" = "$expected"
+          if [ "$TARGET" = x86_64-unknown-linux-gnu ]; then
+            binary="$RUNNER_TEMP/v8-consumer/$TARGET/release/agentos-v8-version-check"
+            bash "$GITHUB_WORKSPACE/scripts/ci/check-linux-glibc-floor.sh" "$binary"
+            actual=$(docker run --rm -v "$(dirname "$binary"):/probe:ro" ubuntu:18.04 timeout 30 /probe/agentos-v8-version-check)
+            test "$actual" = "$expected"
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         id: upload
         with:

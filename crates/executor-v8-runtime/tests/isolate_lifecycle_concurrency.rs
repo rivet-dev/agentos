@@ -14,7 +14,7 @@ const WASM_ADD_MODULE: &str = "new Uint8Array([0,97,115,109,1,0,0,0,1,7,1,96,2,1
 fn run_add_in_fresh_isolate(left: i32, right: i32) -> i32 {
     let mut guest = isolate::create_isolate(None);
     let sum = {
-        let scope = &mut v8::HandleScope::new(&mut guest);
+        v8::scope!(let scope, &mut *guest);
         let context = v8::Context::new(scope, Default::default());
         let scope = &mut v8::ContextScope::new(scope, context);
         let source = format!(
@@ -136,8 +136,8 @@ fn discover() -> agentos_executor_v8_runtime::module_snapshot::ModuleSnapshotGra
         .expect("discover graph")
 }
 
-fn eval_i32(isolate: &mut v8::OwnedIsolate, code: &str) -> Option<i32> {
-    let scope = &mut v8::HandleScope::new(isolate);
+fn eval_i32(isolate: &mut v8::Isolate, code: &str) -> Option<i32> {
+    v8::scope!(let scope, isolate);
     let context = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, context);
     let source = v8::String::new(scope, code)?;

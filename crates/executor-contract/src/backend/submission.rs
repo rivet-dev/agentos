@@ -108,6 +108,11 @@ impl fmt::Debug for ExecutionEventSubmitHandle {
 }
 
 impl ExecutionEventSubmitHandle {
+    /// Fixed retained-byte ceiling for one admitted request, not current free capacity.
+    pub fn request_byte_limit(&self) -> usize {
+        self.queue.retained_bytes.limit.maximum()
+    }
+
     pub fn process(&self) -> HostProcessContext {
         self.process
     }
@@ -127,11 +132,12 @@ impl ExecutionEventSubmitHandle {
         value: &T,
         additional_raw_bytes: usize,
     ) -> Result<ExecutionEventAdmission, HostServiceError> {
-        let encoded = self.queue.retained_bytes.limit.admit_json(value)?;
-        let retained_bytes = encoded.checked_add(additional_raw_bytes).ok_or_else(|| {
-            HostServiceError::new("EOVERFLOW", "common event retained-byte charge overflowed")
-        })?;
-        self.admit(retained_bytes)
+        let retained_bytes = self
+            .queue
+            .retained_bytes
+            .limit
+            .admit_retained_json(value, additional_raw_bytes)?;
+        Ok(ExecutionEventAdmission { retained_bytes })
     }
 
     pub fn submit(
@@ -313,7 +319,7 @@ pub fn bounded_execution_event_channel(
     }
     let queue = Arc::new(BoundedExecutionEventQueue {
         state: Mutex::new(ExecutionEventQueueState {
-            events: VecDeque::with_capacity(capacity),
+            events: VecDeque::new(),
         }),
         capacity,
         retained_bytes: Arc::new(RetainedEventByteLedger {

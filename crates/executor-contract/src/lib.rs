@@ -8,5 +8,5 @@ mod guest;
 pub mod host;
 mod signal;
 
-pub use guest::{GuestBridgeLimits, GuestRuntimeConfig, HostRpcRequest};
+pub use guest::{json_heap_bytes, GuestBridgeLimits, GuestRuntimeConfig, HostRpcRequest};
 pub use signal::{ExecutionSignalDispositionAction, ExecutionSignalHandlerRegistration};

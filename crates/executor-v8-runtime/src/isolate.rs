@@ -15,11 +15,15 @@ static V8_INIT: Once = Once::new();
 pub(crate) const MAX_UNHANDLED_PROMISE_REJECTIONS: usize = 1024;
 
 unsafe extern "C" {
-    // rusty_v8 130 does not expose these public V8 embedder hooks in Rust. The
+    // The Rust bindings do not expose these public V8 embedder hooks. The
     // build-script C++ shim is compiled against the pinned V8 headers so this
     // boundary does not depend on platform-specific C++ mangled names.
     fn agentos_v8_initialize_sandbox_hardware_before_thread_creation();
-    fn agentos_v8_set_default_thread_isolation_permissions();
+    fn agentos_v8_set_default_thread_isolation_permissions(platform: *const v8::Platform) -> i32;
+    fn agentos_v8_limit_array_buffer_allocator(
+        inner: *mut v8::Allocator,
+        max_bytes: usize,
+    ) -> *mut v8::Allocator;
 }
 
 // These limits are primitive per-thread ownership metadata, never snapshot or
@@ -42,9 +46,9 @@ struct NativeTerminalStack {
 
 unsafe extern "C" {
     fn agentos_v8_plan_terminal_stack(plan: *mut NativeTerminalStackPlan) -> i32;
-    fn agentos_v8_set_owned_stack_limit(isolate: *mut v8::Isolate, limit: usize);
+    fn agentos_v8_set_owned_stack_limit(isolate: v8::UnsafeRawIsolatePtr, limit: usize);
     fn agentos_v8_open_terminal_stack(
-        isolate: *mut v8::Isolate,
+        isolate: v8::UnsafeRawIsolatePtr,
         plan: *const NativeTerminalStackPlan,
     ) -> i32;
 }
@@ -54,7 +58,7 @@ pub(crate) fn plan_native_terminal_stack() -> Result<NativeTerminalStackPlan, St
     let error = unsafe { agentos_v8_plan_terminal_stack(&mut plan) };
     if error != 0 {
         return Err(format!(
-            "ERR_AGENTOS_NATIVE_STACK_RESERVE: cannot reserve terminal stack on this thread: {}; requires supported Linux x86-64 non-ASan stack with room for the guest budget, terminal reserve and OS guard",
+            "ERR_AGENTOS_NATIVE_STACK_RESERVE: cannot reserve terminal stack on this thread: {}; requires a supported Linux/macOS x86-64/ARM64 non-ASan stack with room for the guest budget, terminal reserve and OS guard",
             std::io::Error::from_raw_os_error(error)
         ));
     }
@@ -69,7 +73,7 @@ pub(crate) fn install_native_terminal_stack(
         isolate.get_slot::<NativeTerminalStack>().is_none(),
         "native stack policy installed once before guest entry"
     );
-    unsafe { agentos_v8_set_owned_stack_limit(isolate, plan.ordinary_limit) };
+    unsafe { agentos_v8_set_owned_stack_limit(isolate.as_raw_isolate_ptr(), plan.ordinary_limit) };
     isolate.set_slot(NativeTerminalStack {
         plan,
         thread: thread::current().id(),
@@ -80,8 +84,8 @@ pub(crate) fn install_native_terminal_stack(
 // borrowed live scope/isolate. Restore occurs before its caller can rethrow a
 // TryCatch termination. No cancellation or checkpoint occurs here.
 pub(crate) fn with_terminal_stack_margin<T>(
-    scope: &mut v8::HandleScope,
-    entry: impl FnOnce(&mut v8::HandleScope) -> T,
+    scope: &mut v8::PinScope<'_, '_>,
+    entry: impl FnOnce(&mut v8::PinScope<'_, '_>) -> T,
 ) -> Result<T, String> {
     let registered = scope
         .get_slot::<NativeTerminalStack>()
@@ -92,7 +96,7 @@ pub(crate) fn with_terminal_stack_margin<T>(
         );
     }
     let plan = registered.plan;
-    let isolate: *mut v8::Isolate = &mut ***scope;
+    let isolate = unsafe { scope.as_raw_isolate_ptr() };
     let error = unsafe { agentos_v8_open_terminal_stack(isolate, &plan) };
     if error != 0 {
         return Err(format!(
@@ -101,7 +105,7 @@ pub(crate) fn with_terminal_stack_margin<T>(
         ));
     }
     struct Restore {
-        isolate: *mut v8::Isolate,
+        isolate: v8::UnsafeRawIsolatePtr,
         ordinary_limit: usize,
     }
     impl Drop for Restore {
@@ -430,13 +434,15 @@ pub(crate) fn rejection_limit_error() -> ExecutionError {
 
 // The fixed private key cannot be read/forged from guest JavaScript. Only a
 // reported/overflow marker survives the pending owner, never a strong handle.
-fn rejection_marker_key<'s>(scope: &mut v8::HandleScope<'s>) -> Option<v8::Local<'s, v8::Private>> {
+fn rejection_marker_key<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+) -> Option<v8::Local<'s, v8::Private>> {
     let name = v8::String::new(scope, "agentos#promise-rejection-state")?;
     Some(v8::Private::for_api(scope, Some(name)))
 }
 
 pub(crate) fn set_rejection_marker(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     promise: v8::Local<v8::Promise>,
     marker: i32,
 ) -> bool {
@@ -485,7 +491,7 @@ pub(crate) fn set_rejection_marker(
 }
 
 fn rejection_marker(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     promise: v8::Local<v8::Promise>,
 ) -> Option<(i32, u64)> {
     let key = rejection_marker_key(scope)?;
@@ -502,7 +508,7 @@ fn rejection_marker(
 }
 
 fn current_rejection_marker(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     promise: v8::Local<v8::Promise>,
 ) -> Option<i32> {
     let (marker, generation) = rejection_marker(scope, promise)?;
@@ -516,7 +522,7 @@ fn current_rejection_marker(
 const MODULE_EVALUATION_REJECTION_OWNER: i32 = 3;
 
 pub(crate) fn claim_module_evaluation_rejection(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     promise: v8::Local<v8::Promise>,
 ) -> Result<(), ExecutionError> {
     let failed = || ExecutionError {
@@ -552,7 +558,7 @@ pub(crate) fn claim_module_evaluation_rejection(
 }
 
 extern "C" fn promise_reject_callback(msg: v8::PromiseRejectMessage) {
-    let scope = &mut unsafe { v8::CallbackScope::new(&msg) };
+    v8::callback_scope!(unsafe scope, &msg);
     let promise = msg.get_promise();
     match msg.get_event() {
         v8::PromiseRejectEvent::PromiseRejectWithNoHandler => {
@@ -603,7 +609,7 @@ extern "C" fn promise_reject_callback(msg: v8::PromiseRejectMessage) {
     }
 }
 
-pub fn configure_isolate(isolate: &mut v8::OwnedIsolate) {
+pub fn configure_isolate(isolate: &mut v8::Isolate) {
     isolate.set_slot(PromiseRejectState::default());
     isolate.set_slot(crate::terminal_callback::TerminalCallbackOwner::default());
     isolate.set_promise_reject_callback(promise_reject_callback);
@@ -614,36 +620,23 @@ pub fn configure_isolate(isolate: &mut v8::OwnedIsolate) {
 /// background compilation while keeping the trusted thread census bounded.
 const V8_PLATFORM_WORKER_THREADS: u32 = 4;
 
-/// Opt-in env knob for Wasm exnref exception handling (`try_table`,
-/// `throw_ref`), which Rust `panic=unwind` Wasm uses. V8 turns exnref on by
-/// default from 13.7 (Chrome 137, workerd):
-/// https://github.com/v8/v8/blob/33e7739c134d24c94fdda02ab631eefed6bd18df/src/wasm/wasm-feature-flags.h#L131-L135
-/// The pinned V8 13.0 never shipped it and lacks the later exnref fixes, so
-/// it is opt-in for the JavaScript runtime. The WASM executor enables it by
-/// default for toolchain compatibility. The setting applies to every VM in
-/// the process. The snapshot helper process inherits this environment,
-/// so snapshots are built and restored with the same flags.
-const WASM_EXNREF_ENV: &str = "AGENTOS_V8_WASM_EXNREF";
-
-pub(crate) fn wasm_exnref_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| match std::env::var_os(WASM_EXNREF_ENV) {
-        None => cfg!(feature = "wasm-exnref"),
-        Some(value) if value == "1" => true,
-        Some(value) if value == "0" => false,
-        Some(value) => {
-            tracing::warn!(
-                "ignoring {WASM_EXNREF_ENV}={value:?}: set 1 to enable Wasm exnref or 0 to disable it"
-            );
-            cfg!(feature = "wasm-exnref")
-        }
-    })
+/// V8 15.8 includes finalized Wasm exception references unconditionally.
+/// Refuse an explicit opt-out before any guest can start.
+pub(crate) fn validate_v8_feature_configuration() -> std::io::Result<()> {
+    if std::env::var_os("AGENTOS_V8_WASM_EXNREF").is_some_and(|value| value != "1") {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
+            "ERR_AGENTOS_UNSUPPORTED_V8_OPTION: V8 always supports Wasm exception references; unset AGENTOS_V8_WASM_EXNREF or set it to 1"));
+    }
+    Ok(())
 }
 
 /// Initialize the V8 platform (once per process).
 /// Safe to call multiple times; only the first call takes effect.
 pub fn init_v8_platform() {
     V8_INIT.call_once(|| {
+        // The public runtime constructors validate first and return InvalidInput.
+        // Direct infallible low-level isolate constructors must fail closed too.
+        validate_v8_feature_configuration().unwrap_or_else(|error| panic!("{error}"));
         // V8 requires sandbox hardware keys to be allocated before any thread
         // which may access its sandbox is created. This call precedes both the
         // platform owner below and V8's own default-platform workers.
@@ -658,27 +651,20 @@ pub fn init_v8_platform() {
         thread::Builder::new()
             .name(String::from("agentos-v8-platform"))
             .spawn(move || {
-                v8::icu::set_common_data_74(&ICU_COMMON_DATA.0)
+                v8::icu::set_common_data_78(&ICU_COMMON_DATA.0)
                     .expect("failed to initialize V8 ICU common data");
-                // V8 reads flags once, before initialization.
-                if wasm_exnref_enabled() {
-                    v8::V8::set_flags_from_string("--experimental-wasm-exnref");
-                }
-                // Native lifetime tests use V8's deterministic full-GC test API.
                 #[cfg(test)]
                 v8::V8::set_flags_from_string("--expose_gc");
                 let platform =
                     v8::new_default_platform(V8_PLATFORM_WORKER_THREADS, false).make_shared();
-                // Deno's embedding layer also owns cppgc initialization and
-                // records whether V8 has started. Initialize it on this same
-                // process-lifetime owner before either kind of isolate runs.
-                #[cfg(feature = "obscura-embedding")]
-                deno_core::JsRuntime::init_platform(Some(platform), false);
-                #[cfg(not(feature = "obscura-embedding"))]
-                {
-                    v8::V8::initialize_platform(platform);
-                    v8::V8::initialize();
-                }
+                // Independently generated guest snapshots share one process-wide
+                // read-only heap. Preserve the built-in layout in every blob.
+                v8::V8::set_flags_from_string("--no-extensible-ro-snapshot");
+                // A disposed guest releases its pages. Live isolates can still
+                // reuse pages locally for the rest of their own lifetime.
+                v8::V8::set_flags_from_string("--no-memory-pool-share-memory-on-teardown");
+                v8::V8::initialize_platform(platform);
+                v8::V8::initialize();
                 ready_tx
                     .send(())
                     .expect("V8 platform initializer lost its caller");
@@ -706,7 +692,9 @@ pub fn init_v8_platform() {
 /// before the thread first enters V8.
 pub fn prepare_current_thread() {
     init_v8_platform();
-    unsafe { agentos_v8_set_default_thread_isolation_permissions() };
+    let platform = v8::V8::get_current_platform();
+    let status = unsafe { agentos_v8_set_default_thread_isolation_permissions(&*platform) };
+    assert_eq!(status, 0, "ERR_AGENTOS_V8_THREAD_PERMISSIONS: could not install the isolate thread protection key: {}", std::io::Error::from_raw_os_error(status));
 }
 
 // Headroom granted to V8 above the current heap size when the near-heap-limit
@@ -720,7 +708,7 @@ const NEAR_HEAP_LIMIT_HEADROOM_BYTES: usize = 16 * 1024 * 1024;
 /// State the near-heap-limit callback needs for one isolate.
 struct HeapLimitGuard {
     handle: v8::IsolateHandle,
-    isolate: *mut v8::Isolate,
+    isolate: v8::UnsafeRawIsolatePtr,
     exceeded: Arc<AtomicBool>,
 }
 
@@ -734,7 +722,7 @@ impl Drop for HeapLimitGuardRegistration {
         // isolate is still alive, but its annex/IsolateHandle is already
         // invalidated. Remove the callback directly before freeing its data.
         // A zero limit avoids changing the heap limit during teardown.
-        unsafe { &mut *self.guard.isolate }
+        unsafe { v8::Isolate::from_raw_isolate_ptr(self.guard.isolate) }
             .remove_near_heap_limit_callback(near_heap_limit_callback, 0);
     }
 }
@@ -789,8 +777,8 @@ extern "C" fn near_heap_limit_callback(
         // One large allocation (for example a 256 MiB string) can take the heap
         // far past the limit before this callback runs, so size the new limit
         // from the heap, not from the old limit.
-        let mut statistics = v8::HeapStatistics::default();
-        unsafe { (*guard.isolate).get_heap_statistics(&mut statistics) };
+        let statistics =
+            unsafe { v8::Isolate::from_raw_isolate_ptr(guard.isolate) }.get_heap_statistics();
         heap_size = statistics.total_heap_size();
     }
     warn_limit_exhausted(
@@ -813,7 +801,7 @@ extern "C" fn near_heap_limit_callback(
 ///
 /// Must be called for every isolate created with a non-`None` heap limit,
 /// regardless of whether it was built fresh or restored from a snapshot.
-pub fn install_heap_limit_guard(isolate: &mut v8::OwnedIsolate) {
+pub fn install_heap_limit_guard(isolate: &mut v8::Isolate) {
     if isolate.get_slot::<HeapLimitGuardRegistration>().is_some() {
         return;
     }
@@ -821,7 +809,7 @@ pub fn install_heap_limit_guard(isolate: &mut v8::OwnedIsolate) {
     isolate.set_slot(HeapLimitExceeded(Arc::clone(&exceeded)));
     let mut guard = Box::new(HeapLimitGuard {
         handle: isolate.thread_safe_handle(),
-        isolate: &mut **isolate,
+        isolate: unsafe { isolate.as_raw_isolate_ptr() },
         exceeded,
     });
     let data = guard.as_mut() as *mut HeapLimitGuard as *mut c_void;
@@ -841,6 +829,10 @@ pub fn install_heap_limit_guard(isolate: &mut v8::OwnedIsolate) {
 /// V8 allocates WebAssembly memory and resizable buffers through its page
 /// allocator instead, so this budget does not count them.
 struct ArrayBufferBudget {
+    // V8 retains its shared allocator on the native isolate through disposal.
+    // Keep startup bytes and external source resources tied to that identity,
+    // even when a Rust isolate handle moves or disposal unwinds.
+    snapshot: Option<crate::snapshot::SnapshotBlob>,
     used: AtomicUsize,
     limit: usize,
     warned: AtomicBool,
@@ -903,26 +895,6 @@ unsafe extern "C" fn budget_free(budget: &ArrayBufferBudget, data: *mut c_void, 
     budget.release(len);
 }
 
-unsafe extern "C" fn budget_reallocate(
-    budget: &ArrayBufferBudget,
-    data: *mut c_void,
-    old_len: usize,
-    new_len: usize,
-) -> *mut c_void {
-    if new_len > old_len && !budget.reserve(new_len - old_len) {
-        return std::ptr::null_mut();
-    }
-    let resized = unsafe { libc::realloc(data, new_len.max(1)) };
-    if resized.is_null() {
-        if new_len > old_len {
-            budget.release(new_len - old_len);
-        }
-    } else if new_len < old_len {
-        budget.release(old_len - new_len);
-    }
-    resized
-}
-
 unsafe extern "C" fn budget_drop(budget: *const ArrayBufferBudget) {
     drop(unsafe { Arc::from_raw(budget) });
 }
@@ -932,15 +904,18 @@ static ARRAY_BUFFER_BUDGET_VTABLE: v8::RustAllocatorVtable<ArrayBufferBudget> =
         allocate: budget_allocate,
         allocate_uninitialized: budget_allocate_uninitialized,
         free: budget_free,
-        reallocate: budget_reallocate,
         drop: budget_drop,
     };
 
 /// Create params whose V8 heap and, separately, ArrayBuffer memory are each
 /// capped at `limit_mb`.
-fn budgeted_create_params(limit_mb: u32) -> (v8::CreateParams, Arc<ArrayBufferBudget>) {
+fn budgeted_create_params(
+    limit_mb: u32,
+    snapshot: Option<crate::snapshot::SnapshotBlob>,
+) -> (v8::CreateParams, Arc<ArrayBufferBudget>) {
     let limit_bytes = (limit_mb as usize) * 1024 * 1024;
     let budget = Arc::new(ArrayBufferBudget {
+        snapshot,
         used: AtomicUsize::new(0),
         limit: limit_bytes,
         warned: AtomicBool::new(false),
@@ -953,28 +928,63 @@ fn budgeted_create_params(limit_mb: u32) -> (v8::CreateParams, Arc<ArrayBufferBu
             &ARRAY_BUFFER_BUDGET_VTABLE,
         )
     };
+    // SAFETY: the shim takes ownership of the inner allocator on every path
+    // and returns a uniquely owned V8 allocator, or null on allocation failure.
+    let allocator = unsafe {
+        v8::UniquePtr::from_raw(agentos_v8_limit_array_buffer_allocator(
+            allocator.into_raw(),
+            limit_bytes,
+        ))
+    }
+    .take()
+    .expect("failed to allocate the V8 ArrayBuffer budget wrapper");
     let params = v8::CreateParams::default()
         .heap_limits(0, limit_bytes)
         .array_buffer_allocator(allocator.make_shared());
+    // SAFETY: the allocator installed above owns an Arc to this budget. V8
+    // holds the allocator until after tearing down the isolate and its heap.
+    let params = match &budget.snapshot {
+        Some(blob) => unsafe { blob.apply_to_create_params(params) },
+        None => params,
+    };
     (params, budget)
 }
 
 /// Bounded create params for an isolate that is not a guest session isolate,
 /// such as the snapshot creator in the helper process.
 pub(crate) fn bounded_create_params(limit_mb: u32) -> v8::CreateParams {
-    budgeted_create_params(limit_mb).0
+    budgeted_create_params(limit_mb, None).0
 }
 
-/// Create a guest isolate, fresh or snapshot-restored (`customize` adds the
-/// snapshot parameters). The heap limit in MB (`None` applies
+/// A thread-affine guest isolate. Keep ownership private so callers cannot
+/// convert it to a shared isolate and bypass the session lifecycle.
+pub struct GuestIsolate {
+    isolate: v8::OwnedIsolate,
+}
+
+impl std::ops::Deref for GuestIsolate {
+    type Target = v8::Isolate;
+    fn deref(&self) -> &Self::Target {
+        &self.isolate
+    }
+}
+
+impl std::ops::DerefMut for GuestIsolate {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.isolate
+    }
+}
+
+/// Create a fresh or snapshot-restored guest isolate. The heap limit in MB
+/// (`None` applies
 /// `DEFAULT_HEAP_LIMIT_MB`) caps the V8 heap and, separately, the isolate's
 /// ArrayBuffer memory.
 pub(crate) fn create_guest_isolate(
     heap_limit_mb: Option<u32>,
-    customize: impl FnOnce(v8::CreateParams) -> v8::CreateParams,
-) -> v8::OwnedIsolate {
-    let (params, budget) = budgeted_create_params(heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB));
-    let params = customize(params);
+    snapshot: Option<crate::snapshot::SnapshotBlob>,
+) -> GuestIsolate {
+    let (params, budget) =
+        budgeted_create_params(heap_limit_mb.unwrap_or(DEFAULT_HEAP_LIMIT_MB), snapshot);
     // The existing constructor is infallible: reject unsupported/undersized
     // native stacks before creating an isolate, never from a guest callback.
     let terminal_stack = plan_native_terminal_stack()
@@ -990,16 +1000,16 @@ pub(crate) fn create_guest_isolate(
     install_heap_limit_guard(&mut isolate);
     crate::terminal_callback::initialize_delivery_key(&mut isolate);
     isolate.set_slot(budget);
-    isolate
+    GuestIsolate { isolate }
 }
 
 /// Create a new V8 isolate with an optional heap limit in MB. `None` applies the
 /// bounded-by-default cap (`DEFAULT_HEAP_LIMIT_MB`) — an isolate is NEVER created
 /// with an unbounded heap, so a guest heap bomb terminates its own isolate rather
 /// than fatal-aborting the shared process.
-pub fn create_isolate(heap_limit_mb: Option<u32>) -> v8::OwnedIsolate {
+pub fn create_isolate(heap_limit_mb: Option<u32>) -> GuestIsolate {
     prepare_current_thread();
-    create_guest_isolate(heap_limit_mb, |params| params)
+    create_guest_isolate(heap_limit_mb, None)
 }
 
 /// State the external-memory GC check needs for one isolate.
@@ -1010,7 +1020,7 @@ struct ExternalMemoryGuard {
 }
 
 struct ExternalMemoryGuardRegistration {
-    isolate: *mut v8::Isolate,
+    isolate: v8::UnsafeRawIsolatePtr,
     guard: Box<ExternalMemoryGuard>,
 }
 
@@ -1019,7 +1029,7 @@ impl Drop for ExternalMemoryGuardRegistration {
         let data = self.guard.as_mut() as *mut ExternalMemoryGuard as *mut c_void;
         // As with the heap guard, slot teardown precedes native V8 disposal.
         // Keep the callback's Box alive until removal of this exact data pointer.
-        unsafe { &mut *self.isolate }
+        unsafe { v8::Isolate::from_raw_isolate_ptr(self.isolate) }
             .remove_gc_prologue_callback(external_memory_gc_callback, data);
     }
 }
@@ -1036,7 +1046,7 @@ impl Drop for ExternalMemoryGuardRegistration {
 /// Install this only for guest JavaScript sessions. Python (Pyodide) and the
 /// WASM runner keep their own program memory in WebAssembly and bound it with
 /// their own limits. Calling it again on the same isolate does nothing.
-pub fn install_external_memory_guard(isolate: &mut v8::OwnedIsolate) {
+pub fn install_external_memory_guard(isolate: &mut v8::Isolate) {
     if isolate
         .get_slot::<ExternalMemoryGuardRegistration>()
         .is_some()
@@ -1060,9 +1070,9 @@ pub fn install_external_memory_guard(isolate: &mut v8::OwnedIsolate) {
         warned: AtomicBool::new(false),
     });
     let data = guard.as_mut() as *mut ExternalMemoryGuard as *mut c_void;
-    isolate.add_gc_prologue_callback(external_memory_gc_callback, data, v8::GCType::ALL);
+    isolate.add_gc_prologue_callback(external_memory_gc_callback, data, v8::GCType::kGCTypeAll);
     let registration = ExternalMemoryGuardRegistration {
-        isolate: &mut **isolate,
+        isolate: unsafe { isolate.as_raw_isolate_ptr() },
         guard,
     };
     isolate.set_slot(registration);
@@ -1080,8 +1090,7 @@ pub(crate) fn admit_external_allocation(
         .cloned()
         .ok_or("Uint8Array encoding requires the VM external-memory budget")?;
     let outside = |isolate: &mut v8::Isolate| {
-        let mut statistics = v8::HeapStatistics::default();
-        isolate.get_heap_statistics(&mut statistics);
+        let statistics = isolate.get_heap_statistics();
         statistics
             .external_memory()
             .saturating_sub(budget.used.load(Ordering::Acquire))
@@ -1106,7 +1115,7 @@ pub(crate) fn admit_external_allocation(
 }
 
 extern "C" fn external_memory_gc_callback(
-    isolate: *mut v8::Isolate,
+    isolate: v8::UnsafeRawIsolatePtr,
     _gc_type: v8::GCType,
     _flags: v8::GCCallbackFlags,
     data: *mut c_void,
@@ -1114,9 +1123,8 @@ extern "C" fn external_memory_gc_callback(
     // Safety: the registration owns this stable Box and unregisters the callback
     // before freeing it. V8 runs GC prologue callbacks on the isolate's thread.
     let guard = unsafe { &*(data as *const ExternalMemoryGuard) };
-    let isolate = unsafe { &mut *isolate };
-    let mut statistics = v8::HeapStatistics::default();
-    isolate.get_heap_statistics(&mut statistics);
+    let mut isolate = unsafe { v8::Isolate::from_raw_isolate_ptr(isolate) };
+    let statistics = isolate.get_heap_statistics();
     // External memory also holds the non-shared ArrayBuffers the budget already
     // counts, so only the remainder is checked here.
     let outside_budget = statistics
@@ -1133,7 +1141,7 @@ extern "C" fn external_memory_gc_callback(
     }
 }
 
-pub fn drop_isolate(isolate: Option<v8::OwnedIsolate>) {
+pub fn drop_isolate(isolate: Option<GuestIsolate>) {
     if let Some(mut isolate) = isolate {
         crate::bridge::release_vm_context_registry(&mut isolate);
         drop(isolate);
@@ -1142,8 +1150,8 @@ pub fn drop_isolate(isolate: Option<v8::OwnedIsolate>) {
 
 /// Create a new V8 context on the given isolate.
 /// Returns a Global handle so the context can be reused across scopes.
-pub fn create_context(isolate: &mut v8::OwnedIsolate) -> v8::Global<v8::Context> {
-    let scope = &mut v8::HandleScope::new(isolate);
+pub fn create_context(isolate: &mut v8::Isolate) -> v8::Global<v8::Context> {
+    v8::scope!(let scope, isolate);
     let context = v8::Context::new(scope, Default::default());
     v8::Global::new(scope, context)
 }
@@ -1229,10 +1237,10 @@ mod memory_budget_tests {
         // Exercise the registered callback without allocating to the heap limit.
         let limit = 8 * 1024 * 1024;
         let (headroom, rejected, terminated) = {
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
-            let scope = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(let scope, scope);
             let code = v8::String::new(scope, "for (let i = 0; i < 4; i++) {} 42").unwrap();
             let script = v8::Script::compile(scope, code, None).unwrap();
             let headroom = near_heap_limit_callback(data, limit, limit);
@@ -1262,10 +1270,10 @@ mod memory_budget_tests {
         install_external_memory_guard(&mut isolate);
         install_external_memory_guard(&mut isolate);
         let (rejected, terminated, external_bytes) = {
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
-            let scope = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(let scope, scope);
             let code = v8::String::new(scope, "for (let i = 0; i < 4; i++) {} 42").unwrap();
             let script = v8::Script::compile(scope, code, None).unwrap();
             // Host-provided backing stores are outside the custom allocator's
@@ -1274,8 +1282,7 @@ mod memory_budget_tests {
             let backing = v8::ArrayBuffer::new_backing_store_from_bytes(vec![0u8; 9 * 1024 * 1024]);
             let buffer = v8::ArrayBuffer::with_backing_store(scope, &backing.make_shared());
             scope.low_memory_notification();
-            let mut statistics = v8::HeapStatistics::default();
-            scope.get_heap_statistics(&mut statistics);
+            let statistics = scope.get_heap_statistics();
             let rejected = script.run(scope).is_none();
             let terminated = scope.has_terminated();
             // Referencing the handle after GC makes its intended lifetime clear.
@@ -1324,7 +1331,7 @@ mod memory_budget_tests {
     fn guest_array_buffer_over_budget_throws_without_killing_isolate() {
         let mut isolate = create_isolate(Some(8));
         {
-            let scope = &mut v8::HandleScope::new(&mut isolate);
+            v8::scope!(let scope, &mut *isolate);
             let context = v8::Context::new(scope, Default::default());
             let scope = &mut v8::ContextScope::new(scope, context);
             let source = v8::String::new(
@@ -1353,8 +1360,9 @@ mod memory_budget_tests {
     }
 
     #[test]
-    fn allocator_rejected_growth_preserves_existing_allocation_and_budget() {
+    fn allocator_rejection_preserves_existing_allocation_and_budget() {
         let budget = ArrayBufferBudget {
+            snapshot: None,
             used: AtomicUsize::new(0),
             limit: 32,
             warned: AtomicBool::new(false),
@@ -1362,13 +1370,49 @@ mod memory_budget_tests {
         unsafe {
             let allocation = budget_allocate(&budget, 16);
             assert!(!allocation.is_null());
-            assert!(budget_reallocate(&budget, allocation, 16, 33).is_null());
+            assert!(budget_allocate(&budget, 17).is_null());
             assert_eq!(budget.used.load(Ordering::Acquire), 16);
-            let allocation = budget_reallocate(&budget, allocation, 16, 8);
-            assert!(!allocation.is_null());
-            assert_eq!(budget.used.load(Ordering::Acquire), 8);
-            budget_free(&budget, allocation, 8);
+            let second = budget_allocate(&budget, 8);
+            assert!(!second.is_null());
+            assert_eq!(budget.used.load(Ordering::Acquire), 24);
+            budget_free(&budget, second, 8);
+            budget_free(&budget, allocation, 16);
             assert_eq!(budget.used.load(Ordering::Acquire), 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod native_stack_tests {
+    use super::*;
+
+    #[test]
+    fn native_stack_plan_preserves_reserves_and_rejects_small_stacks() {
+        thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(|| {
+                let plan = plan_native_terminal_stack().expect("supported worker stack");
+                assert!(plan.stack_low < plan.setup_sp && plan.setup_sp < plan.stack_high);
+                assert_eq!(plan.setup_sp - plan.ordinary_limit, 984 * 1024);
+                assert_eq!(plan.ordinary_limit - plan.terminal_limit, 128 * 1024);
+                assert!(plan.terminal_limit >= plan.stack_low + plan.guard_bytes + 64 * 1024);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let error = plan_native_terminal_stack()
+                    .err()
+                    .expect("undersized stack rejected");
+                assert!(
+                    error.contains("ERR_AGENTOS_NATIVE_STACK_RESERVE"),
+                    "{error}"
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

@@ -461,6 +461,22 @@ function normalizePythonBridgeError(error) {
   return normalized;
 }
 
+function serializePythonSubprocessResult(result) {
+  // CBOR bridge bytes arrive as views. JSON.stringify alone turns them into
+  // numeric-key objects, losing their byte identity at the Python boundary.
+  const output = (value) => ArrayBuffer.isView(value)
+    ? {
+        __agentOSType: 'bytes',
+        base64: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('base64'),
+      }
+    : value;
+  return JSON.stringify({
+    ...result,
+    stdout: output(result.stdout ?? ''),
+    stderr: output(result.stderr ?? ''),
+  });
+}
+
 function createPythonBridgeRpcBridge() {
   if (!bridgePythonRpc) {
     return null;
@@ -588,7 +604,7 @@ function createPythonBridgeRpcBridge() {
       } catch (error) {
         throw new Error(`invalid Python subprocessRun payload JSON: ${formatError(error)}`);
       }
-      return JSON.stringify(requestSync('subprocessRun', {
+      return serializePythonSubprocessResult(requestSync('subprocessRun', {
         command,
         args,
         argv0,
@@ -826,7 +842,7 @@ function createPythonFdRpcBridge() {
       } catch (error) {
         throw new Error(`invalid Python subprocessRun payload JSON: ${formatError(error)}`);
       }
-      return JSON.stringify(requestSync('subprocessRun', {
+      return serializePythonSubprocessResult(requestSync('subprocessRun', {
         command,
         args,
         argv0,
@@ -1417,7 +1433,14 @@ class _AgentOsCompletedProcess:
         self.stdout = stdout
         self.stderr = stderr
 
-def _agentos_subprocess_run(args, *, capture_output=False, check=False, cwd=None, env=None, input=None, shell=False, executable=None, text=False, encoding="utf-8", errors="strict", stdout=None, stderr=None, timeout=None, **kwargs):
+def _agentos_subprocess_bytes(value):
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    if not isinstance(value, dict) or value.get("__agentOSType") != "bytes" or not isinstance(value.get("base64"), str):
+        raise RuntimeError("invalid subprocess output byte payload")
+    return _agentos_base64.b64decode(value["base64"], validate=True)
+
+def _agentos_subprocess_run(args, *, capture_output=False, check=False, cwd=None, env=None, input=None, shell=False, executable=None, text=False, encoding=None, errors=None, stdout=None, stderr=None, timeout=None, **kwargs):
     del kwargs, stdout, stderr, timeout
     if isinstance(args, (str, bytes)):
         original_command = args.decode("utf-8") if isinstance(args, bytes) else args
@@ -1464,11 +1487,11 @@ def _agentos_subprocess_run(args, *, capture_output=False, check=False, cwd=None
         )
     except Exception as error:
         _agentos_raise_from_error(_agentos_vm_host_interface_error(error))
-    stdout_bytes = payload.get("stdout", "").encode("utf-8")
-    stderr_bytes = payload.get("stderr", "").encode("utf-8")
-    if text or encoding is not None:
-        stdout_value = stdout_bytes.decode(encoding or "utf-8", errors=errors)
-        stderr_value = stderr_bytes.decode(encoding or "utf-8", errors=errors)
+    stdout_bytes = _agentos_subprocess_bytes(payload.get("stdout", ""))
+    stderr_bytes = _agentos_subprocess_bytes(payload.get("stderr", ""))
+    if text or encoding is not None or errors is not None:
+        stdout_value = stdout_bytes.decode(encoding or "utf-8", errors=errors or "strict")
+        stderr_value = stderr_bytes.decode(encoding or "utf-8", errors=errors or "strict")
     else:
         stdout_value = stdout_bytes
         stderr_value = stderr_bytes

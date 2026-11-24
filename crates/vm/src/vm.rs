@@ -7957,7 +7957,9 @@ mod tests {
             let close_started = Arc::new(AtomicBool::new(false));
             let generation = {
                 let mut vm = sidecar.vms.get_mut(&vm_id).expect("pending-close VM");
-                vm.limits.reactor.shutdown_deadline_ms = 10;
+                // Reach the deliberately stalled database close after normal
+                // kernel teardown, including unoptimized test builds.
+                vm.limits.reactor.shutdown_deadline_ms = 1_000;
                 vm.database = Some(Arc::new(PendingCloseDatabase {
                     close_started: Arc::clone(&close_started),
                 }));

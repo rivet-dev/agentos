@@ -944,6 +944,18 @@ where
             reservation,
             ..
         } = target;
+        // A queued claim can outlive its parent's exit. Resolve the unchanged
+        // process label in the current tree before dispatch; direct replies still
+        // enforce the original VM generation and kernel PID.
+        let label = Self::child_process_path_label(
+            &process_id,
+            &child_path.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        let (process_id, child_path) = self
+            .vms
+            .get(&vm_id)
+            .and_then(|state| Self::resolve_detached_child_process_path(&state, &label))
+            .unwrap_or((process_id, child_path));
         let future: std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), VmError>>>> =
             match event {
                 ActiveExecutionEvent::Common(ExecutionEvent::HostCall { operation, reply }) => {
@@ -1087,11 +1099,8 @@ where
     /// broker unchanged.
     pub(super) fn route_received_internal_process_event(
         &mut self,
-        envelope: ProcessEventEnvelope,
+        mut envelope: ProcessEventEnvelope,
     ) -> Result<Option<ProcessEventEnvelope>, VmError> {
-        if !Self::internal_execution_event(&envelope.event) {
-            return Ok(Some(envelope));
-        }
         self.validate_process_event_envelope_locator(&envelope)?;
         let target_label = if envelope.child_path.is_empty() {
             envelope.process_id.clone()
@@ -1099,10 +1108,11 @@ where
             format!("{}/{}", envelope.process_id, envelope.child_path.join("/"))
         };
         let Some(mut vm) = self.vms.get_mut(&envelope.vm_id) else {
-            tracing::debug!(
-                vm_id = envelope.vm_id,
-                process_id = target_label,
-                "ERR_AGENTOS_STALE_PROCESS_EVENT: runtime completion targeted a disposed VM"
+            log_stale_process_event(
+                &self.bridge,
+                &envelope.vm_id,
+                &target_label,
+                "execution event dispatch",
             );
             reject_internal_event(
                 envelope.event,
@@ -1112,13 +1122,25 @@ where
         };
         if vm.connection_id != envelope.connection_id || vm.session_id != envelope.session_id {
             return Err(VmError::InvalidState(format!(
-                "ERR_AGENTOS_PROCESS_EVENT_SCOPE_MISMATCH: runtime completion for VM {} carried connection/session {}/{}, expected {}/{}",
+                "ERR_AGENTOS_PROCESS_EVENT_SCOPE_MISMATCH: runtime completion ownership mismatch for VM {} carried connection/session {}/{}, expected {}/{}",
                 envelope.vm_id,
                 envelope.connection_id,
                 envelope.session_id,
                 vm.connection_id,
                 vm.session_id
             )));
+        }
+        // Output already in flight at disposal is stale too. Validate its VM
+        // owner before admission, but allow trailing public events after the
+        // process itself has been reaped.
+        if !Self::internal_execution_event(&envelope.event) {
+            return Ok(Some(envelope));
+        }
+        // Reparenting preserves the full label, PID and generation. Only its
+        // root/path split changes when a detached child is adopted.
+        if let Some((root, path)) = Self::resolve_detached_child_process_path(&vm, &target_label) {
+            envelope.process_id = root;
+            envelope.child_path = path;
         }
         let Some(root) = vm.active_processes.get_mut(&envelope.process_id) else {
             tracing::debug!(
@@ -1383,29 +1405,25 @@ where
                         process_id,
                         event,
                     };
-                    if let Err(error) = self.check_pending_process_event_capacity(&envelope) {
-                        let retry = self.global_process_event_pressure_can_retry(&envelope);
-                        let Some(mut vm) = self.vms.get_mut(&vm_id) else {
-                            return Err(error);
-                        };
-                        let Some(process) = vm.active_processes.get_mut(&envelope.process_id)
-                        else {
-                            return Err(error);
-                        };
-                        let polled = PolledExecutionEvent {
+                    if let ProcessEventOffer::Paused(envelope) =
+                        self.offer_pending_process_event(envelope)?
+                    {
+                        let mut vm = self
+                            .vms
+                            .get_mut(&vm_id)
+                            .ok_or_else(|| missing_vm_error(&vm_id))?;
+                        let process = vm
+                            .active_processes
+                            .get_mut(&envelope.process_id)
+                            .ok_or_else(|| missing_process_error(&vm_id, &envelope.process_id))?;
+                        process.restore_paused_execution_event(PolledExecutionEvent {
                             event: envelope.event,
                             reservation,
-                        };
-                        if retry {
-                            process.restore_paused_execution_event(polled)?;
-                            self.public_process_event_capacity_waiter
-                                .store(true, std::sync::atomic::Ordering::Release);
-                            continue;
-                        }
-                        process.requeue_pending_execution_event(polled)?;
-                        return Err(error);
+                        })?;
+                        self.public_process_event_capacity_waiter
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        continue;
                     }
-                    self.queue_pending_process_event(envelope)?;
                     root_source_remains |= source_remains;
                     drop(reservation);
                     emitted_any = true;
@@ -1921,28 +1939,27 @@ where
                             process_id: process_id.clone(),
                             event,
                         };
-                        if let Err(error) = self.check_pending_process_event_capacity(&envelope) {
-                            let retry = self.global_process_event_pressure_can_retry(&envelope);
-                            let Some(mut vm) = self.vms.get_mut(&vm_id) else {
-                                return Err(error);
-                            };
-                            let Some(process) = vm.active_processes.get_mut(&process_id) else {
-                                return Err(error);
-                            };
-                            let polled = PolledExecutionEvent {
+                        if let ProcessEventOffer::Paused(envelope) =
+                            self.offer_pending_process_event(envelope)?
+                        {
+                            let mut vm = self
+                                .vms
+                                .get_mut(&vm_id)
+                                .ok_or_else(|| missing_vm_error(&vm_id))?;
+                            let process = vm
+                                .active_processes
+                                .get_mut(&envelope.process_id)
+                                .ok_or_else(|| {
+                                    missing_process_error(&vm_id, &envelope.process_id)
+                                })?;
+                            process.restore_paused_execution_event(PolledExecutionEvent {
                                 event: envelope.event,
                                 reservation,
-                            };
-                            if retry {
-                                process.restore_paused_execution_event(polled)?;
-                                self.public_process_event_capacity_waiter
-                                    .store(true, std::sync::atomic::Ordering::Release);
-                                continue;
-                            }
-                            process.requeue_pending_execution_event(polled)?;
-                            return Err(error);
+                            })?;
+                            self.public_process_event_capacity_waiter
+                                .store(true, std::sync::atomic::Ordering::Release);
+                            continue;
                         }
-                        self.queue_pending_process_event(envelope)?;
                         drop(reservation);
                     }
                     emitted_any = true;
@@ -2405,6 +2422,9 @@ where
         vm: &VmState,
         detached_process_id: &str,
     ) -> Option<(String, Vec<String>)> {
+        if vm.active_processes.contains_key(detached_process_id) {
+            return Some((detached_process_id.to_owned(), Vec::new()));
+        }
         let root_process_id = vm
             .active_processes
             .keys()

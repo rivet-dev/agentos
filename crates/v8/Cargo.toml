@@ -1,0 +1,41 @@
+[package]
+name = "agentos-v8"
+version.workspace = true
+edition = "2024"
+license = "MIT"
+repository.workspace = true
+description = "Pinned Rust V8 bindings and verified native archives for agentOS"
+links = "agentos_v8"
+readme = "README.md"
+
+[lib]
+name = "v8"
+
+[features]
+default = ["use_custom_libcxx"]
+use_custom_libcxx = []
+simdutf = []
+v8_enable_pointer_compression = []
+v8_enable_multi_cage = ["v8_enable_pointer_compression"]
+v8_enable_sandbox = ["v8_enable_pointer_compression"]
+v8_enable_v8_checks = []
+
+[dependencies]
+bitflags = "2.5"
+paste = { package = "pastey", version = "=0.2.3" }
+# These exact versions match the native Temporal ABI in the source archives.
+temporal_capi = { version = "=0.2.3", features = ["zoneinfo64"] }
+temporal_rs = "=0.2.3"
+timezone_provider = "=0.2.3"
+diplomat-runtime = "=0.15.1"
+zoneinfo64 = "=0.3.0"
+
+[build-dependencies]
+diplomat = "=0.15.0"
+
+# Keep upstream sources byte-identical. These two style/deprecation diagnostics
+# are new in Rust 1.99; neither changes the safety or ABI of the pinned code.
+[lints.rust]
+deprecated = "allow"
+[lints.clippy]
+nonnull_unchecked_on_box_ptr = "allow"

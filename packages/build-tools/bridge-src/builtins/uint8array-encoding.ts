@@ -3,9 +3,13 @@ import { createBridgeSyncFacade } from "./fs.js";
 const nativeEncoding = createBridgeSyncFacade("uint8array.encode");
 
 // `Uint8Array` hex and base64 methods from tc39/proposal-arraybuffer-base64.
-// V8 130 has no native version, so the guest gets this one. A later V8 with
-// native methods keeps its own: `defineMissingMethods` skips them.
+// Keep native decoders when available, except setFromBase64: V8 15.8 still
+// validates trailing input after filling the destination and overcounts trailing
+// whitespace. Retain our bounded decoder until native behavior matches
+// https://tc39.es/proposal-arraybuffer-base64/spec/#sec-frombase64.
 //
+// Encoders retain the owning pre-allocation memory check even when V8 supplies
+// native methods; native string allocation alone does not enforce that bound.
 // These act as built-ins, so they read the view through captured intrinsics.
 // A subclass's `length`, or a guest patch of `slice` or `Buffer`, cannot change
 // the bytes they see or the type they return.
@@ -375,9 +379,15 @@ function decodeHexInto(target, string, maxLength) {
 	return { read, written };
 }
 
-function defineMissingMethods(target, methods) {
+function installEncodingMethods(target, methods) {
 	for (const [name, value] of Object.entries(methods)) {
-		if (typeof target[name] === "function") continue;
+		if (
+			name !== "setFromBase64" &&
+			name !== "toHex" &&
+			name !== "toBase64" &&
+			typeof target[name] === "function"
+		)
+			continue;
 		Object.defineProperty(target, name, {
 			configurable: true,
 			writable: true,
@@ -388,7 +398,7 @@ function defineMissingMethods(target, methods) {
 
 // Methods are object-literal shorthand so they have no [[Construct]]. A default
 // parameter keeps a method's `length` as the spec requires.
-defineMissingMethods(Uint8Array.prototype, {
+installEncodingMethods(Uint8Array.prototype, {
 	toHex() {
 		assertUint8Array(this, "toHex");
 		return encodeHex(this, readableLength(this));
@@ -431,7 +441,7 @@ defineMissingMethods(Uint8Array.prototype, {
 	},
 });
 
-defineMissingMethods(Uint8Array, {
+installEncodingMethods(Uint8Array, {
 	fromHex(string) {
 		assertString(string, "fromHex");
 		assertEvenHexLength(string);

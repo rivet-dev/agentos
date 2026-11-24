@@ -2742,22 +2742,36 @@ impl ActiveExecutionEvent {
             | Self::Common(ExecutionEvent::Exited(_)) => 4 * 1024,
             Self::Common(ExecutionEvent::Warning(error))
             | Self::Common(ExecutionEvent::RuntimeFault(error)) => {
-                std::mem::size_of::<Self>().saturating_add(error.encoded_bytes())
+                std::mem::size_of::<Self>().saturating_add(error.heap_bytes())
             }
             Self::Common(_) => 4 * 1024,
             Self::Stdout(bytes)
             | Self::Stderr(bytes)
             | Self::RoutedStdout(bytes)
             | Self::RoutedStderr(bytes) => std::mem::size_of::<Self>().saturating_add(bytes.len()),
-            // Internal RPC events are serviced eagerly rather than retained;
-            // account a conservative fixed envelope if briefly deferred. The
-            // wire payload is independently frame-bounded.
             Self::ManagedWriteRecheck(pending) => {
                 std::mem::size_of::<Self>().saturating_add(pending.bytes.len())
             }
-            Self::HostRpcRequest(_)
-            | Self::HostCallCompletion(_)
-            | Self::DeferredPosixPollWake
+            Self::HostRpcRequest(call) => {
+                std::mem::size_of::<Self>().saturating_add(call.request.heap_bytes())
+            }
+            Self::HostCallCompletion(completion) => {
+                let heap = match &completion.result {
+                    Ok(value) => agentos_executor_contract::json_heap_bytes(value),
+                    Err(error) => error
+                        .code
+                        .capacity()
+                        .saturating_add(error.message.capacity())
+                        .saturating_add(
+                            error
+                                .details
+                                .as_ref()
+                                .map_or(0, agentos_executor_contract::json_heap_bytes),
+                        ),
+                };
+                std::mem::size_of::<Self>().saturating_add(heap)
+            }
+            Self::DeferredPosixPollWake
             | Self::ManagedStreamReadRecheck(_)
             | Self::ManagedUdpPollRecheck(_) => 4 * 1024,
             Self::SignalState { .. } | Self::Exited(_) => std::mem::size_of::<Self>(),
@@ -3448,6 +3462,35 @@ mod execution_backend_lifecycle_tests {
     fn assert_execution_backend<T: ExecutionBackend>() {}
 
     #[test]
+    fn stdio_partial_write_fits_retained_request_budget_without_losing_order() {
+        let data = (0..65536).map(|i| (i % 251) as u8).collect::<Vec<_>>();
+        let mut request = HostRpcRequest {
+            id: 1,
+            method: "__kernel_stdio_write".to_owned(),
+            args: vec![json!(1), Value::Null],
+            raw_bytes_args: std::collections::HashMap::from([(1, data.clone())]),
+        };
+        let limit = 16 * 1024;
+        fit_stdio_write_request(&mut request, limit);
+        let kept = &request.raw_bytes_args[&1];
+        assert!(!kept.is_empty());
+        assert!(kept.len() < data.len());
+        assert_eq!(kept.as_slice(), &data[..kept.len()]);
+        assert!(std::mem::size_of::<ExecutionHostCall>() + request.heap_bytes() <= limit);
+        assert!(std::mem::size_of::<ActiveExecutionEvent>() + kept.len() <= limit);
+        let fitted = request.clone();
+        fit_stdio_write_request(&mut request, limit);
+        assert_eq!(request, fitted);
+        // No partial success when even metadata cannot be admitted.
+        fit_stdio_write_request(&mut request, 1);
+        assert_eq!(request, fitted);
+        request.method = "other.atomic.write".to_owned();
+        let atomic = request.clone();
+        fit_stdio_write_request(&mut request, 1024);
+        assert_eq!(request, atomic);
+    }
+
+    #[test]
     fn host_function_and_active_execution_use_the_common_lifecycle_contract() {
         assert_execution_backend::<HostFunctionExecution>();
         assert_execution_backend::<ActiveExecution>();
@@ -3937,38 +3980,44 @@ fn map_wasm_execution_event_with_host(
     Ok(Some(event))
 }
 
+// Stdio is a partial-write operation. Fit its owned binary payload before common
+// event admission; the kernel still checks the descriptor and returns the actual
+// count. Other RPCs remain atomic and retain their ordinary typed limit failures.
+fn fit_stdio_write_request(request: &mut HostRpcRequest, limit: usize) {
+    if request.method != "__kernel_stdio_write" {
+        return;
+    }
+    let Some(bytes) = request.raw_bytes_args.get(&1) else {
+        return;
+    };
+    let overhead = std::mem::size_of::<ExecutionHostCall>()
+        .saturating_add(request.heap_bytes())
+        .saturating_sub(bytes.capacity());
+    // The same bytes next enter the output event queue, whose enum overhead
+    // can be larger than the host request. Both queues obey the same limit.
+    let overhead = overhead.max(std::mem::size_of::<ActiveExecutionEvent>());
+    let available = limit.saturating_sub(overhead);
+    if available > 0 && bytes.capacity() > available {
+        let kept = bytes.len().min(available);
+        let partial = bytes[..kept].to_vec();
+        request.raw_bytes_args.insert(1, partial);
+    }
+}
+
 fn route_compatibility_host_call(
-    call: ExecutionHostCall,
+    mut call: ExecutionHostCall,
     full_filesystem: bool,
     max_reply_bytes: usize,
     host: Option<&ProcessHostCapabilitySet>,
 ) -> Result<Option<ActiveExecutionEvent>, VmError> {
-    #[derive(Serialize)]
-    struct CompatibilityRequestCharge<'a> {
-        method: &'a str,
-        args: &'a [Value],
+    if let Some(limit) = host.and_then(ProcessHostCapabilitySet::request_byte_limit) {
+        fit_stdio_write_request(&mut call.request, limit);
     }
-
     let reply = call.reply.clone();
     let admission = match host
         .map(|host| {
-            let raw_bytes = call
-                .request
-                .raw_bytes_args
-                .values()
-                .try_fold(0usize, |total, bytes| total.checked_add(bytes.len()))
-                .ok_or_else(|| {
-                    HostServiceError::new(
-                        "EOVERFLOW",
-                        "compatibility host-call raw payload size overflowed",
-                    )
-                })?;
-            host.admit_json_request(
-                &CompatibilityRequestCharge {
-                    method: &call.request.method,
-                    args: &call.request.args,
-                },
-                raw_bytes,
+            host.admit_request(
+                std::mem::size_of::<ExecutionHostCall>().saturating_add(call.request.heap_bytes()),
             )
         })
         .transpose()

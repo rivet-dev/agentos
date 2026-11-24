@@ -66,7 +66,7 @@ impl Drop for EventLoopWatchdog {
 }
 
 fn run_event_loop_with_watchdog(
-    scope: &mut v8::HandleScope,
+    scope: &mut v8::PinScope<'_, '_>,
     rx: &Receiver<SessionCommand>,
     pending: &PendingPromises,
 ) -> EventLoopStatus {
@@ -89,7 +89,7 @@ fn fresh_isolate_supports_rgi_emoji_unicode_sets() {
 
     let mut isolate = isolate::create_isolate(None);
     let context = isolate::create_context(&mut isolate);
-    let scope = &mut v8::HandleScope::new(&mut isolate);
+    v8::scope!(scope, &mut *isolate);
     let context = v8::Local::new(scope, &context);
     let scope = &mut v8::ContextScope::new(scope, context);
     let source = v8::String::new(
@@ -122,7 +122,7 @@ fn event_loop_pumps_v8_platform_tasks_for_native_wasm_promises() {
     let (_tx, rx) = crossbeam_channel::unbounded::<SessionCommand>();
     let mut bridge_cache = None;
 
-    let scope = &mut v8::HandleScope::new(&mut isolate);
+    v8::scope!(scope, &mut *isolate);
     let ctx = v8::Local::new(scope, &context);
     let scope = &mut v8::ContextScope::new(scope, ctx);
 
@@ -190,7 +190,7 @@ fn event_loop_completes_native_async_wasm_instantiate_promises() {
     let (_tx, rx) = crossbeam_channel::unbounded::<SessionCommand>();
     let mut bridge_cache = None;
 
-    let scope = &mut v8::HandleScope::new(&mut isolate);
+    v8::scope!(scope, &mut *isolate);
     let ctx = v8::Local::new(scope, &context);
     let scope = &mut v8::ContextScope::new(scope, ctx);
 
@@ -259,7 +259,7 @@ fn event_loop_surfaces_native_async_wasm_compile_errors_without_hanging() {
     let (_tx, rx) = crossbeam_channel::unbounded::<SessionCommand>();
     let mut bridge_cache = None;
 
-    let scope = &mut v8::HandleScope::new(&mut isolate);
+    v8::scope!(scope, &mut *isolate);
     let ctx = v8::Local::new(scope, &context);
     let scope = &mut v8::ContextScope::new(scope, ctx);
 
@@ -323,7 +323,7 @@ fn event_loop_waits_for_refed_guest_timers_between_interval_ticks() {
     let (tx, rx) = crossbeam_channel::unbounded::<SessionCommand>();
     let mut bridge_cache = None;
 
-    let scope = &mut v8::HandleScope::new(&mut isolate);
+    v8::scope!(scope, &mut *isolate);
     let ctx = v8::Local::new(scope, &context);
     let scope = &mut v8::ContextScope::new(scope, ctx);
 

@@ -28,13 +28,17 @@ async function execute(source: string, heapMb = 128) {
 }
 
 test("large Uint8Array encodings preserve offset/shared views and every base64 remainder", async () => {
-	const source = `const{createHash}=require('node:crypto');const observations=[],digest=s=>[s.length,createHash('sha256').update(s).digest('hex')];for(const shared of[false,true])for(const length of[65536,65537,65538,65539]){const buffer=shared?new SharedArrayBuffer(length+8):new ArrayBuffer(length+8),whole=new Uint8Array(buffer);for(let i=0;i<whole.length;i++)whole[i]=i%251;const view=whole.subarray(3,length+3);observations.push([shared,length,digest(view.toHex()),digest(view.toBase64()),digest(view.toBase64({omitPadding:true})),digest(view.toBase64({alphabet:'base64url'})),digest(view.toBase64({alphabet:'base64url',omitPadding:true}))]);}console.log(JSON.stringify(observations));`;
-	const host = spawnSync(process.execPath, ["-e", source], {
+	const source = `const{createHash}=require('node:crypto');const observations=[],digest=s=>[s.length,createHash('sha256').update(s).digest('hex')];for(const shared of[false,true])for(const length of[65536,65537,65538,65539]){const buffer=shared?new SharedArrayBuffer(length+8):new ArrayBuffer(length+8),whole=new Uint8Array(buffer);for(let i=0;i<whole.length;i++)whole[i]=i%251;const view=whole.subarray(3,length+3);observations.push([shared,length,digest(hex(view)),digest(base64(view)),digest(base64(view,{omitPadding:true})),digest(base64(view,{alphabet:'base64url'})),digest(base64(view,{alphabet:'base64url',omitPadding:true}))]);}console.log(JSON.stringify(observations));`;
+	// Node 24's experimental Uint8Array encoder ignores view offsets. Buffer
+	// provides the established reference for these exact bytes and options.
+	const reference = `const hex=v=>Buffer.from(v).toString('hex'),base64=(v,o={})=>{let s=Buffer.from(v).toString('base64');if(o.alphabet==='base64url')s=s.replaceAll('+','-').replaceAll('/','_');return o.omitPadding?s.replace(/=+$/,''):s;};`;
+	const guest = `const hex=v=>v.toHex(),base64=(v,o)=>v.toBase64(o);`;
+	const host = spawnSync(process.execPath, ["-e", reference + source], {
 		encoding: "utf8",
 		timeout: 15000,
 	});
 	expect(host.status, host.stderr).toBe(0);
-	expect(await execute(source)).toEqual(JSON.parse(host.stdout));
+	expect(await execute(guest + source)).toEqual(JSON.parse(host.stdout));
 }, 25000);
 
 test("Uint8Array encoding refuses its external-memory budget before allocating and keeps the VM usable", async () => {

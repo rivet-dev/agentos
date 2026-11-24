@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // AgentOS-owned crates published to crates.io in dependency order. Crates with
 // `publish = false` stay out of this list.
 export const RUST_CRATE_ORDER = [
+	"agentos-v8",
 	"agentos-rivetkit-ars-client",
 	"agentos-vm-host-interface",
 	"agentos-executor-contract",
@@ -40,6 +41,31 @@ export const STANDALONE_RUST_CRATE_MANIFESTS = {
 	"agentos-executor-wasm-wasmtime":
 		"crates/executor-wasm-wasmtime/Cargo.toml",
 } as const;
+
+/** Workspace patches do not follow an agentOS crate to its downstream consumers. */
+export function assertPublishableV8Source(repoRoot: string): void {
+	const lock = readFileSync(join(repoRoot, "Cargo.lock"), "utf8");
+	const engines = lock.split(/^\[\[package\]\]$/m).filter((p) => /^name = "v8"$/m.test(p));
+	const owned = lock.split(/^\[\[package\]\]$/m).filter((p) => /^name = "agentos-v8"$/m.test(p));
+	const ownedManifest = join(repoRoot, "crates/v8/Cargo.toml");
+	const ownedSource = owned.length === 1 && !/^source = /m.test(owned[0]) && existsSync(ownedManifest) &&
+		/^name = "agentos-v8"$/m.test(readFileSync(ownedManifest, "utf8"));
+	if ((!ownedSource && engines.length === 0) || engines.some((p) => !/^source = "registry\+https:\/\/github\.com\/rust-lang\/crates\.io-index"$/m.test(p))) {
+		throw new Error(
+			"Rust publication requires a packaged agentOS V8 binding or a crates.io V8 dependency that works outside the agentOS workspace. Qualify the crate and its matching engine bundle before releasing.",
+		);
+	}
+	const pins = JSON.parse(readFileSync(join(repoRoot, "scripts/ci/v8/archives.json"), "utf8"));
+	for (const os of ["unknown-linux-gnu", "apple-darwin"]) {
+		for (const arch of ["x86_64", "aarch64"]) {
+			const target = `${arch}-${os}`;
+			const pin = pins[target];
+			if (typeof pin !== "string" || !/^[0-9a-f]{64}$/.test(pin)) {
+				throw new Error(`Release requires a durable V8 archive SHA-256 for ${target}.`);
+			}
+		}
+	}
+}
 
 function readPackageName(manifestPath: string): string | undefined {
 	const manifest = readFileSync(manifestPath, "utf8");

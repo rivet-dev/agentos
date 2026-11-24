@@ -741,6 +741,7 @@ fn remaining_cpu_after_handoff(
 }
 
 struct WorkerReplacement {
+    permission_tier: agentos_executor_wasm_abi::WasmPermissionTier,
     module: Vec<u8>,
     argv: Vec<String>,
     env: std::collections::BTreeMap<String, String>,
@@ -790,6 +791,7 @@ pub(super) async fn run_worker_process(
             WorkerOutcome::Finished(code) => return Ok(code),
             WorkerOutcome::Replaced(replacement) => {
                 module = replacement.module;
+                request.permission_tier = replacement.permission_tier;
                 request.argv = replacement.argv;
                 request.env = replacement.env;
                 request.limits.active_cpu_time_limit_ms = replacement.remaining_cpu_ms;
@@ -930,7 +932,18 @@ async fn run_worker_image(
                         let outcome = match prepared {
                             Ok((module, Some(argv))) => {
                                 match serde_json::from_value::<std::collections::BTreeMap<String, String>>(exec_request["options"]["env"].clone()) {
-                                    Ok(env) => host.submit_adapter_call(method, vec![exec_request], HashMap::new()).await.map(|_| WorkerReplacement { module, argv, env, remaining_cpu_ms, cpu_sample, remaining_fuel }),
+                                    Ok(env) if matches!(method.as_str(), "process.exec" | "process.exec_fd_image_commit") && exec_request["options"]["localReplacement"] == true => {
+                                        match host.submit_adapter_call(method, vec![exec_request], HashMap::new()).await {
+                                            Err(error) if error.code == "ERR_AGENTOS_WASM_EXEC_COMMITTED_FAILURE" => break Err(error),
+                                            Err(error) => Err(error),
+                                            Ok(reply) => match super::lifecycle::committed_exec_tier(reply) {
+                                                Ok(permission_tier) => Ok(WorkerReplacement { permission_tier, module, argv, env, remaining_cpu_ms, cpu_sample, remaining_fuel }),
+                                                // The kernel may have committed: kill the old worker.
+                                                Err(error) => break Err(error),
+                                            },
+                                        }
+                                    }
+                                    Ok(_) => Err(HostServiceError::new("EINVAL", "invalid local exec commit request")),
                                     Err(error) => Err(HostServiceError::new("EINVAL", format!("invalid exec environment: {error}"))),
                                 }
                             }

@@ -241,9 +241,12 @@ pub(crate) fn cbor_payload_raw_byte_arg_for_decoded(
     cbor_payload_raw_byte_arg(payload, index)
 }
 
+// Ciborium's decoder uses a default recursion limit of 256.
+const MAX_BRIDGE_CBOR_NESTING: usize = 256;
+
 /// Serialize a JSON value to CBOR bytes for bridge responses.
 pub fn json_to_cbor_payload(value: &Value) -> io::Result<Vec<u8>> {
-    let cbor_value = json_to_cbor(value);
+    let cbor_value = json_to_cbor(value, 0)?;
     let mut buf = Vec::new();
     ciborium::ser::into_writer(&cbor_value, &mut buf).map_err(|e| {
         io::Error::new(
@@ -315,9 +318,15 @@ fn cbor_to_json(value: ciborium::value::Value) -> Value {
     }
 }
 
-fn json_to_cbor(value: &Value) -> ciborium::value::Value {
+fn json_to_cbor(value: &Value, depth: usize) -> io::Result<ciborium::value::Value> {
     use ciborium::value::Value as Cbor;
-    match value {
+    if depth >= MAX_BRIDGE_CBOR_NESTING && (value.is_array() || value.is_object()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("CBOR bridge response exceeds the nesting limit of {MAX_BRIDGE_CBOR_NESTING}"),
+        ));
+    }
+    Ok(match value {
         Value::Null => Cbor::Null,
         Value::Bool(b) => Cbor::Bool(*b),
         Value::Number(n) => {
@@ -332,23 +341,27 @@ fn json_to_cbor(value: &Value) -> ciborium::value::Value {
             }
         }
         Value::String(s) => Cbor::Text(s.clone()),
-        Value::Array(arr) => Cbor::Array(arr.iter().map(json_to_cbor).collect()),
+        Value::Array(arr) => Cbor::Array(
+            arr.iter()
+                .map(|value| json_to_cbor(value, depth + 1))
+                .collect::<io::Result<_>>()?,
+        ),
         Value::Object(map) => {
             // Check for Buffer type marker
             if map.get("__type").and_then(Value::as_str) == Some("Buffer") {
                 if let Some(data) = map.get("data").and_then(Value::as_str) {
                     if let Ok(bytes) = base64_decode(data) {
-                        return Cbor::Bytes(bytes);
+                        return Ok(Cbor::Bytes(bytes));
                     }
                 }
             }
             Cbor::Map(
                 map.iter()
-                    .map(|(k, v)| (Cbor::Text(k.clone()), json_to_cbor(v)))
-                    .collect(),
+                    .map(|(k, v)| Ok((Cbor::Text(k.clone()), json_to_cbor(v, depth + 1)?)))
+                    .collect::<io::Result<_>>()?,
             )
         }
-    }
+    })
 }
 
 /// Public base64 encode for use in bridge call handlers.
@@ -422,6 +435,22 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
 mod tests {
     use super::{json_to_cbor_payload, map_bridge_method};
     use serde_json::json;
+
+    #[test]
+    fn cbor_encoder_rejects_excessive_nesting() {
+        use serde_json::Value;
+
+        let mut nested = Value::Null;
+        for _ in 0..super::MAX_BRIDGE_CBOR_NESTING {
+            nested = Value::Array(vec![nested]);
+        }
+        json_to_cbor_payload(&nested).expect("encode at the nesting limit");
+
+        let excessive = Value::Object([("nested".to_owned(), nested)].into_iter().collect());
+        let error = json_to_cbor_payload(&excessive).expect_err("reject excessive nesting");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("nesting limit"));
+    }
 
     #[test]
     fn cbor_byte_string_boundary_includes_five_byte_header() {

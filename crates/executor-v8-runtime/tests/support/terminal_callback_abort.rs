@@ -7,7 +7,7 @@ pub(crate) fn terminal_callback_abort_controls() {
     let mut isolate = crate::isolate::create_isolate(None);
     // Compile before requesting termination; execution, not the asynchronous
     // request flag, proves interruption at V8's actual interrupt check.
-    let scope = &mut v8::HandleScope::new(&mut isolate);
+    v8::scope!(scope, &mut *isolate);
     let context = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, context);
     let source = v8::String::new(
@@ -23,7 +23,7 @@ pub(crate) fn terminal_callback_abort_controls() {
     scope.terminate_execution();
     assert!(!cancel_owned_callback_stop(scope, &abort));
     {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         assert!(
             script.run(tc).is_none(),
             "external termination interrupts finite work"
@@ -69,7 +69,7 @@ pub(crate) fn terminal_callback_abort_controls() {
         .expect("external stop reasserted after cancellation");
     external.join().unwrap();
     {
-        let tc = &mut v8::TryCatch::new(scope);
+        v8::tc_scope!(tc, scope);
         assert!(
             script.run(tc).is_none(),
             "external termination interrupts finite work"
@@ -100,7 +100,7 @@ fn native_process_exit_abort_controls() {
         let mut isolate = crate::isolate::create_isolate(None);
         let context = crate::isolate::create_context(&mut isolate);
         let _call = crate::terminal_callback::begin_call(&mut isolate, 1);
-        let scope = &mut v8::HandleScope::new(&mut isolate);
+        v8::scope!(scope, &mut *isolate);
         let context = v8::Local::new(scope, &context);
         let scope = &mut v8::ContextScope::new(scope, context);
         crate::terminal_callback::install(scope).expect("terminal hooks installed");
@@ -127,7 +127,7 @@ fn native_process_exit_abort_controls() {
         assert!(!cancel_owned_callback_stop(scope, &abort));
         assert_eq!(execution_abort_reason(&abort), Some(reason));
         {
-            let tc = &mut v8::TryCatch::new(scope);
+            v8::tc_scope!(tc, scope);
             assert!(finite.run(tc).is_none());
             assert!(tc.has_terminated(), "external stop remains noncatchable");
         }
@@ -146,8 +146,10 @@ fn owned_queue_abort_fence_controls() {
     let isolate = &mut *owner;
     let context = crate::owned_microtasks::create_root(isolate).unwrap();
     let queue = {
-        let scope = &mut v8::HandleScope::new(&mut *isolate);
-        v8::Local::new(scope, &context).get_microtask_queue() as *const v8::MicrotaskQueue
+        v8::scope!(scope, &mut *isolate);
+        v8::Local::new(scope, &context)
+            .get_microtask_queue()
+            .expect("attached test context") as *const v8::MicrotaskQueue
     };
     let abort = new_execution_abort();
     let (_active, _rx) = ActiveExecutionAbort::arm(&abort);
@@ -155,8 +157,10 @@ fn owned_queue_abort_fence_controls() {
     isolate.terminate_execution();
     assert!(!cancel_owned_callback_stop(isolate, &abort));
     let after = {
-        let scope = &mut v8::HandleScope::new(&mut *isolate);
-        v8::Local::new(scope, &context).get_microtask_queue() as *const v8::MicrotaskQueue
+        v8::scope!(scope, &mut *isolate);
+        v8::Local::new(scope, &context)
+            .get_microtask_queue()
+            .expect("attached test context") as *const v8::MicrotaskQueue
     };
     assert!(
         std::ptr::eq(queue, after),

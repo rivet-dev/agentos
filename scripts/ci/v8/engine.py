@@ -18,6 +18,7 @@ import zipfile
 
 HERE = Path(__file__).resolve().parent
 SOURCE = json.loads((HERE / "source.json").read_text())
+LINUX_X64_SYSROOT = json.loads((HERE / "linux-x64-sysroot.json").read_text())
 TARGETS = ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
            "x86_64-apple-darwin", "aarch64-apple-darwin")
 ICU = "third_party/icu/common/icudtl.dat"
@@ -152,6 +153,11 @@ def pack(source, build, target, output):
                 "v8_generate_external_defines_header": "true",
                 "target_cpu": '"arm64"' if target.startswith("aarch64") else '"x64"'}
     require(all(settings.get(k) == v for k, v in expected.items()), "wrong GN ABI or target")
+    if target == "x86_64-unknown-linux-gnu":
+        sysroot = os.environ.get("AGENTOS_V8_RELEASE_SYSROOT")
+        require(sysroot and settings.get("sysroot") == json.dumps(sysroot),
+                "Linux x64 archive must use the verified release sysroot")
+        require(settings.get("use_glib") == "false", "standalone V8 must not use runner GLib headers")
     if "apple" in target:
         require(sys.platform == "darwin", "Darwin archive must be produced on macOS")
     else:
@@ -175,6 +181,8 @@ def pack(source, build, target, output):
         inputs["vendor/v8/.cargo-checksum.json"] = checksums
         receipt = {"source": SOURCE, "target": target, "gn": expected,
                    "sha256": {name: digest(path) for name, path in inputs.items()}}
+        if target == "x86_64-unknown-linux-gnu":
+            receipt["releaseSysroot"] = LINUX_X64_SYSROOT
         manifest = work / "provenance.json"
         manifest.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
         inputs[manifest.name] = manifest
@@ -193,6 +201,9 @@ def pack(source, build, target, output):
 def verify_bundle(root, target):
     manifest = json.loads((root / "provenance.json").read_text())
     require(manifest["source"] == SOURCE and manifest["target"] == target, "V8 source or target mismatch")
+    if target == "x86_64-unknown-linux-gnu":
+        require(manifest.get("releaseSysroot") == LINUX_X64_SYSROOT,
+                "Linux x64 bundle lacks matching release sysroot provenance")
     archive, binding = filenames(target)
     required = {archive, binding, "generated/v8-gn.h", "v8/include/v8.h", ICU,
                 "licenses/LICENSE", "licenses/v8/LICENSE", "licenses/third_party/icu/LICENSE",
@@ -253,7 +264,8 @@ def reviewed_archive(target, dest, allow_actions):
             download_action_bundle(artifact_id, target, work)
         else:
             url = f"https://releases.rivet.dev/agent-os/v8/{SOURCE['v8Tree']}/{checksum}/{target}.tar.gz"
-            with urllib.request.urlopen(url, timeout=120) as response, (work / "bundle").open("wb") as out:
+            request = urllib.request.Request(url, headers={"User-Agent": "agentos-v8/" + SOURCE["version"]})
+            with urllib.request.urlopen(request, timeout=120) as response, (work / "bundle").open("wb") as out:
                 shutil.copyfileobj(response, out)
         require(digest(work / "bundle") == checksum, "V8 archive SHA-256 mismatch")
         yield work / "bundle", checksum

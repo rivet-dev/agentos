@@ -63,7 +63,10 @@ export interface Vm extends AsyncDisposable {
 export async function createVm<HOST_FUNCTIONS extends HostFunctionSchemas>(
 	options: VmOptions<HOST_FUNCTIONS> = {},
 ): Promise<Vm> {
-	const vm = await AgentOs.create({ defaultsProfile: "secure", ...options });
+	const vm = await AgentOs.create({
+		...options,
+		defaultsProfile: options.defaultsProfile ?? "secure",
+	});
 	const { npm, ...javascript } = vm.javascript;
 	const dispose = () => vm.dispose();
 	return {

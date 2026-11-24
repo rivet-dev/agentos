@@ -304,7 +304,7 @@ describe.skipIf(!existsSync(VIM_BINARY))(
 				expect(fileContent).toBe("provides works\n");
 
 				offData();
-				void __disposeAllSharedSidecarsForTesting().catch(() => {});
+				await __disposeAllSharedSidecarsForTesting();
 				vm = undefined;
 			},
 			TEST_TIMEOUT_MS,
@@ -375,7 +375,7 @@ describe.skipIf(!existsSync(VIM_BINARY))(
 				await settle(800);
 
 				offData();
-				void __disposeAllSharedSidecarsForTesting().catch(() => {});
+				await __disposeAllSharedSidecarsForTesting();
 				vm = undefined;
 			},
 			TEST_TIMEOUT_MS,

@@ -1970,7 +1970,26 @@ function exposeGlobalBinding(target, name, value, options = {}) {
 		enumerable,
 	});
 }
+// Runtime event dispatch, module loading, and lifecycle accounting use these bindings;
+// the platform-specific scrub does not remove them.
+const stableRuntimeGlobals = new Set([
+	"_dgramSocketDispatch",
+	"_httpServerDispatch",
+	"_netSocketDispatch",
+	"_processExitRequested",
+	"_registerHandle",
+	"_requireFrom",
+]);
 function exposeCustomGlobal(name, value) {
+	if (stableRuntimeGlobals.has(name)) {
+		Object.defineProperty(globalThis, name, {
+			value,
+			writable: false,
+			configurable: false,
+			enumerable: true,
+		});
+		return;
+	}
 	exposeGlobalBinding(globalThis, name, value);
 }
 function exposeInstallCompatibleHardenedGlobal(name, value) {

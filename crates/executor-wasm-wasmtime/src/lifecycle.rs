@@ -201,6 +201,9 @@ impl Control {
 
     fn interrupt(&self) {
         self.cancelled.store(true, Ordering::Release);
+        // The epoch callback cannot observe cancellation while its pause
+        // future is parked. Release that future before notifying it.
+        self.paused.store(false, Ordering::Release);
         self.started.store(true, Ordering::Release);
         self.start_notify.notify_waiters();
         self.pause_notify.notify_waiters();
@@ -957,6 +960,7 @@ async fn run_loaded_module_bytes(
                                 )
                             })?);
                     }
+                    request.permission_tier = replacement.permission_tier?;
                     request.argv = replacement.argv;
                     request.env = replacement.env;
                     environment_is_guest_visible = true;
@@ -1150,6 +1154,65 @@ pub(super) async fn load_executable_image(
         .await?;
     let (bytes, _) = read_open_executable_image(host, open, maximum).await?;
     Ok(bytes)
+}
+
+/// Both replacement launchers use the kernel's commit acknowledgment. A missing
+/// tier is a protocol error after commit, so callers must retire the old image.
+pub(super) fn committed_exec_tier(
+    reply: HostCallReply,
+) -> Result<agentos_executor_wasm_abi::WasmPermissionTier, HostServiceError> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Commit {
+        committed: bool,
+        permission_tier: agentos_executor_wasm_abi::WasmPermissionTier,
+    }
+    if let HostCallReply::Json(value) = reply {
+        if let Ok(Commit {
+            committed: true,
+            permission_tier,
+        }) = serde_json::from_value(value)
+        {
+            return Ok(permission_tier);
+        }
+    }
+    Err(HostServiceError::new(
+        "EIO",
+        "exec commit omitted confirmation or a valid kernel permission tier",
+    ))
+}
+
+#[cfg(test)]
+#[test]
+fn replacement_uses_only_a_confirmed_kernel_tier() {
+    use agentos_executor_wasm_abi::WasmPermissionTier::*;
+    use serde_json::json;
+    for (label, tier) in [
+        ("isolated", Isolated),
+        ("read-only", ReadOnly),
+        ("read-write", ReadWrite),
+        ("full", Full),
+    ] {
+        assert_eq!(
+            committed_exec_tier(HostCallReply::Json(
+                json!({"committed": true, "permissionTier": label})
+            ))
+            .unwrap(),
+            tier
+        );
+    }
+    for incomplete in [
+        json!({"committed": true}),
+        json!({"committed": false, "permissionTier": "full"}),
+        json!({"committed": true, "permissionTier": "unknown"}),
+    ] {
+        assert_eq!(
+            committed_exec_tier(HostCallReply::Json(incomplete))
+                .unwrap_err()
+                .code,
+            "EIO"
+        );
+    }
 }
 
 pub(super) async fn read_open_executable_image(
@@ -1379,6 +1442,34 @@ mod tests {
     use agentos_executor_wasm_abi::{WasmExecutionLimits, WasmPermissionTier};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    #[test]
+    fn interrupt_releases_a_parked_epoch_pause_waiter() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+
+        let control = Control::new(true, 1, Duration::from_secs(1));
+        control.paused.store(true, Ordering::Release);
+
+        // Match the epoch callback's YieldCustom future. Poll it once to
+        // register the notification before interrupting the execution.
+        let mut pause_waiter = std::pin::pin!(async {
+            loop {
+                let notified = control.pause_notify.notified();
+                if !control.paused.load(Ordering::Acquire) {
+                    break;
+                }
+                notified.await;
+            }
+        });
+        let mut context = Context::from_waker(Waker::noop());
+        assert_eq!(pause_waiter.as_mut().poll(&mut context), Poll::Pending);
+
+        control.interrupt();
+
+        assert_eq!(pause_waiter.as_mut().poll(&mut context), Poll::Ready(()));
+        assert!(control.cancelled.load(Ordering::Acquire));
+    }
 
     #[test]
     fn queued_event_bytes_are_bounded_and_released_on_handoff() {

@@ -4277,6 +4277,71 @@ pub(super) fn validate_process_launch_request(
     Ok(())
 }
 
+/// Only the trusted kernel selects authority. Verify image compatibility under
+/// the same VM borrow as commit, including policy changes since image open.
+fn validate_in_place_exec_tier(
+    backend: ExecutionStandaloneWasmBackend,
+    effective: ProcessPermissionTier,
+    tiers: Option<crate::executor::host::ExecImportTiers>,
+) -> Result<(), VmError> {
+    if backend == ExecutionStandaloneWasmBackend::V8 {
+        return Ok(());
+    }
+    let tiers = tiers
+        .ok_or_else(|| VmError::host("EINVAL", "Wasmtime exec requires validated import tiers"))?;
+    let admitted = match effective {
+        ProcessPermissionTier::Isolated => tiers.isolated,
+        ProcessPermissionTier::ReadOnly => tiers.read_only,
+        ProcessPermissionTier::ReadWrite => tiers.read_write,
+        ProcessPermissionTier::Full => tiers.full,
+    };
+    if !admitted {
+        return Err(VmError::host(
+            "ENOEXEC",
+            "replacement imports are unavailable at the kernel permission tier",
+        ));
+    }
+    Ok(())
+}
+
+fn in_place_exec_cleanup_error(backend: ExecutionStandaloneWasmBackend, error: VmError) -> VmError {
+    if backend == ExecutionStandaloneWasmBackend::V8 {
+        return error;
+    }
+    tracing::error!(%error, "Wasm exec committed but replacement cleanup failed; retiring the old image");
+    VmError::host("ERR_AGENTOS_WASM_EXEC_COMMITTED_FAILURE", error.to_string())
+}
+
+#[cfg(all(test, feature = "wasm-wasmtime"))]
+#[test]
+fn wasmtime_exec_uses_the_kernel_selected_tier_for_admission() {
+    use crate::executor::host::ExecImportTiers;
+    use ProcessPermissionTier::*;
+    let tiers = ExecImportTiers {
+        isolated: false,
+        read_only: true,
+        read_write: false,
+        full: true,
+    };
+    for backend in [
+        ExecutionStandaloneWasmBackend::Wasmtime,
+        ExecutionStandaloneWasmBackend::WasmtimeThreads,
+    ] {
+        for (tier, compatible) in [
+            (Isolated, false),
+            (ReadOnly, true),
+            (ReadWrite, false),
+            (Full, true),
+        ] {
+            assert_eq!(
+                validate_in_place_exec_tier(backend, tier, Some(tiers)).is_ok(),
+                compatible
+            );
+            assert!(validate_in_place_exec_tier(backend, tier, None).is_err());
+        }
+    }
+}
+
 pub(super) fn validate_wasm_fd_image_commit_request(
     request: &ProcessLaunchRequest,
 ) -> Result<(), VmError> {
@@ -5215,6 +5280,9 @@ where
                 continue;
             };
             if child_path.is_empty() {
+                // Adopted children no longer pass through the ordinary root pump.
+                // Service their parked reads/polls on the same readiness wake.
+                self.recheck_root_deferred_operations(vm_id, &root_process_id, false)?;
                 loop {
                     if host_services
                         .len()
@@ -5289,14 +5357,15 @@ where
                         normalize_child_public_event(process, event)?
                     };
                     match event {
-                        ActiveExecutionEvent::Stdout(chunk) => {
+                        event @ (ActiveExecutionEvent::Stdout(_)
+                        | ActiveExecutionEvent::RoutedStdout(_)) => {
                             let envelope = ProcessEventEnvelope {
                                 connection_id,
                                 session_id,
                                 vm_id: vm_id.to_owned(),
                                 child_path: Vec::new(),
                                 process_id: detached_process_id.clone(),
-                                event: ActiveExecutionEvent::Stdout(chunk),
+                                event,
                             };
                             if let ProcessEventOffer::Paused(envelope) =
                                 self.offer_pending_process_event(envelope)?
@@ -5321,14 +5390,15 @@ where
                             drop(reservation);
                             emitted_any = true;
                         }
-                        ActiveExecutionEvent::Stderr(chunk) => {
+                        event @ (ActiveExecutionEvent::Stderr(_)
+                        | ActiveExecutionEvent::RoutedStderr(_)) => {
                             let envelope = ProcessEventEnvelope {
                                 connection_id,
                                 session_id,
                                 vm_id: vm_id.to_owned(),
                                 child_path: Vec::new(),
                                 process_id: detached_process_id.clone(),
-                                event: ActiveExecutionEvent::Stderr(chunk),
+                                event,
                             };
                             if let ProcessEventOffer::Paused(envelope) =
                                 self.offer_pending_process_event(envelope)?
@@ -7455,7 +7525,7 @@ where
         root_process_id: &str,
         process_path: &[&str],
         mut request: ProcessLaunchRequest,
-    ) -> Result<(), VmError> {
+    ) -> Result<Option<ExecutionWasmPermissionTier>, VmError> {
         if request.options.executable_fd.is_some() {
             return Err(VmError::host(
                 "EINVAL",
@@ -7550,6 +7620,12 @@ where
         };
         apply_child_process_argv0(&mut resolved, request.options.argv0.as_deref());
         if resolved.host_function_command {
+            if request.options.local_replacement {
+                return Err(VmError::host(
+                    "ENOEXEC",
+                    "in-place Wasm replacement requires a WebAssembly image",
+                ));
+            }
             let process_event_capacity = self.config.runtime.protocol.max_process_events;
             let bridge = self.bridge.clone();
             let sidecar_requests = self.sidecar_requests.clone();
@@ -7684,7 +7760,7 @@ where
                 vm_pending_event_bytes_budget,
                 event_notify,
             });
-            return Ok(());
+            return Ok(None);
         }
         if request.options.local_replacement
             && current_adapter_policy.supports_prepared_in_place_exec
@@ -7768,6 +7844,19 @@ where
             .and_then(|process| process.kernel_stdin_writer_fd)
             .into_iter()
             .collect::<Vec<_>>();
+            let effective = vm
+                .kernel
+                .effective_exec_permission_tier(
+                    EXECUTION_DRIVER_NAME,
+                    kernel_pid,
+                    requested_exec_permission_tier,
+                )
+                .map_err(kernel_error)?;
+            validate_in_place_exec_tier(
+                standalone_wasm_backend,
+                effective,
+                request.options.validated_import_tiers,
+            )?;
             vm.kernel
                 .exec_process_retaining_internal_fds_from_thread(
                     EXECUTION_DRIVER_NAME,
@@ -7783,19 +7872,28 @@ where
                     Some(requested_exec_permission_tier),
                 )
                 .map_err(kernel_error)?;
-            prune_managed_process_routes_without_aliases(&bridge, vm_id, &mut vm, kernel_pid)?;
+            prune_managed_process_routes_without_aliases(&bridge, vm_id, &mut vm, kernel_pid)
+                .map_err(|error| in_place_exec_cleanup_error(standalone_wasm_backend, error))?;
 
             let vm = &mut *vm;
             let root = vm
                 .active_processes
                 .get_mut(root_process_id)
-                .ok_or_else(|| missing_process_error(vm_id, root_process_id))?;
+                .ok_or_else(|| {
+                    in_place_exec_cleanup_error(
+                        standalone_wasm_backend,
+                        missing_process_error(vm_id, root_process_id),
+                    )
+                })?;
             let process =
                 Self::active_process_by_path_mut(root, process_path).ok_or_else(|| {
-                    VmError::InvalidState(format!(
-                        "process disappeared during execve: {}",
-                        Self::child_process_path_label(root_process_id, process_path)
-                    ))
+                    in_place_exec_cleanup_error(
+                        standalone_wasm_backend,
+                        VmError::InvalidState(format!(
+                            "process disappeared during execve: {}",
+                            Self::child_process_path_label(root_process_id, process_path)
+                        )),
+                    )
                 })?;
             process.guest_cwd = resolved.guest_cwd;
             process.host_cwd = resolved.host_cwd;
@@ -7815,7 +7913,7 @@ where
             }
             discard_replaced_image_pending_events(process);
 
-            return Ok(());
+            return Ok(Some(execution_wasm_permission_tier(effective)));
         }
 
         let bridge = self.bridge.clone();
@@ -8184,7 +8282,7 @@ where
                 "execve replacement failed after commit; terminating the replacement process"
             );
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Commit metadata for an fexecve image that the trusted WASM runner has
@@ -8197,10 +8295,10 @@ where
         root_process_id: &str,
         process_path: &[&str],
         request: ProcessLaunchRequest,
-    ) -> Result<(), VmError> {
+    ) -> Result<Option<ExecutionWasmPermissionTier>, VmError> {
         validate_wasm_fd_image_commit_request(&request)?;
 
-        let (kernel_pid, retained_internal_fds) = {
+        let (kernel_pid, backend, retained_internal_fds) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let root = vm
                 .active_processes
@@ -8222,6 +8320,7 @@ where
             }
             (
                 process.kernel_pid,
+                process.standalone_wasm_backend,
                 process
                     .kernel_stdin_writer_fd
                     .into_iter()
@@ -8245,6 +8344,12 @@ where
             .vms
             .get_mut(vm_id)
             .ok_or_else(|| missing_vm_error(vm_id))?;
+        // Descriptor exec inherits the calling image's kernel tier.
+        let effective = vm
+            .kernel
+            .process_permission_tier(EXECUTION_DRIVER_NAME, kernel_pid)
+            .map_err(kernel_error)?;
+        validate_in_place_exec_tier(backend, effective, request.options.validated_import_tiers)?;
         vm.kernel
             .exec_process_retaining_internal_fds_from_thread(
                 EXECUTION_DRIVER_NAME,
@@ -8260,17 +8365,23 @@ where
                 None,
             )
             .map_err(kernel_error)?;
-        prune_managed_process_routes_without_aliases(&bridge, vm_id, &mut vm, kernel_pid)?;
+        prune_managed_process_routes_without_aliases(&bridge, vm_id, &mut vm, kernel_pid)
+            .map_err(|error| in_place_exec_cleanup_error(backend, error))?;
 
         let root = vm
             .active_processes
             .get_mut(root_process_id)
-            .ok_or_else(|| missing_process_error(vm_id, root_process_id))?;
+            .ok_or_else(|| {
+                in_place_exec_cleanup_error(backend, missing_process_error(vm_id, root_process_id))
+            })?;
         let process = Self::active_process_by_path_mut(root, process_path).ok_or_else(|| {
-            VmError::InvalidState(format!(
-                "process disappeared during fexecve commit: {}",
-                Self::child_process_path_label(root_process_id, process_path)
-            ))
+            in_place_exec_cleanup_error(
+                backend,
+                VmError::InvalidState(format!(
+                    "process disappeared during fexecve commit: {}",
+                    Self::child_process_path_label(root_process_id, process_path)
+                )),
+            )
         })?;
         process.env = replacement_guest_env;
         process.exit_signal = None;
@@ -8287,7 +8398,7 @@ where
             process.module_resolution_cache_generation = None;
         }
         discard_replaced_image_pending_events(process);
-        Ok(())
+        Ok(Some(execution_wasm_permission_tier(effective)))
     }
 
     // The FIFO VM startup permit serializes engine access. Engine APIs borrow
@@ -10398,7 +10509,6 @@ where
                 if !reply.claim().map_err(VmError::from)? {
                     return Ok(Box::pin(async { Ok(()) }));
                 }
-                let local_replacement = request.options.local_replacement;
                 let result = if fd_image_commit {
                     self.commit_wasm_fd_process_image(
                         vm_id,
@@ -10410,13 +10520,13 @@ where
                     self.exec_process_image(vm_id, root_process_id, caller_process_path, request)
                 };
                 match result {
-                    Ok(()) if local_replacement => {
+                    Ok(Some(tier)) => {
                         reply
-                            .succeed_json(json!({ "committed": true }))
+                            .succeed_json(json!({ "committed": true, "permissionTier": tier }))
                             .map_err(VmError::from)?;
                         return Ok(Box::pin(async { Ok(()) }));
                     }
-                    Ok(()) => {
+                    Ok(None) => {
                         reply.dismiss_claimed().map_err(VmError::from)?;
                         return Ok(Box::pin(async { Ok(()) }));
                     }
@@ -14091,6 +14201,218 @@ pub(super) mod child_event_claim_tests {
                     }),
                     "the exit may be claimed only after the stdout relay releases"
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adopted_detached_child_keeps_inflight_completion_locator() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) = sidecar_with_test_vm(4).await;
+                let id = "root/detached".to_owned();
+                let (connection_id, session_id) = {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    let child =
+                        host_function_process(&mut vm, "detached", None).with_detached(true);
+                    vm.active_processes.insert(id.clone(), child);
+                    vm.detached_child_processes.insert(id.clone());
+                    (vm.connection_id.clone(), vm.session_id.clone())
+                };
+                let envelope = ProcessEventEnvelope {
+                    connection_id,
+                    session_id,
+                    vm_id: vm_id.clone(),
+                    process_id: "root".into(),
+                    child_path: vec!["detached".into()],
+                    event: ActiveExecutionEvent::DeferredPosixPollWake,
+                };
+                assert!(sidecar
+                    .route_received_internal_process_event(envelope)
+                    .unwrap()
+                    .is_none());
+                let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                let child = vm.active_processes.get_mut(&id).unwrap();
+                let queued = child
+                    .lease_pending_execution_event()
+                    .expect("completion follows adopted owner");
+                assert!(matches!(
+                    queued.event(),
+                    ActiveExecutionEvent::DeferredPosixPollWake
+                ));
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn detached_rpc_prepared_before_adoption_uses_current_owner() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) = sidecar_with_test_vm(4).await;
+                let (generation, pid) = {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    let mut parent = host_function_process(&mut vm, "parent", None);
+                    let child = host_function_process(&mut vm, "detached", Some(parent.kernel_pid))
+                        .with_detached(true);
+                    let identity = (vm.generation, child.kernel_pid);
+                    parent.child_processes.insert("child".into(), child);
+                    vm.active_processes.insert("parent".into(), parent);
+                    identity
+                };
+                let reply = DirectHostReplyHandle::new(
+                    HostCallIdentity {
+                        generation,
+                        pid,
+                        call_id: 1,
+                    },
+                    Arc::new(TestReply),
+                    1024,
+                )
+                .unwrap();
+                let vm_handle = sidecar.vms.handle(&vm_id).unwrap();
+                let work = sidecar.prepare_owned_host_rpc(
+                    &vm_id,
+                    "parent",
+                    &["child".into()],
+                    vm_handle,
+                    ExecutionHostCall {
+                        request: HostRpcRequest {
+                            id: 1,
+                            method: "fs.writeFileSync".into(),
+                            args: vec![json!("/rpc-survived"), host_bytes_value(b"alive")],
+                            raw_bytes_args: Default::default(),
+                        },
+                        reply: reply.clone(),
+                    },
+                );
+                // The service has admission but has not been polled when the parent exits.
+                {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    let mut parent = vm.active_processes.remove("parent").unwrap();
+                    for (id, child) in VmManager::<LocalBridge>::adopt_detached_child_processes(
+                        "parent",
+                        &mut parent,
+                    ) {
+                        vm.detached_child_processes.insert(id.clone());
+                        vm.active_processes.insert(id, child);
+                    }
+                }
+                work.await.unwrap();
+                assert!(reply.is_terminal());
+                let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                assert_eq!(
+                    vm.kernel
+                        .read_file_for_process(EXECUTION_DRIVER_NAME, pid, "/rpc-survived")
+                        .unwrap(),
+                    b"alive"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn output_envelope_chunks_preserve_bytes_and_backpressure() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) = sidecar_with_test_vm(1).await;
+                let (connection_id, session_id) = {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    vm.limits.process.pending_event_bytes = 1024;
+                    (vm.connection_id.clone(), vm.session_id.clone())
+                };
+                let data = (0..4096).map(|i| (i % 251) as u8).collect::<Vec<_>>();
+                let mut next = Some(ProcessEventEnvelope {
+                    connection_id,
+                    session_id,
+                    vm_id: vm_id.clone(),
+                    process_id: "root".into(),
+                    child_path: Vec::new(),
+                    event: ActiveExecutionEvent::RoutedStdout(data.clone()),
+                });
+                let mut received = Vec::new();
+                while let Some(event) = next.take() {
+                    next = match sidecar.offer_pending_process_event(event).unwrap() {
+                        ProcessEventOffer::Queued => None,
+                        ProcessEventOffer::Paused(tail) => Some(*tail),
+                    };
+                    if let Some(tail) = next.take() {
+                        next = match sidecar.offer_pending_process_event(tail).unwrap() {
+                            ProcessEventOffer::Paused(tail) => Some(*tail),
+                            ProcessEventOffer::Queued => {
+                                panic!("full queue must retain the suffix")
+                            }
+                        };
+                    }
+                    let event = sidecar.pending_process_events.take_next(|_| true).unwrap();
+                    assert!(event.retained_bytes() <= 1024);
+                    match event.event {
+                        ActiveExecutionEvent::RoutedStdout(bytes) => received.extend(bytes),
+                        _ => panic!("output kind changed"),
+                    }
+                    sidecar.observe_pending_process_event_depth();
+                }
+                assert_eq!(received, data);
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adopted_detached_output_stays_public_and_ordered_under_backpressure() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (mut sidecar, vm_id) = sidecar_with_test_vm(1).await;
+                let id = "root/detached".to_owned();
+                {
+                    let mut vm = sidecar.vms.get_mut(&vm_id).unwrap();
+                    let mut child =
+                        host_function_process(&mut vm, "detached", None).with_detached(true);
+                    for event in [
+                        ActiveExecutionEvent::RoutedStdout(b"out".to_vec()),
+                        ActiveExecutionEvent::RoutedStderr(b"err".to_vec()),
+                        ActiveExecutionEvent::Exited(0),
+                    ] {
+                        child.queue_pending_execution_event(event).unwrap();
+                    }
+                    vm.active_processes.insert(id.clone(), child);
+                    vm.detached_child_processes.insert(id.clone());
+                }
+                let mut services = Vec::new();
+                let mut relays = Vec::new();
+                for phase in 0..3 {
+                    sidecar
+                        .pump_detached_child_process_events_nowait(
+                            &vm_id,
+                            &mut services,
+                            &mut relays,
+                            1,
+                        )
+                        .unwrap();
+                    assert!(
+                        services.is_empty(),
+                        "public output must never become an internal host service"
+                    );
+                    assert!(relays.is_empty());
+                    // With the one-slot public queue occupied, the next event stays at its source.
+                    sidecar
+                        .pump_detached_child_process_events_nowait(
+                            &vm_id,
+                            &mut services,
+                            &mut relays,
+                            1,
+                        )
+                        .unwrap();
+                    assert!(services.is_empty());
+                    assert_eq!(sidecar.pending_process_events.len(), 1);
+                    let event = sidecar.pending_process_events.take_next(|_| true).unwrap();
+                    assert_eq!(event.process_id, id);
+                    match (phase, event.event) {
+                        (0, ActiveExecutionEvent::RoutedStdout(bytes)) => assert_eq!(bytes, b"out"),
+                        (1, ActiveExecutionEvent::RoutedStderr(bytes)) => assert_eq!(bytes, b"err"),
+                        (2, ActiveExecutionEvent::Exited(0)) => {}
+                        (_, other) => panic!("unexpected detached event: {other:?}"),
+                    }
+                    sidecar.observe_pending_process_event_depth();
+                }
             })
             .await;
     }

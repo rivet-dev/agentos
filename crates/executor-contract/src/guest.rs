@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::mem::size_of;
 
 /// Owned compatibility host-call envelope used by legacy synchronous guest
 /// adapters. Native adapters should prefer typed [`crate::host::HostOperation`]
@@ -11,6 +12,63 @@ pub struct HostRpcRequest {
     pub method: String,
     pub args: Vec<Value>,
     pub raw_bytes_args: HashMap<usize, Vec<u8>>,
+}
+
+/// Heap charge for an owned JSON value whose inline slot is already counted.
+/// Arrays and strings expose their allocated capacity. Object maps do not, so
+/// reserve space for tree node slack and child links as well as keys and values.
+/// Refuse values beyond the normal JSON decoder's depth without recursing further.
+pub fn json_heap_bytes(value: &Value) -> usize {
+    fn visit(value: &Value, depth: usize) -> usize {
+        if depth > 128 {
+            return usize::MAX;
+        }
+        match value {
+            Value::String(text) => text.capacity(),
+            Value::Array(values) => values.iter().fold(
+                values.capacity().saturating_mul(size_of::<Value>()),
+                |bytes, child| bytes.saturating_add(visit(child, depth + 1)),
+            ),
+            Value::Object(entries) if !entries.is_empty() => {
+                // A B-tree node holds up to eleven entries. Allow for the
+                // sparsely populated root and partially filled child nodes.
+                let slots = 11usize.saturating_add(entries.len().saturating_mul(3));
+                entries.iter().fold(
+                    slots.saturating_mul(size_of::<(String, Value, usize)>()),
+                    |bytes, (key, child)| {
+                        bytes
+                            .saturating_add(key.capacity())
+                            .saturating_add(visit(child, depth + 1))
+                    },
+                )
+            }
+            _ => 0,
+        }
+    }
+    visit(value, 0)
+}
+
+impl HostRpcRequest {
+    /// Bytes retained outside of this envelope, including spare buffer slots.
+    pub fn heap_bytes(&self) -> usize {
+        let args = self.args.iter().fold(
+            self.args.capacity().saturating_mul(size_of::<Value>()),
+            |bytes, arg| bytes.saturating_add(json_heap_bytes(arg)),
+        );
+        // Hash table growth leaves spare buckets and a control byte per bucket.
+        let raw_slots = self
+            .raw_bytes_args
+            .capacity()
+            .saturating_mul(2)
+            .saturating_mul(size_of::<(usize, Vec<u8>)>() + 1);
+        self.raw_bytes_args.values().fold(
+            self.method
+                .capacity()
+                .saturating_add(args)
+                .saturating_add(raw_slots),
+            |bytes, raw| bytes.saturating_add(raw.capacity()),
+        )
+    }
 }
 
 /// Per-execution guest identity and operating-system projection supplied by

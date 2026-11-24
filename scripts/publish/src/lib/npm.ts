@@ -12,20 +12,20 @@
  * runs, so plain `npm publish` resolves them correctly.
  */
 import { spawn } from "node:child_process";
-import { scoped } from "./logger.js";
-import {
-	assertDiscoverySanity,
-	discoverPackages,
-	type Package,
-} from "./packages.js";
+import { scoped } from "./logger.ts";
+import type { Package } from "./packages.ts";
+
+export type NpmPackage = Package & { tarball?: string };
 
 const log = scoped("npm");
 
 export interface PublishAllOptions {
-	/** npm dist-tag (e.g. my-branch, rc, next, latest). */
+	/** npm dist-tag (e.g. a preview tag, rc, next, latest). */
 	tag: string;
 	/** Max simultaneous publishes. */
 	parallel?: number;
+	/** Publish this many platform packages before starting dependent packages. */
+	platformCount?: number;
 	/** Max retries per package. */
 	retries?: number;
 	/** Initial backoff in ms (doubled per retry). */
@@ -47,7 +47,7 @@ export type PublishStatus =
 	| "failed";
 
 export interface PublishResult {
-	pkg: Package;
+	pkg: NpmPackage;
 	status: PublishStatus;
 	attempts: number;
 	lastError?: string;
@@ -105,13 +105,16 @@ function extractError(output: string, maxLines = 3): string {
 }
 
 function runNpmPublish(
-	pkg: Package,
+	pkg: NpmPackage,
 	tag: string,
 	dryRun: boolean,
 ): Promise<{ code: number; output: string }> {
 	return new Promise((resolvePromise) => {
 		const args = ["publish", "--access", "public", "--tag", tag];
 		if (dryRun) args.push("--dry-run");
+		if (pkg.tarball) {
+			args.push("--ignore-scripts", "--registry", "https://registry.npmjs.org", "--", pkg.tarball);
+		}
 		const child = spawn("npm", args, {
 			cwd: pkg.dir,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -120,6 +123,9 @@ function runNpmPublish(
 		const chunks: Buffer[] = [];
 		child.stdout.on("data", (c) => chunks.push(c));
 		child.stderr.on("data", (c) => chunks.push(c));
+		child.once("error", (error) => {
+			resolvePromise({ code: 1, output: error.message });
+		});
 		child.on("close", (code) => {
 			resolvePromise({
 				code: code ?? 1,
@@ -130,7 +136,7 @@ function runNpmPublish(
 }
 
 async function publishOne(
-	pkg: Package,
+	pkg: NpmPackage,
 	opts: Required<
 		Pick<PublishAllOptions, "tag" | "retries" | "initialBackoffMs" | "dryRun">
 	>,
@@ -179,8 +185,8 @@ function printResult(r: PublishResult): void {
 	log.info(`  ${symbol} ${name}${suffix}`);
 }
 
-export async function publishAll(
-	repoRoot: string,
+export async function publishPackages(
+	packages: readonly NpmPackage[],
 	opts: PublishAllOptions,
 ): Promise<PublishSummary> {
 	const parallel = opts.parallel ?? 16;
@@ -189,14 +195,11 @@ export async function publishAll(
 	const tag = opts.tag;
 	const dryRun = opts.dryRun ?? false;
 
-	const packages = discoverPackages(repoRoot);
-	assertDiscoverySanity(packages);
-
 	log.info(
 		`publishing ${packages.length} packages | tag=${tag} | parallel=${parallel} | retries=${retries}${dryRun ? " | DRY RUN" : ""}`,
 	);
 
-	const queue = [...packages];
+	const queue: NpmPackage[] = [];
 	const results: PublishResult[] = [];
 	const startedAt = Date.now();
 
@@ -215,11 +218,16 @@ export async function publishAll(
 		}
 	}
 
-	const workers: Promise<void>[] = [];
-	for (let i = 0; i < Math.min(parallel, packages.length); i++) {
-		workers.push(worker());
+	async function publishBatch(batch: readonly NpmPackage[]): Promise<void> {
+		queue.push(...batch);
+		await Promise.all(Array.from({ length: Math.min(parallel, batch.length) }, worker));
 	}
-	await Promise.all(workers);
+
+	const platformCount = opts.platformCount ?? 0;
+	await publishBatch(packages.slice(0, platformCount));
+	if (!results.some((result) => result.status === "failed")) {
+		await publishBatch(packages.slice(platformCount));
+	}
 
 	const elapsed = (Date.now() - startedAt) / 1000;
 	const counts = {

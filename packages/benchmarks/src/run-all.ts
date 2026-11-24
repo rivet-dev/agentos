@@ -157,7 +157,7 @@ async function main(): Promise<void> {
 	const permissionFindings = permissionPolicyFindings(permissionPolicyTax);
 	const resourceSnapshotStubbed = false;
 	const fuzz = FAMILY_FILTER
-		? { programs: [], findings: [], refuted: [] }
+		? { programs: [], findings: [], refuted: [], skipped: [] }
 		: await runFuzz({ iterations: ITERATIONS, warmup: WARMUP });
 	const leak = FAMILY_FILTER
 		? { findings: [], streams: [] }

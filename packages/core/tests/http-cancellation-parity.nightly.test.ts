@@ -515,7 +515,10 @@ describe("guest HTTP cancellation and TLS lifecycle match native Node", () => {
 		await vm?.dispose();
 	});
 
-	async function compare(source: string): Promise<Record<string, unknown>> {
+	async function compare(
+		source: string,
+		expectedStderr: string | RegExp = "",
+	): Promise<Record<string, unknown>> {
 		const native = spawnSync(process.execPath, ["-e", source], {
 			encoding: "utf8",
 			timeout: 10_000,
@@ -531,7 +534,9 @@ describe("guest HTTP cancellation and TLS lifecycle match native Node", () => {
 			output: { capture: "all" },
 		});
 		expect(guest.exitCode, guest.stderr).toBe(0);
-		expect(guest.stderr).toBe("");
+		if (typeof expectedStderr === "string")
+			expect(guest.stderr).toBe(expectedStderr);
+		else expect(guest.stderr).toMatch(expectedStderr);
 		const nativeResult = JSON.parse(native.stdout.trim()) as Record<
 			string,
 			unknown
@@ -706,7 +711,10 @@ describe("guest HTTP cancellation and TLS lifecycle match native Node", () => {
 	}, 30_000);
 
 	test("a 16 KiB chunk extension remains accepted", async () => {
-		const result = await compare(chunkExtensionLine(false, 16 * 1024));
+		const result = await compare(
+			chunkExtensionLine(false, 16 * 1024),
+			/^limits\.http\.maxChunkSizeLineBytes approaching limit: observed=\d+ maximum=16416; raise limits\.http\.maxChunkSizeLineBytes when creating the VM\n$/,
+		);
 		expect(result.events).toContain("response-end");
 		expect(result.events).not.toContain("response-error");
 	}, 30_000);

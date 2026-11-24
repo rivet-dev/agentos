@@ -100,6 +100,28 @@ pub fn validate_module_imports(
     Ok(())
 }
 
+/// Compile-time compatibility of one replacement image at each ABI tier. Exec
+/// may narrow authority, and the sidecar chooses the tier at the commit point.
+fn exec_import_tiers(
+    module: &Module,
+    threaded: bool,
+) -> Result<crate::host::ExecImportTiers, HostServiceError> {
+    let valid = |tier| validate_module_imports(module, tier, threaded).is_ok();
+    let tiers = crate::host::ExecImportTiers {
+        isolated: valid(WasmPermissionTier::Isolated),
+        read_only: valid(WasmPermissionTier::ReadOnly),
+        read_write: valid(WasmPermissionTier::ReadWrite),
+        full: valid(WasmPermissionTier::Full),
+    };
+    if !(tiers.isolated || tiers.read_only || tiers.read_write || tiers.full) {
+        return Err(HostServiceError::new(
+            "ENOEXEC",
+            "replacement has unsupported imports",
+        ));
+    }
+    Ok(tiers)
+}
+
 // Name allowlisting does not establish linkability. Validate the exact ABI
 // signature before exec can commit destructive changes to the old image.
 fn import_type_supported(module: &str, name: &str, ty: wasmtime::ExternType) -> bool {
@@ -671,6 +693,21 @@ mod tests {
         .expect("compile allowed import module");
         validate_module_imports(&module, WasmPermissionTier::Isolated, false)
             .expect("generated registry permits import");
+
+        let tiers = exec_import_tiers(&module, false).expect("preflight generated import");
+        assert_eq!(
+            tiers.isolated,
+            permitted(*allowed, WasmPermissionTier::Isolated)
+        );
+        assert_eq!(
+            tiers.read_only,
+            permitted(*allowed, WasmPermissionTier::ReadOnly)
+        );
+        assert_eq!(
+            tiers.read_write,
+            permitted(*allowed, WasmPermissionTier::ReadWrite)
+        );
+        assert_eq!(tiers.full, permitted(*allowed, WasmPermissionTier::Full));
 
         let hostile = Module::new(
             &engine,

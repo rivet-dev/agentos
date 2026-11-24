@@ -1,0 +1,110 @@
+# Copyright 2024 the Deno authors. All rights reserved. MIT license.
+
+import("//v8/gni/v8.gni")
+
+_inspector_protocol = "//v8/third_party/inspector_protocol"
+import("$_inspector_protocol/inspector_protocol.gni")
+
+# Generated protocol sources for custom domains
+_protocol_generated = [
+  "protocol/Forward.h",
+  "protocol/Protocol.cpp",
+  "protocol/Protocol.h",
+  "protocol/IO.cpp",
+  "protocol/IO.h",
+  "protocol/Network.cpp",
+  "protocol/Network.h",
+  "protocol/NodeRuntime.cpp",
+  "protocol/NodeRuntime.h",
+  "protocol/NodeTracing.cpp",
+  "protocol/NodeTracing.h",
+  "protocol/NodeWorker.cpp",
+  "protocol/NodeWorker.h",
+  "protocol/Target.cpp",
+  "protocol/Target.h",
+]
+
+# Custom inspector domain PDL files
+_custom_pdl_files = [
+  "domain_io.pdl",
+  "domain_network.pdl",
+  "domain_node_runtime.pdl",
+  "domain_node_tracing.pdl",
+  "domain_node_worker.pdl",
+  "domain_target.pdl",
+]
+
+# Convert node_protocol.pdl (which includes the domain files) to JSON
+action("convert_protocol_to_json") {
+  script = "$_inspector_protocol/convert_protocol_to_json.py"
+  inputs = [ "node_protocol.pdl" ] + _custom_pdl_files
+  outputs = [ "$target_gen_dir/node_protocol.json" ]
+  args = [
+    rebase_path("node_protocol.pdl", root_build_dir),
+    rebase_path(outputs[0], root_build_dir),
+  ]
+}
+
+# Generate C++ protocol code from the PDL
+inspector_protocol_generate("protocol_generated_sources") {
+  deps = [ ":convert_protocol_to_json" ]
+
+  inspector_protocol_dir = _inspector_protocol
+  out_dir = target_gen_dir
+  _protocol_path = rebase_path("$target_gen_dir/node_protocol.json", root_build_dir)
+  config_values = [ "protocol.path=$_protocol_path" ]
+  config_file = "inspector_protocol_config.json"
+  inputs = [
+    "$target_gen_dir/node_protocol.json",
+    "inspector_protocol_config.json",
+  ]
+  outputs = _protocol_generated
+}
+
+# Concatenate V8's protocol with our custom protocol for full schema
+action("concatenate_protocols") {
+  script = "$_inspector_protocol/concatenate_protocols.py"
+  deps = [ ":convert_protocol_to_json" ]
+  inputs = [
+    v8_inspector_js_protocol,
+    "$target_gen_dir/node_protocol.json",
+  ]
+  outputs = [ "$target_gen_dir/concatenated_protocol.json" ]
+  args = rebase_path(inputs + outputs, root_build_dir)
+}
+
+config("inspector_protocol_config") {
+  include_dirs = [
+    "$target_gen_dir",
+    "//v8/third_party/inspector_protocol",
+    "//v8",
+  ]
+}
+
+# Source set for the generated protocol code
+source_set("deno_inspector_protocol") {
+  sources = rebase_path(_protocol_generated, ".", target_gen_dir)
+  sources += [
+    "//src/deno_inspector/string_util.cc",
+    "//src/deno_inspector/string_util.h",
+  ]
+
+  public_deps = [
+    ":protocol_generated_sources",
+    "//v8/third_party/inspector_protocol:crdtp",
+    "//v8/src/inspector:inspector",
+  ]
+
+  deps = [
+    "//v8:v8_libbase",
+  ]
+
+  public_configs = [ ":inspector_protocol_config" ]
+
+  include_dirs = [
+    "//",
+    "//v8",
+    "//v8/include",
+    "$root_gen_dir/v8/include/inspector",
+  ]
+}

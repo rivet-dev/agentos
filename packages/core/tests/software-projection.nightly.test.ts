@@ -1,23 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 
-async function waitForExit(
-	vm: AgentOs,
-	pid: number,
-	timeoutMs = 30_000,
-): Promise<number> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const proc = vm.getProcess(pid);
-		if (!proc.running) {
-			return proc.exitCode ?? -1;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-
-	throw new Error(`Timed out waiting for process ${pid} to exit`);
-}
-
 describe("software projection on the sidecar path", () => {
 	let vm: AgentOs | undefined;
 
@@ -55,7 +38,7 @@ describe("software projection on the sidecar path", () => {
 			},
 		);
 
-		const exitCode = await waitForExit(vm, pid);
+		const exitCode = (await vm.process.wait(pid)).exitCode;
 		expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
 		expect(stdout).not.toContain("write:unexpected-success");
 		expect(stdout).toMatch(/writeError (ERR_ACCESS_DENIED|EACCES|EPERM|EROFS)/);

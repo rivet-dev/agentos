@@ -52,6 +52,21 @@ describe("compareMatrixBaseline", () => {
 		assert.equal(result.status, "fail");
 	});
 
+	test("rejects invalid baseline and measurement values", () => {
+		assert.equal(compare(0, 1).status, "missing-baseline");
+		assert.equal(compare(1, Number.NaN).status, "missing-current");
+		assert.throws(
+			() =>
+				compareMatrixBaseline(
+					[row(1)],
+					{ rows: [row(1)] } as MatrixBaseline,
+					[{ key: "fs/fs_read_small", lane: "guest" }],
+					{ ...OPTIONS, threshold: Number.NaN },
+				),
+			RangeError,
+		);
+	});
+
 	test("keeps ratio-only enforcement for normal baselines", () => {
 		const result = compare(5, 10.1);
 		assert.equal(result.ratio, 2.02);

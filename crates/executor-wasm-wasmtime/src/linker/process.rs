@@ -683,14 +683,7 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
             engine.profile().feature_profile,
             crate::WasmtimeFeatureProfile::AgentOsOwnedWasiV1Threads
         );
-        super::validate_module_imports(
-            &compiled,
-            agentos_executor_wasm_abi::WasmPermissionTier::Full,
-            threaded,
-        )
-        .map_err(|_| {
-            crate::backend::HostServiceError::new("ENOEXEC", "replacement has unsupported imports")
-        })?;
+        let import_tiers = super::exec_import_tiers(&compiled, threaded)?;
         if !matches!(compiled.get_export("_start"), Some(wasmtime::ExternType::Func(ty))
             if ty.params().next().is_none() && ty.results().next().is_none())
         {
@@ -699,9 +692,9 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
                 "replacement has no valid _start",
             ));
         }
-        Ok((compiled, resolved_argv))
+        Ok((compiled, resolved_argv, import_tiers))
     })();
-    let (prepared_replacement, resolved_argv) = match prepared_replacement {
+    let (prepared_replacement, resolved_argv, import_tiers) = match prepared_replacement {
         Ok(prepared) => prepared,
         Err(error) => {
             if let Some(open) = retained_open.as_ref() {
@@ -751,6 +744,7 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
             "cloexecFds": close_fds,
             "execSignalThreadId": caller.data().thread_id,
             "localReplacement": true,
+            "validatedImportTiers": import_tiers,
             "executableFd": executable_fd,
             "internalBootstrapEnv": {},
         }
@@ -806,30 +800,33 @@ async fn exec(caller: &mut Caller<'_, WasmtimeStoreState>, params: &[Val], by_fd
     } else {
         call(caller, method, vec![request], HashMap::new()).await
     };
-    match result {
-        Ok(_) => {
-            record_exec_replacement(
-                caller,
-                Some(PendingExecReplacement {
-                    module: prepared_replacement,
-                    argv,
-                    env,
-                }),
-            );
-            ERRNO_IO
-        }
+    // A successful commit or a post-commit cleanup failure must unwind the
+    // old guest before reporting an error or starting the replacement.
+    let permission_tier = match result {
+        Ok(reply) => lifecycle::committed_exec_tier(reply),
+        Err(error) if error.code == "ERR_AGENTOS_WASM_EXEC_COMMITTED_FAILURE" => Err(error),
         Err(error) if error.code == "ERR_AGENTOS_EXEC_REPLACED" => {
             record_exec_replacement(caller, None);
-            ERRNO_IO
+            return ERRNO_IO;
         }
         Err(error) => {
             eprintln!(
                 "ERR_AGENTOS_WASMTIME_EXEC_COMMIT: method={method} command={command:?} code={} message={}",
                 error.code, error.message
             );
-            errno(&error)
+            return errno(&error);
         }
-    }
+    };
+    record_exec_replacement(
+        caller,
+        Some(PendingExecReplacement {
+            module: prepared_replacement,
+            permission_tier,
+            argv,
+            env,
+        }),
+    );
+    ERRNO_IO
 }
 
 fn record_exec_replacement(

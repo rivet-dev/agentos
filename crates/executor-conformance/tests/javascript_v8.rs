@@ -2873,48 +2873,6 @@ if (!sawSubMs) {
     assert_eq!(result.exit_code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
 }
 
-fn javascript_execution_high_resolution_time_default_off_keeps_coarse_clock() {
-    let temp = tempdir().expect("create temp dir");
-    let mut engine = support::javascript_engine();
-    let context = engine.create_context(CreateJavascriptContextRequest {
-        vm_id: String::from("vm-js-high-res-off"),
-        bootstrap_module: None,
-        compile_cache_root: None,
-    });
-
-    let execution = engine
-        .start_execution(StartJavascriptExecutionRequest {
-            limits: Default::default(),
-            argv0: None,
-            guest_runtime: Default::default(),
-            vm_id: String::from("vm-js-high-res-off"),
-            context_id: context.context_id,
-            argv: vec![String::from("./entry.mjs")],
-            env: BTreeMap::new(),
-            cwd: temp.path().to_path_buf(),
-            wasm_module_bytes: None,
-            inline_code: Some(String::from(
-                r#"
-if (typeof __agentOsHrNowUs !== "undefined") {
-  throw new Error("high-resolution host clock exists without opt-in");
-}
-for (let attempt = 0; attempt < 20; attempt++) {
-  const now = process.hrtime.bigint();
-  if (now % 1000000n !== 0n) {
-    throw new Error("process.hrtime.bigint was not millisecond aligned: " + now);
-  }
-}
-"#,
-            )),
-        })
-        .expect("start JavaScript execution");
-
-    let result = execution.wait().expect("wait for JavaScript execution");
-    let stdout = String::from_utf8_lossy(&result.stdout);
-    let stderr = String::from_utf8_lossy(&result.stderr);
-    assert_eq!(result.exit_code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
-}
-
 fn javascript_execution_exposes_compatibility_shims_and_denies_escape_builtins() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = support::javascript_engine();
@@ -7109,13 +7067,16 @@ console.log(outcome);
     );
 }
 
-// Rust `panic=unwind` Wasm (for example Cloudflare's Kitesurf) uses the exnref
-// form of exception handling. V8 reads flags once per process, so each case
-// runs in a fresh copy of this test binary with its own environment.
+// Rust `panic=unwind` Wasm uses finalized exception references. Run each
+// configuration in a fresh process so its V8 platform starts independently.
 #[test]
-fn javascript_execution_v8_wasm_exnref_is_opt_in() {
+fn javascript_execution_v8_runs_finalized_wasm_exceptions() {
     let current_exe = std::env::current_exe().expect("current test binary path");
-    for (case, knob) in [("enabled", Some("1")), ("default", None)] {
+    for (case, knob) in [
+        ("enabled", Some("1")),
+        ("default", None),
+        ("disabled", Some("0")),
+    ] {
         let mut command = Command::new(&current_exe);
         command
             .args(["--exact", "__wasm_exnref_case_runner", "--nocapture"])
@@ -7144,6 +7105,23 @@ fn __wasm_exnref_case_runner() {
     let Ok(case) = std::env::var("AGENTOS_TEST_WASM_EXNREF_CASE") else {
         return;
     };
+
+    if case == "disabled" {
+        use agentos_executor_v8_runtime::embedded_runtime::{
+            spawn_embedded_runtime_ipc, EmbeddedV8Runtime,
+        };
+        for error in [
+            EmbeddedV8Runtime::new(None, support::runtime_context()).err(),
+            spawn_embedded_runtime_ipc(None, support::runtime_context()).err(),
+        ] {
+            let error = error.expect("unsupported exnref opt-out must prevent startup");
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+            assert!(error
+                .to_string()
+                .contains("ERR_AGENTOS_UNSUPPORTED_V8_OPTION"));
+        }
+        return;
+    }
 
     // The inner `catch_ref` captures the exception as an exnref, `throw_ref`
     // rethrows it, and the outer `catch` returns its payload to JS.
@@ -7205,11 +7183,7 @@ console.log(outcome);
     assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
     let outcome = stdout.trim();
     match case.as_str() {
-        "enabled" => assert_eq!(outcome, "42"),
-        "default" => assert!(
-            outcome.starts_with("CompileError"),
-            "exnref Wasm must not compile without the opt-in: {outcome}"
-        ),
+        "enabled" | "default" => assert_eq!(outcome, "42"),
         other => panic!("unknown wasm exnref case {other}"),
     }
 }
@@ -8422,7 +8396,6 @@ fn javascript_v8_suite() {
     javascript_execution_imports_node_fs_promises_without_hanging();
     javascript_execution_imports_node_perf_hooks_without_hanging();
     javascript_execution_high_resolution_time_opt_in_enables_sub_ms_hrtime();
-    javascript_execution_high_resolution_time_default_off_keeps_coarse_clock();
     javascript_execution_exposes_compatibility_shims_and_denies_escape_builtins();
     javascript_execution_denies_dns_and_subpaths_on_every_resolution_path();
     javascript_execution_v8_util_format_with_options_matches_node();

@@ -275,7 +275,7 @@ export interface OpenShellOptions {
 	rows?: number;
 	/** Engine affinity inherited by standalone WASM commands launched by the shell. */
 	wasmBackend?: "v8" | "wasmtime" | "wasmtime-threads";
-	/** Optional stderr-only diagnostic tap; do not render it alongside `onData`. */
+	/** Runtime diagnostics outside the PTY; guest stdout and stderr share `onData`. */
 	onStderr?: (data: Uint8Array) => void;
 }
 
@@ -291,6 +291,8 @@ export interface ExecOptions {
 	onStdout?: (data: Uint8Array) => void;
 	onStderr?: (data: Uint8Array) => void;
 	captureStdio?: boolean;
+	/** Maximum combined host-captured stdout and stderr bytes. Defaults to 16 MiB. */
+	maxCapturedOutputBytes?: number;
 	filePath?: string;
 	cpuTimeLimitMs?: number;
 	timingMitigation?: TimingMitigation;

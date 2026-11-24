@@ -23,13 +23,34 @@ function readFileWithBridge(readFile: () => Promise<string>) {
 		if (!declaration) throw new Error(`Missing production function ${name}`);
 		return declaration[0];
 	});
-	return runInNewContext(`${functions.join("\n")}\nfsReadFileAsync`, {
-		validateEncodingOption() {},
-		normalizePathLike: (path: string) => path,
-		_fsAsync: { readFile, readFileBinary: readFile },
-		import_buffer: { Buffer },
-		bridgeErrorCode: (error: { code?: string }) => error.code,
-	}) as (
+	const method = source.slice(
+		source.indexOf("\tasync readFile(options) {"),
+		source.indexOf("\n\tasync writeFile(data, options) {"),
+	);
+	return runInNewContext(
+		`${functions.join("\n")}
+        class FileHandle {
+          static _assertHandle(handle) { return handle; }
+          stat() { return Promise.resolve({size: 0}); }
+          read() { return readFile().then(() => ({bytesRead: 0})); }
+          close() { return Promise.resolve(); }
+          ${method}
+        }
+        const _FileHandle=FileHandle;
+        fsReadFileAsync`,
+		{
+			validateEncodingOption() {},
+			normalizePathLike: (path: string) => path,
+			fs: { openSync: () => 3 },
+			FILE_HANDLE_MAX_READ_BYTES: 1024,
+			FILE_HANDLE_READ_CHUNK_BYTES: 64,
+			waitForNextTick: async () => {},
+			readFile,
+			setImmediate,
+			import_buffer: { Buffer },
+			bridgeErrorCode: (error: { code?: string }) => error.code,
+		},
+	) as (
 		path: string,
 		options: { encoding?: string; signal: AbortSignal },
 	) => Promise<string>;
@@ -40,10 +61,15 @@ test.each([
 	undefined,
 ])("async path read (%s) rejects cancellation while awaiting host I/O", async (encoding) => {
 	let finish!: (value: string) => void;
+	let markStarted!: () => void;
+	const started = new Promise<void>((resolve) => {
+		markStarted = resolve;
+	});
 	const read = readFileWithBridge(
 		() =>
 			new Promise((resolve) => {
 				finish = resolve;
+				markStarted();
 			}),
 	);
 	const controller = new AbortController();
@@ -54,6 +80,8 @@ test.each([
 		code: "ABORT_ERR",
 		cause: reason,
 	});
+	// Wait until the production reader is awaiting its host read.
+	await started;
 	controller.abort(reason);
 	finish("contents must not be delivered after cancellation");
 	await rejected;

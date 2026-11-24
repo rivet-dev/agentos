@@ -945,7 +945,8 @@ fn wait_for_stdout_chunk(
     vm_id: &str,
     process_id: &str,
     needle: &str,
-) {
+) -> String {
+    let mut stdout = Vec::new();
     let ownership = wire_vm(connection_id, session_id, vm_id);
     let deadline = Instant::now() + Duration::from_secs(10);
 
@@ -961,11 +962,12 @@ fn wait_for_stdout_chunk(
 
         match event.payload {
             EventPayload::ProcessOutputEvent(output)
-                if output.process_id == process_id
-                    && output.channel == StreamChannel::Stdout
-                    && chunk_contains(&output.chunk, needle) =>
+                if output.process_id == process_id && output.channel == StreamChannel::Stdout =>
             {
-                return;
+                append_stream_chunk(&mut stdout, &output.chunk, "python stdout");
+                if chunk_contains(&stdout, needle) {
+                    return String::from_utf8(stdout).expect("Python fixture stdout UTF-8");
+                }
             }
             EventPayload::ProcessOutputEvent(_) => {}
             EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
@@ -2600,24 +2602,24 @@ print(f"tail:{sys.stdin.read()!r}")
         "alpha\n",
     );
 
-    wait_for_stdout_chunk(
+    let first_output = wait_for_stdout_chunk(
         &mut sidecar,
         &connection_id,
         &session_id,
         &vm_id,
         "proc-python-stdin-interactive",
-        "first:alpha",
+        "prompt-2: ",
     );
-
+    assert!(first_output.contains("first:alpha"), "{first_output}");
     assert!(
         sidecar
             .poll_event_wire_blocking(
                 &wire_vm(&connection_id, &session_id, &vm_id),
-                Duration::from_millis(200)
+                Duration::from_millis(200),
             )
             .expect("poll stalled python interactive stdin before second write")
             .is_none(),
-        "python interactive stdin execution should stay blocked for the second input"
+        "python must remain blocked after printing the second input prompt"
     );
 
     write_process_stdin(
@@ -3260,6 +3262,18 @@ import json
 import subprocess
 
 result = subprocess.run(["node", "./child.mjs"], capture_output=True, text=True, check=True)
+raw = subprocess.run(["node", "-e", "process.stdout.write(Buffer.from([0, 255, 128])); process.stderr.write(Buffer.from([254]))"], capture_output=True, check=True)
+assert isinstance(raw.stdout, bytes) and raw.stdout == bytes([0, 255, 128])
+assert isinstance(raw.stderr, bytes) and raw.stderr == bytes([254])
+latin = subprocess.run(["node", "-e", "process.stdout.write(Buffer.from([255]))"], capture_output=True, encoding="latin-1", check=True)
+assert latin.stdout == chr(255)
+replaced = subprocess.run(["node", "-e", "process.stdout.write(Buffer.from([255]))"], capture_output=True, errors="replace", check=True)
+assert replaced.stdout == chr(0xfffd)
+try:
+    subprocess.run(["node", "-e", "process.stderr.write(Buffer.from([255])); process.exit(3)"], capture_output=True, check=True)
+    raise AssertionError("failed child must raise CalledProcessError")
+except subprocess.CalledProcessError as error:
+    assert error.returncode == 3 and error.stderr == bytes([255])
 print(json.dumps({
     "code": result.returncode,
     "stdout": result.stdout.strip(),
@@ -4116,7 +4130,8 @@ fn python_reads_and_writes_arbitrary_vm_paths() {
 
 fn python_pip_installs_persist_across_invocations() {
     assert_node_available();
-    let (port, server) = spawn_static_file_server(pyodide_asset_dir());
+    let mirror = temp_dir("python-persistence-wheel");
+    let (port, server) = spawn_static_file_server(mirror.clone());
     let mut sidecar = new_sidecar("python-vfs-pip");
     let cwd = temp_dir("python-vfs-pip-cwd");
     let connection_id = authenticate_wire(&mut sidecar, "conn-python");
@@ -4135,8 +4150,49 @@ fn python_pip_installs_persist_across_invocations() {
         wire_permissions_allow_all(),
     );
 
-    // Process 1: `pip install` a wheel — the shim copies it into the VFS-backed
-    // site-packages so it persists past this interpreter.
+    // A bundled wheel (such as click) is deliberately not copied into the VFS.
+    // Generate a genuinely unbundled fixture with the guest standard library.
+    execute_inline_python(
+        &mut sidecar,
+        40,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-build-persistence-wheel",
+        r#"
+import io, json, zipfile
+files = {
+    "agentos_persistence_probe/__init__.py": "VALUE = 'persisted'\n",
+    "agentos_persistence_probe-0.0.1.dist-info/METADATA": "Metadata-Version: 2.1\nName: agentos-persistence-probe\nVersion: 0.0.1\n",
+    "agentos_persistence_probe-0.0.1.dist-info/WHEEL": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+}
+record = "agentos_persistence_probe-0.0.1.dist-info/RECORD"
+files[record] = "".join(name + ",,\n" for name in [*files, record])
+archive = io.BytesIO()
+with zipfile.ZipFile(archive, "w") as wheel:
+    for name, content in files.items():
+        wheel.writestr(name, content)
+print(json.dumps(list(archive.getvalue())))
+"#,
+    );
+    let (wheel_output, wheel_stderr, wheel_exit) = collect_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "proc-build-persistence-wheel",
+    );
+    assert_eq!(wheel_exit, 0, "wheel fixture: {wheel_stderr}");
+    let wheel_bytes: Vec<u8> =
+        serde_json::from_str(wheel_output.trim()).expect("fixture wheel bytes");
+    fs::write(
+        mirror.join("agentos_persistence_probe-0.0.1-py3-none-any.whl"),
+        wheel_bytes,
+    )
+    .expect("serve fixture wheel");
+
+    // Process 1 installs the unbundled wheel into the VFS-backed site-packages.
+    // A fresh interpreter below must import that persisted copy.
     execute_python_cli_with_env(
         &mut sidecar,
         4,
@@ -4147,7 +4203,7 @@ fn python_pip_installs_persist_across_invocations() {
         "pip",
         &[
             "install",
-            &format!("http://127.0.0.1:{port}/click-8.3.1-py3-none-any.whl"),
+            &format!("http://127.0.0.1:{port}/agentos_persistence_probe-0.0.1-py3-none-any.whl"),
         ],
         HashMap::from([(
             String::from("AGENTOS_PYODIDE_PACKAGE_BASE_URL"),
@@ -4173,7 +4229,7 @@ fn python_pip_installs_persist_across_invocations() {
         &connection_id,
         &session_id,
         &vm_id,
-        "/home/agentos/.agentos/site-packages/click/__init__.py",
+        "/home/agentos/.agentos/site-packages/agentos_persistence_probe/__init__.py",
     );
     assert!(
         home_install_exists,
@@ -4190,7 +4246,10 @@ fn python_pip_installs_persist_across_invocations() {
         &vm_id,
         "proc-pip-import",
         "python",
-        &["-c", "import click; print(click.__version__)"],
+        &[
+            "-c",
+            "import agentos_persistence_probe; print(agentos_persistence_probe.VALUE)",
+        ],
     );
     let (stdout2, stderr2, exit2) = collect_process_output_with_timeout(
         &mut sidecar,
@@ -4204,7 +4263,7 @@ fn python_pip_installs_persist_across_invocations() {
     assert_eq!(exit2, 0, "stdout: {stdout2}\nstderr: {stderr2}");
     assert_eq!(
         stdout2.trim(),
-        "8.3.1",
+        "persisted",
         "stdout: {stdout2}\nstderr: {stderr2}"
     );
 }

@@ -4,14 +4,14 @@ import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { nativeExec, payload, quote, unusedPort, startFixture, stopFixture, ready, withVm } from './fixtures/protocol-harness';
+import { connect } from 'node:net';
+import { payload, quote, unusedPort, startFixture, stopFixture, ready, withVm } from './fixtures/protocol-harness';
 
 describe('curl real libssh2 SFTP/SCP parity', () => {
   let directory: string, port: number, fingerprint: string;
   let server: ChildProcess;
   let files: Record<string, Uint8Array>;
   const username = userInfo().username;
-  const nativeCurl = process.env.AGENTOS_NATIVE_SSH_CURL ?? 'curl';
   const url = (scheme: string, file: string) => `${scheme}://127.0.0.1:${port}${directory}/${file}`;
   const auth = () => `--user ${quote(username + ':')} --key /tmp/client_key --pubkey /tmp/client_key.pub --hostpubsha256 ${quote(fingerprint)}`;
   beforeAll(async () => {
@@ -23,8 +23,10 @@ describe('curl real libssh2 SFTP/SCP parity', () => {
     await ready(server, async () => {
       const publicKey = readFileSync(join(directory, 'host_key.pub'), 'utf8').trim().split(/\s+/)[1];
       fingerprint = createHash('sha256').update(Buffer.from(publicKey, 'base64')).digest('base64');
-      const result = await nativeExec(nativeCurl, ['--max-time', '1', '--silent', '--show-error', '--user', username + ':', '--key', join(directory, 'client_key'), '--pubkey', join(directory, 'client_key.pub'), '--hostpubsha256', fingerprint, url('sftp', 'payload')], {timeout: 1500, maxBuffer: 256 * 1024, encoding: 'buffer'});
-      expect(result.stdout).toEqual(payload);
+      // Readiness only needs the server's SSH banner. Host curl builds differ
+      // (libssh cannot pin a SHA-256 host key), and every guest test below
+      // verifies the pinned host key itself.
+      await sshBanner(port);
     });
     files = {'payload': payload, 'client_key': readFileSync(join(directory, 'client_key')), 'client_key.pub': readFileSync(join(directory, 'client_key.pub'))};
   }, 40000);
@@ -56,3 +58,16 @@ describe('curl real libssh2 SFTP/SCP parity', () => {
     }), 30000);
   }
 });
+
+function sshBanner(port: number): Promise<void> {
+  return new Promise((resolveBanner, rejectBanner) => {
+    const socket = connect(port, '127.0.0.1');
+    socket.setTimeout(1000, () => socket.destroy(new Error('SSH banner timed out')));
+    socket.once('error', rejectBanner);
+    socket.once('data', (chunk) => {
+      socket.destroy();
+      if (chunk.toString('latin1').startsWith('SSH-')) resolveBanner();
+      else rejectBanner(new Error('fixture answered without an SSH banner'));
+    });
+  });
+}

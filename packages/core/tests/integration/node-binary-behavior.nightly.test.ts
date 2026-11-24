@@ -12,7 +12,14 @@
  * Gracefully skipped when WASM binaries are not built.
  */
 
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { IntegrationKernelResult } from "@rivet-dev/agentos-test-harness";
@@ -272,6 +279,7 @@ describeIf(!skipReason, "node binary: exec child_process", () => {
 
 	it("node -e spawnSync resolves shebang-backed node_modules/.bin commands through JavaScript runtime", async () => {
 		tempDir = await mkdtemp(path.join(tmpdir(), "kernel-node-bin-"));
+		await chmod(tempDir, 0o755);
 		await writeFile(
 			path.join(tempDir, "package.json"),
 			JSON.stringify({ name: "node-bin-repro", private: true }),
@@ -285,6 +293,7 @@ describeIf(!skipReason, "node binary: exec child_process", () => {
 				"#!/usr/bin/env node",
 				"console.log(`hello ${process.argv.slice(2).join(' ')}`);",
 			].join("\n"),
+			{ mode: 0o755 },
 		);
 		await mkdir(path.join(tempDir, "node_modules", ".bin"), {
 			recursive: true,

@@ -27,6 +27,19 @@ impl BoundedHostServiceError {
         self.encoded_bytes
     }
 
+    pub fn heap_bytes(&self) -> usize {
+        self.error
+            .code
+            .capacity()
+            .saturating_add(self.error.message.capacity())
+            .saturating_add(
+                self.error
+                    .details
+                    .as_ref()
+                    .map_or(0, crate::json_heap_bytes),
+            )
+    }
+
     pub fn into_error(self) -> HostServiceError {
         self.error
     }
@@ -137,5 +150,23 @@ mod tests {
                 .expect("details")["limitName"],
             "maxRuntimeFaultBytes"
         );
+    }
+}
+
+#[cfg(test)]
+mod retained_error_tests {
+    use super::*;
+
+    #[test]
+    fn warning_json_heap_counts_reserved_array_storage_even_when_wire_is_small() {
+        let mut details = Vec::with_capacity(16);
+        details.push(serde_json::Value::Null);
+        let slots = details.capacity() * std::mem::size_of::<serde_json::Value>();
+        let error =
+            HostServiceError::new("EIO", "read").with_details(serde_json::Value::Array(details));
+        let limit = PayloadLimit::with_warning_hook("maxBridgeResponseBytes", 128, None).unwrap();
+        let bounded = BoundedHostServiceError::try_new(error, &limit).unwrap();
+        assert!(bounded.encoded_bytes() <= limit.maximum());
+        assert!(bounded.heap_bytes() >= slots);
     }
 }
