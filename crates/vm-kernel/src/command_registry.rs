@@ -1,5 +1,6 @@
 use crate::vfs::{
-    resolve_child_for_creation, resolve_path_for_creation, VfsError, VfsResult, VirtualFileSystem,
+    plan_child_creation, resolve_path_for_creation, ChildCreation, VfsError, VfsResult,
+    VirtualFileSystem,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -169,10 +170,12 @@ impl CommandRegistry {
         if !vfs.exists(&bin_path) {
             vfs.mkdir(&bin_path, true)?;
         }
+        let bin_is_directory = vfs.lstat(&bin_path).is_ok_and(|stat| stat.is_directory);
 
         for command in commands {
-            let path = resolve_child_for_creation(vfs, &bin_path, &command)?;
-            if !vfs.exists(&path) {
+            if let ChildCreation::Create(path) =
+                plan_child_creation(vfs, &bin_path, bin_is_directory, &command)?
+            {
                 vfs.write_file(&path, COMMAND_STUB.to_vec())?;
                 if let Err(error) = vfs.chmod(&path, 0o755) {
                     // A failed stub must not make retries skip chmod simply

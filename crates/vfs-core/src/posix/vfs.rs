@@ -2569,28 +2569,52 @@ pub fn resolve_path_for_creation<F: VirtualFileSystem>(
     )
 }
 
-/// Resolve `name` inside a parent that `resolve_path_for_creation` already
-/// resolved, with the same result as resolving `{parent}/{name}` from `/`.
-/// Batch callers resolve the shared parent once: only a leaf symlink, or a
-/// leaf whose lookup fails with anything but ENOENT, needs the full walk.
-pub fn resolve_child_for_creation<F: VirtualFileSystem>(
+/// What creating `{parent}/{name}` would do, for a parent that
+/// `resolve_path_for_creation` already resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChildCreation {
+    /// The entry already exists (following a final symlink).
+    Exists,
+    /// Nothing exists yet; creating writes this resolved path.
+    Create(String),
+}
+
+/// Plan the creation of `name` inside a resolved parent with the same result
+/// as resolving `{parent}/{name}` from `/` and then checking `exists`. Batch
+/// callers resolve the shared parent once, so a typical child costs one
+/// lookup: only a final symlink, or a lookup that fails with anything but
+/// ENOENT, takes the full walk. Pass `parent_is_directory` only when
+/// `resolved_parent` is an existing directory that `resolve_path_for_creation`
+/// returned; the lookup then skips resolving the parent again.
+pub fn plan_child_creation<F: VirtualFileSystem>(
     filesystem: &F,
     resolved_parent: &str,
+    parent_is_directory: bool,
     name: &str,
-) -> VfsResult<String> {
+) -> VfsResult<ChildCreation> {
     let candidate = if resolved_parent == "/" {
         format!("/{name}")
     } else {
         format!("{resolved_parent}/{name}")
     };
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') {
-        return resolve_path_for_creation(filesystem, &candidate);
+    if !name.is_empty() && name != "." && name != ".." && !name.contains('/') {
+        let entry = if parent_is_directory {
+            filesystem.lstat_resolved_parent(&candidate)
+        } else {
+            filesystem.lstat(&candidate)
+        };
+        match entry {
+            Ok(stat) if !stat.is_symbolic_link => return Ok(ChildCreation::Exists),
+            Err(error) if error.code() == "ENOENT" => return Ok(ChildCreation::Create(candidate)),
+            _ => {}
+        }
     }
-    match filesystem.lstat(&candidate) {
-        Ok(stat) if !stat.is_symbolic_link => Ok(candidate),
-        Err(error) if error.code() == "ENOENT" => Ok(candidate),
-        _ => resolve_path_for_creation(filesystem, &candidate),
-    }
+    let path = resolve_path_for_creation(filesystem, &candidate)?;
+    Ok(if filesystem.exists(&path) {
+        ChildCreation::Exists
+    } else {
+        ChildCreation::Create(path)
+    })
 }
 
 // Keep creation semantics shared without requiring mounted backends to implement

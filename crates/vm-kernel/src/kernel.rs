@@ -67,9 +67,9 @@ use crate::user::{
     passwd_record_by_name, passwd_record_by_uid, ProcessIdentity, UserConfig, UserManager,
 };
 use crate::vfs::{
-    normalize_path, resolve_child_for_creation, resolve_path_for_creation, ReservedUnnamedInode,
-    VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat, VirtualTimeSpec,
-    VirtualUtimeSpec, MAX_PATH_LENGTH, RENAME_EXCHANGE, S_IFDIR, S_IFLNK, S_IFREG,
+    normalize_path, plan_child_creation, resolve_path_for_creation, ChildCreation,
+    ReservedUnnamedInode, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
+    VirtualTimeSpec, VirtualUtimeSpec, MAX_PATH_LENGTH, RENAME_EXCHANGE, S_IFDIR, S_IFLNK, S_IFREG,
 };
 use hickory_proto::rr::RecordType;
 use std::any::Any;
@@ -1747,15 +1747,27 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         let driver_name = driver.name().to_owned();
         let mut commands = self.commands.clone();
         commands.register(driver.clone())?;
-        self.admit_driver_projection(&driver)?;
+        let admitted = self.admit_driver_projection(&driver)?;
         let populated = if operator {
             commands.populate_driver_bin(self.filesystem.inner_mut(), &driver)
         } else {
             commands.populate_driver_bin(&mut self.filesystem, &driver)
         };
-        // Failed population can still have created stubs. Quota observations
-        // must include those writes even when the registry is not published.
-        self.invalidate_filesystem_usage_cache();
+        match (&populated, admitted.stub_growth) {
+            // Success wrote exactly the admitted stubs into the census, so
+            // keep it instead of re-measuring the whole root on the next
+            // admission (a VM configure registers ~140 commands).
+            (Ok(()), Some((bytes, inodes))) => {
+                if let Some(usage) = self.filesystem_usage_cache.as_mut() {
+                    usage.total_bytes = usage.total_bytes.saturating_add(bytes);
+                    usage.inode_count = usage.inode_count.saturating_add(inodes);
+                }
+            }
+            // Failed population can still have created stubs. Quota
+            // observations must include those writes even when the registry
+            // is not published.
+            _ => self.invalidate_filesystem_usage_cache(),
+        }
         populated?;
         self.commands = commands;
         lock_or_recover(&self.driver_pids)
@@ -1764,32 +1776,58 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(())
     }
 
-    fn admit_driver_projection(&mut self, driver: &CommandDriver) -> KernelResult<()> {
+    fn admit_driver_projection(
+        &mut self,
+        driver: &CommandDriver,
+    ) -> KernelResult<AdmittedProjection> {
         // Trusted projection still consumes the VM's filesystem budget. Admit
         // the complete batch before creating stubs or publishing the registry.
         let usage = self.filesystem_usage()?;
         let mut resulting_bytes = usage.total_bytes;
         let mut resulting_inodes = usage.inode_count;
         let bin_path = resolve_path_for_creation(self.raw_filesystem_mut(), "/bin")?;
-        for directory in self.missing_directory_paths(&bin_path, true)? {
+        let missing_directories = self.missing_directory_paths(&bin_path, true)?;
+        let creates_directories = !missing_directories.is_empty();
+        for directory in missing_directories {
             if self.path_uses_root_filesystem(&directory) {
                 resulting_inodes = resulting_inodes.saturating_add(1);
             }
         }
+        let bin_is_directory = self
+            .raw_filesystem_mut()
+            .lstat(&bin_path)
+            .is_ok_and(|stat| stat.is_directory);
         let mut checked = BTreeSet::new();
         for command in driver.commands() {
-            let path = resolve_child_for_creation(self.raw_filesystem_mut(), &bin_path, command)?;
+            let ChildCreation::Create(path) = plan_child_creation(
+                self.raw_filesystem_mut(),
+                &bin_path,
+                bin_is_directory,
+                command,
+            )?
+            else {
+                continue;
+            };
             if !checked.insert(path.clone()) {
                 continue;
             }
-            if self.storage_stat(&path)?.is_none() && self.path_uses_root_filesystem(&path) {
+            if self.path_uses_root_filesystem(&path) {
                 resulting_bytes = resulting_bytes.saturating_add(COMMAND_STUB.len() as u64);
                 resulting_inodes = resulting_inodes.saturating_add(1);
             }
         }
         self.resources
             .check_filesystem_usage(&usage, resulting_bytes, resulting_inodes)?;
-        Ok(())
+        Ok(AdmittedProjection {
+            // New directories may be measured differently from the stub-only
+            // estimate; the caller then re-measures instead.
+            stub_growth: (!creates_directories).then(|| {
+                (
+                    resulting_bytes.saturating_sub(usage.total_bytes),
+                    resulting_inodes.saturating_sub(usage.inode_count),
+                )
+            }),
+        })
     }
 
     /// Publish replacement command names only after projection succeeds, and
@@ -12737,6 +12775,15 @@ impl KernelVm<MountTable> {
         self.filesystem.inner().inner().get_mounts()
     }
 
+    /// Read the root filesystem without invalidating the usage census, as
+    /// `root_filesystem_mut` must.
+    pub fn root_filesystem(&self) -> Option<&RootFileSystem> {
+        self.filesystem
+            .inner()
+            .inner()
+            .root_virtual_filesystem::<RootFileSystem>()
+    }
+
     pub fn root_filesystem_mut(&mut self) -> Option<&mut RootFileSystem> {
         // The returned handle permits trusted mutations outside kernel methods.
         self.invalidate_filesystem_usage_cache();
@@ -13975,6 +14022,12 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// Root growth a command projection was admitted for.
+struct AdmittedProjection {
+    /// Stub bytes and inodes, when projection creates no directories.
+    stub_growth: Option<(u64, usize)>,
 }
 
 impl<F> Drop for KernelVm<F> {

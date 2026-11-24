@@ -1,5 +1,5 @@
 use super::vfs::{
-    normalize_path, resolve_path_for_creation, validate_path, FileExtent, MemoryFileSystem,
+    normalize_path, resolve_path_for_creation_with, validate_path, FileExtent, MemoryFileSystem,
     ReservedUnnamedInode, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
     VirtualTimeSpec, VirtualUtimeSpec, MAX_SYMLINK_DEPTH, S_IFREG,
 };
@@ -390,9 +390,39 @@ impl OverlayFileSystem {
     fn resolved_creation_entry_path(&self, path: &str) -> VfsResult<String> {
         match self.resolve_merged_path(path, false, 0) {
             Ok(path) => Ok(path),
-            Err(error) if error.code() == "ENOENT" => resolve_path_for_creation(self, path),
+            Err(error) if error.code() == "ENOENT" => self.resolve_merged_creation_path(path),
             Err(error) => Err(error),
         }
+    }
+
+    /// `resolve_path_for_creation` over the merged view in one linear walk.
+    /// The generic walk `lstat`s every component from `/`, and each overlay
+    /// `lstat` walks again, which made creation quadratic in path depth.
+    fn resolve_merged_creation_path(&self, path: &str) -> VfsResult<String> {
+        match self.resolve_merged_path(path, true, 0) {
+            Ok(resolved) => return Ok(resolved),
+            Err(error) if error.code() == "ENOENT" => {}
+            Err(error) => return Err(error),
+        }
+        // Each candidate's parent is the walk's resolved merged directory,
+        // until a component is missing: nothing exists below it, even where a
+        // lower layer still holds entries under a whiteout.
+        let missing = std::cell::Cell::new(false);
+        resolve_path_for_creation_with(
+            path,
+            |_| Err(Self::entry_not_found(path)),
+            |candidate| {
+                if missing.get() {
+                    return Err(Self::entry_not_found(candidate));
+                }
+                let result = self.lstat_resolved_parent(candidate);
+                if result.as_ref().is_err_and(|error| error.code() == "ENOENT") {
+                    missing.set(true);
+                }
+                result
+            },
+            |candidate| self.read_link(candidate),
+        )
     }
 
     fn resolve_merged_path(
@@ -1555,7 +1585,7 @@ impl VirtualFileSystem for OverlayFileSystem {
     }
 
     fn write_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> VfsResult<()> {
-        let resolved = resolve_path_for_creation(self, path)?;
+        let resolved = self.resolve_merged_creation_path(path)?;
         let path = resolved.as_str();
         self.clear_path_metadata(path)?;
         if self.find_lower_by_entry(path).is_some() {
@@ -1579,7 +1609,7 @@ impl VirtualFileSystem for OverlayFileSystem {
     }
 
     fn append_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> VfsResult<u64> {
-        let resolved = resolve_path_for_creation(self, path)?;
+        let resolved = self.resolve_merged_creation_path(path)?;
         let path = resolved.as_str();
         self.clear_path_metadata(path)?;
         if self.find_lower_by_entry(path).is_some() {
