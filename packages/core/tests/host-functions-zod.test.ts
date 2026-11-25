@@ -73,7 +73,7 @@ describe("zodToJsonSchema", () => {
 							],
 						},
 						note: {
-							anyOf: [{ type: "string" }, { type: "null" }],
+							type: ["string", "null"],
 						},
 					},
 					required: ["mode", "note"],

@@ -104,9 +104,9 @@ fn dormant_wasmtime_stays_scoped_to_the_standalone_wasm_adapter() {
     let workspace = std::fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
     let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("read Cargo.lock");
     assert!(
-        workspace.contains("wasmtime = { version = \"=48.0.3\", default-features = false")
+        workspace.contains("wasmtime = { version = \"=48.0.7\", default-features = false")
             && workspace.contains("wasmparser = \"=0.251.0\"")
-            && lock.contains("name = \"wasmtime\"\nversion = \"48.0.3\"")
+            && lock.contains("name = \"wasmtime\"\nversion = \"48.0.7\"")
             && !lock.contains("name = \"wasmtime-wasi\""),
         "the dormant backend must pin reviewed Wasmtime without installing ambient wasmtime-wasi"
     );

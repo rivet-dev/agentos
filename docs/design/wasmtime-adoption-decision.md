@@ -28,8 +28,10 @@ natively, replacing the JavaScript WASM runner.
 
 ## Security evidence
 
-The integrated tree pins Wasmtime **48.0.3** exactly in `Cargo.toml` and
-`Cargo.lock`. Upstream [released 48.0.3 on September 24, 2026](https://github.com/bytecodealliance/wasmtime/releases/tag/v48.0.3).
+The integrated tree pins Wasmtime **48.0.7** exactly in `Cargo.toml` and
+`Cargo.lock`. It moved from 48.0.3 (upstream [released September 24, 2026](https://github.com/bytecodealliance/wasmtime/releases/tag/v48.0.3))
+to 48.0.7 for a critical Cranelift sandbox escape on AArch64
+([GHSA-mghf-wjfp-p5xm](https://github.com/bytecodealliance/wasmtime/security/advisories/GHSA-mghf-wjfp-p5xm)).
 Version 48 is an LTS line: under the [release policy](https://docs.wasmtime.dev/stability-release.html),
 its [August 20, 2026 release](https://github.com/bytecodealliance/wasmtime/releases/tag/v48.0.0)
 receives 24 months of support. Keep taking security
@@ -60,7 +62,7 @@ The published history also contains failures at the boundary agentOS relies on:
 - In April 2026, a [Cranelift miscompilation](https://github.com/bytecodealliance/wasmtime/security/advisories/GHSA-jhxm-h53p-jm7w)
   could let a guest read and write arbitrary host memory on AArch64 when
   memory64 was used and relevant mitigations were disabled. The current
-  Wasmtime 48.0.3 pin is outside the affected versions; this is evidence of
+  Wasmtime 48.0.7 pin is outside the affected versions; this is evidence of
   failure mode, not an outstanding vulnerability in that pin.
 - A separate [Winch sandbox escape](https://github.com/bytecodealliance/wasmtime/security/advisories/GHSA-xx5w-cvp6-jv83)
   affected the optional baseline compiler. This branch enables Cranelift, not

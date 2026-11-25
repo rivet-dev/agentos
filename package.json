@@ -24,8 +24,9 @@
 		"npm": "^11.18.0",
 		"pdf-lib": "^1.17.1",
 		"tsx": "^4.21.0",
-		"turbo": "^2.5.6",
-		"typescript": "^5.9.2"
+		"turbo": "^2.9.14",
+		"typescript": "^5.9.2",
+		"vite": "^6.4.4"
 	},
 	"resolutions": {
 		"@rivet-dev/agentos": "workspace:*"
@@ -33,7 +34,35 @@
 	"pnpm": {
 		"overrides": {
 			"@effect/platform-node@4.0.5>@effect/platform-node-shared": "4.0.5",
-			"@rivetkit/rivetkit-wasm": "3.0.7"
+			"@rivetkit/rivetkit-wasm": "3.0.7",
+			"@ai-sdk/provider-utils@3": "^3.0.28",
+			"@grpc/grpc-js@1": "^1.14.5",
+			"@hono/node-server@1": "^1.19.18",
+			"@modelcontextprotocol/sdk@1": "^1.32.0",
+			"@protobufjs/utf8@1": "^1.1.1",
+			"ajv@6": "^6.14.0",
+			"basic-ftp@5": "^5.3.1",
+			"body-parser@2": "^2.4.0",
+			"brace-expansion@1": "^1.1.21",
+			"brace-expansion@2": "^2.1.7",
+			"brace-expansion@5": "^5.0.12",
+			"fast-copy@4": "^4.1.0",
+			"fast-uri@3": "^3.1.9",
+			"form-data@4": "^4.0.6",
+			"hono@4": "^4.13.16",
+			"ip-address@10": "^10.7.4",
+			"lodash@4": "^4.18.1",
+			"minimatch@3": "^3.1.4",
+			"nanoid@3": "^3.3.18",
+			"pbkdf2@3": "^3.1.7",
+			"postcss@8": "^8.5.23",
+			"protobufjs@7": "^7.6.5",
+			"proxy-addr@2": "^2.0.8",
+			"qs@6": "^6.16.1",
+			"source-map-js@1": "^1.2.2",
+			"undici@7": "^7.30.1",
+			"ws@8": "^8.21.0",
+			"zod@4": "^4.6.6"
 		}
 	}
 }

@@ -47,5 +47,5 @@ pub use lifecycle::{WasmtimeExecution, WasmtimeExecutionEngine};
 pub use limits::DEFAULT_TABLE_ACCOUNTING_BYTES;
 pub use worker::{run_worker_entry, WORKER_MODE_ARGUMENT};
 
-pub const PINNED_WASMTIME_VERSION: &str = "48.0.3";
+pub const PINNED_WASMTIME_VERSION: &str = "48.0.7";
 pub use agentos_executor_wasm_host::image::TRUSTED_INITIAL_MODULE_PREFIX;
