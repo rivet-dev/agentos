@@ -520,7 +520,7 @@ jobs:
         run: |
           node ../agentos-toolchain/scripts/test.mjs tests/node-v8-native-wire.native.test.ts tests/node-v8-heap-statistics.native.test.ts tests/mount.test.ts tests/limits.test.ts tests/filesystem-write-files.test.ts \
             --testNamePattern '(?:node:v8 preserves graphs and exchanges native serialization with Node.js|node:v8 heap statistics report live isolate use through CJS and ESM|failed host mount callbacks preserve EIO metadata and exists diagnostics|invalid host exists responses log their type without payload data|reactor\.operationDeadlineMs bounds an undrained socket write|a failed entry reports its own error and every other entry is written|writeFiles batches existing public writes without single-file RPCs|writeFiles splits more than the server entry cap without changing order)$' \
-            --cache=false --fileParallelism=false --maxWorkers=1 --minWorkers=1 \
+            --cache=false --fileParallelism=false --maxWorkers=1 \
             --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/runtime-compatibility.json"
           node --input-type=module - "$RUNNER_TEMP/runtime-compatibility.json" <<'NODE'
           import assert from 'node:assert/strict';
@@ -878,9 +878,9 @@ jobs:
       - name: Run all sidecar tests through the selected VM backend
         run: cargo test --release -p agentos-vm --features all-executors --tests --no-fail-fast -- --test-threads=1
       - name: Run native-vs-WASM C conformance through the selected VM backend
-        run: pnpm --dir packages/core exec vitest run --root ../.. toolchain/conformance/c-parity.test.ts --reporter=verbose --maxWorkers=1 --minWorkers=1
+        run: pnpm --dir packages/core exec vitest run --root ../.. toolchain/conformance/c-parity.test.ts --reporter=verbose --maxWorkers=1
       - name: Run core WASM and cross-runtime integration serially
-        run: pnpm --dir packages/core exec vitest run --reporter=verbose --maxWorkers=1 --minWorkers=1
+        run: pnpm --dir packages/core exec vitest run --reporter=verbose --maxWorkers=1
       - name: Run the public Rust client without artifact skips
         run: cargo test -p agentos-client -- --test-threads=1
       - name: Run every registry software suite through the selected WASM backend
