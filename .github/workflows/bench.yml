@@ -17,15 +17,22 @@ jobs:
       actions: read
     name: Runtime benchmark gate
     if: github.event_name != 'pull_request' || github.base_ref == 'main' || contains(github.event.pull_request.labels.*.name, 'aggregate-ci')
-    runs-on: ${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}
+    runs-on: >-
+      ${{ github.repository == 'rivet-dev/agentos'
+          && (github.ref == 'refs/heads/main'
+              || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+          && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
       - name: Install reviewed V8 archive
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml" --github-env "$GITHUB_ENV"
+        run: python3 scripts/ci/v8/engine.py install x86_64-unknown-linux-gnu "$RUNNER_TEMP/agentos-v8" --allow-actions --cargo-config "$GITHUB_WORKSPACE/.cargo/config.toml" --github-env "$GITHUB_ENV"
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

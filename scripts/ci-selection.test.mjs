@@ -32,6 +32,8 @@ function evaluate(expression, { event, base = "main", labels = [] }) {
 			String(labels.includes("aggregate-ci")),
 		)
 		.replaceAll("always()", "true")
+		// Selection is asserted for a cache miss, where every build step runs.
+		.replaceAll("steps.wasm-outputs.outputs.cache-matched-key == ''", "true")
 		.replaceAll("github.event_name", JSON.stringify(event))
 		.replaceAll("github.base_ref", JSON.stringify(base));
 	assert.match(resolved, /^(?:true|false|"[\w-]+"|'[\w-]+'|[\s!=&|()])+$/);
@@ -122,7 +124,7 @@ test("CI builds code before one default-software producer and restores artifacts
 	const transport = job("core-pr");
 	const runtime = job("core-runtime-pr");
 	assert.match(checks, /AGENTOS_CI_CODE_ONLY_BUILD: '1'/);
-	assert.match(commands, /runs-on: depot-ubuntu-24\.04-8/);
+	assert.match(commands, /runs-on: \*incus-linux/);
 	assert.match(checks, /npx turbo build \\\n\s+--only/);
 	assert.match(commands, /name: Package default software once/);
 	assert.match(commands, /name: default-software/);

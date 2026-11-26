@@ -8,11 +8,14 @@
 FROM scratch AS agentos-v8-inputs
 COPY scripts/ci/v8/archives.json /archives.json
 
-FROM ghcr.io/rivet-dev/rivet/builder-base-osxcross:0e33ceb98
+FROM ghcr.io/rivet-dev/rivet/builder-base-osxcross:0e33ceb98 AS native-build
 
 ARG TARGET=aarch64-apple-darwin
 ARG CLANG=aarch64-apple-darwin20.4
 ARG BUILD_PROFILE=debug
+ARG CACHE_SCOPE=local
+ARG CARGO_BUILD_JOBS=4
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 ARG CACHE_PLATFORM=darwin-arm64
 ARG RUST_TOOLCHAIN=1.95.0
 ARG DARWIN_LLVM_VERSION=21
@@ -56,15 +59,15 @@ RUN rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal && \
     rustup default "$RUST_TOOLCHAIN" && \
     rustup target add "$TARGET"
 
-RUN --mount=type=cache,id=pnpm-store-agentos-darwin,target=/root/.local/share/pnpm/store,sharing=locked \
+RUN --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-pnpm-store-agentos-darwin,target=/root/.local/share/pnpm/store,sharing=locked \
     corepack enable && \
     pnpm config set store-dir /root/.local/share/pnpm/store && \
     pnpm install --frozen-lockfile
 
-RUN --mount=type=cache,id=cargo-registry-agentos-darwin,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=cargo-git-agentos-darwin,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=cargo-target-agentos-${CACHE_PLATFORM},target=/build/target,sharing=locked \
-    --mount=type=cache,id=sccache-agentos-${CACHE_PLATFORM},target=/root/.cache/sccache,sharing=locked \
+RUN --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-cargo-registry-agentos-darwin,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-cargo-git-agentos-darwin,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-cargo-target-agentos-${CACHE_PLATFORM},target=/build/target,sharing=locked \
+    --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-sccache-agentos-${CACHE_PLATFORM},target=/root/.cache/sccache,sharing=locked \
     if ! command -v sccache >/dev/null 2>&1; then \
       unset RUSTC_WRAPPER; \
     elif ! (sccache --start-server 2>/tmp/sccache-start.err && sccache --show-stats >/dev/null 2>&1); then \

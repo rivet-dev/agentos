@@ -49,10 +49,10 @@ jobs:
           # changes or the `ci: native-all` label, which is read on the next push.
           NATIVE_ALL: >-
             [
-            {"platform":"linux-x64-gnu","target":"x86_64-unknown-linux-gnu","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"linux-gnu","clang":"","tier":"linux","smoke_runner":"ubuntu-24.04"},
+            {"platform":"linux-x64-gnu","target":"x86_64-unknown-linux-gnu","runner":"ubuntu-latest","dockerfile":"linux-gnu","clang":"","tier":"linux","smoke_runner":"ubuntu-24.04"},
             {"platform":"linux-arm64-gnu","target":"aarch64-unknown-linux-gnu","runner":"ubuntu-24.04-arm","dockerfile":"linux-gnu","clang":"","tier":"all","smoke_runner":"ubuntu-24.04-arm"},
-            {"platform":"darwin-x64","target":"x86_64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"x86_64-apple-darwin20.4","tier":"all","smoke_runner":"macos-15"},
-            {"platform":"darwin-arm64","target":"aarch64-apple-darwin","runner":"${{ github.event_name == 'pull_request' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}","dockerfile":"darwin","clang":"aarch64-apple-darwin20.4","tier":"all","smoke_runner":"macos-15"}
+            {"platform":"darwin-x64","target":"x86_64-apple-darwin","runner":"ubuntu-latest","dockerfile":"darwin","clang":"x86_64-apple-darwin20.4","tier":"all","smoke_runner":"macos-15"},
+            {"platform":"darwin-arm64","target":"aarch64-apple-darwin","runner":"ubuntu-latest","dockerfile":"darwin","clang":"aarch64-apple-darwin20.4","tier":"all","smoke_runner":"macos-15"}
             ]
         run: |
           RUST='(\.(rs|cc|h)$|(^|/)Cargo\.(toml|lock)$|^deny\.toml$|^rust-toolchain\.toml$|^docker/build/|^scripts/ci/v8/(archives\.json|source\.json|engine\.py|.*\.patch)$|^scripts/pipboy/|^\.github/workflows/pipboy\.yml$)'
@@ -133,7 +133,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.footprint == 'true'
     # Full command and software builds are explicit on PRs and run on main for baselines.
-    runs-on: depot-ubuntu-24.04-8
+    runs-on: &incus-linux >-
+      ${{ github.repository == 'rivet-dev/agentos'
+          && (github.ref == 'refs/heads/main'
+              || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+          && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 90
     env:
       # This measures npm tarballs; the platform binary is measured by native.
@@ -147,6 +151,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -157,6 +164,7 @@ jobs:
         with:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           workspaces: toolchain -> target
           key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
@@ -220,7 +228,7 @@ jobs:
     name: hygiene
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: *incus-linux
     timeout-minutes: 15
     permissions:
       contents: read
@@ -229,6 +237,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh raw
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -254,7 +265,7 @@ jobs:
         run: git worktree add "$RUNNER_TEMP/pipboy-base/src" "$BASE_SHA"
       - name: Stage the matching Rust source for each dependency comparison
         run: |
-          python3 scripts/ci/v8/engine.py install-glue "$GITHUB_WORKSPACE" "$RUNNER_TEMP/v8-pr-glue" --cargo-config "$GITHUB_WORKSPACE/../.cargo/config.toml"
+          python3 scripts/ci/v8/engine.py install-glue "$GITHUB_WORKSPACE" "$RUNNER_TEMP/v8-pr-glue" --cargo-config "$GITHUB_WORKSPACE/.cargo/config.toml"
           if test -d "$RUNNER_TEMP/pipboy-base/src"; then
             python3 scripts/ci/v8/engine.py install-glue "$RUNNER_TEMP/pipboy-base/src" "$RUNNER_TEMP/v8-base-glue" --cargo-config "$RUNNER_TEMP/pipboy-base/.cargo/config.toml"
           fi
@@ -278,7 +289,12 @@ jobs:
     name: native · ${{ matrix.platform }}
     needs: changes
     if: needs.changes.outputs.native != 'none'
-    runs-on: ${{ matrix.runner }}
+    runs-on: >-
+      ${{ github.repository == 'rivet-dev/agentos'
+          && matrix.runner == 'ubuntu-latest'
+          && (github.ref == 'refs/heads/main'
+              || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+          && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -291,6 +307,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh docker
       # The publish workflow's Dockerfile and build arguments in release mode, so
       # the size is what ships. Toolchain versions are read from publish.yaml.
       - name: Stage the target's reviewed engine archive
@@ -306,7 +325,7 @@ jobs:
           CLANG: ${{ matrix.clang }}
         run: |
           publish_env() { sed -n "s/^  $1: \"\(.*\)\"$/\1/p" .github/workflows/publish.yaml; }
-          args=(--build-arg "TARGET=$TARGET" --build-arg BUILD_PROFILE=release --build-arg "CACHE_PLATFORM=$PLATFORM"
+          args=(--build-arg "CACHE_SCOPE=${CI_CACHE_SCOPE:-hosted}" --build-arg "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}" --build-arg "TARGET=$TARGET" --build-arg BUILD_PROFILE=release --build-arg "CACHE_PLATFORM=$PLATFORM"
             --build-arg "RUST_TOOLCHAIN=$(publish_env RUST_TOOLCHAIN)")
           if [ "$DOCKERFILE" = darwin ]; then
             args+=(--build-arg "CLANG=$CLANG")
@@ -314,10 +333,12 @@ jobs:
             args+=(--build-arg "LINUX_GNU_LLVM_VERSION=$(publish_env LINUX_GNU_LLVM_VERSION)"
               --build-arg "LINUX_GNU_SYSROOT_TAG=$(publish_env LINUX_GNU_SYSROOT_TAG)")
           fi
-          docker buildx build --build-context "agentos-v8-inputs=$RUNNER_TEMP/v8-inputs" -f "docker/build/$DOCKERFILE.Dockerfile" "${args[@]}" -t pipboy-native --load .
-          cid="$(docker create pipboy-native)"
+          tag="pipboy-native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$PLATFORM"
+          cid=""
+          trap 'if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null; fi; docker image rm "$tag" >/dev/null || true' EXIT
+          docker buildx build --build-context "agentos-v8-inputs=$RUNNER_TEMP/v8-inputs" -f "docker/build/$DOCKERFILE.Dockerfile" "${args[@]}" -t "$tag" --load .
+          cid="$(docker create --label rivet.ci.extraction=true "$tag")"
           docker cp "$cid:/artifacts/agentos-sidecar" "$RUNNER_TEMP/agentos-native-sidecar"
-          docker rm "$cid"
       # Transfer only the release binary, never Cargo or package caches.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

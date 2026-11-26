@@ -90,11 +90,17 @@ jobs:
   # sharing one, so no build output crosses runs or waits on another job.
   wasm-commands-default:
     name: WASM Commands (default set)
-    runs-on: depot-ubuntu-24.04-8
+    runs-on: &incus-linux >-
+      ${{ github.repository == 'rivet-dev/agentos'
+          && github.ref == 'refs/heads/main' && inputs.version != ''
+          && fromJSON('["self-hosted","incus-heavy"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -163,11 +169,14 @@ jobs:
     strategy:
       matrix:
         command: [duckdb, vim]
-    runs-on: depot-ubuntu-24.04-8
+    runs-on: *incus-linux
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh wasm
       - run: make -C toolchain cmd/${{ matrix.command }}
       - name: Pack the ${{ matrix.command }} command
         run: |
@@ -239,32 +248,43 @@ jobs:
       matrix:
         include:
           - platform: linux-x64-gnu
-            runner: depot-ubuntu-24.04-8
+            runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - platform: linux-arm64-gnu
-            runner: depot-ubuntu-24.04-arm-8
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-    runs-on: ${{ matrix.runner }}
+    runs-on: >-
+      ${{ github.repository == 'rivet-dev/agentos'
+          && matrix.runner == 'ubuntu-latest'
+          && github.ref == 'refs/heads/main' && inputs.version != ''
+          && fromJSON('["self-hosted","incus-heavy"]') || matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh docker
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           name: agentos-${{ matrix.platform }}
       - name: Build linux artifacts
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
+          builder: ${{ env.BUILDX_BUILDER }}
           context: .
           file: docker/build/linux-gnu.Dockerfile
           build-args: |
+            CACHE_SCOPE=${{ env.CI_CACHE_SCOPE || 'hosted' }}
+            CARGO_BUILD_JOBS=${{ env.CARGO_BUILD_JOBS || '4' }}
             TARGET=${{ matrix.target }}
             BUILD_PROFILE=${{ needs.context.outputs.build_profile }}
             CACHE_PLATFORM=${{ matrix.platform }}
             RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
             LINUX_GNU_LLVM_VERSION=${{ env.LINUX_GNU_LLVM_VERSION }}
             LINUX_GNU_SYSROOT_TAG=${{ env.LINUX_GNU_SYSROOT_TAG }}
-          tags: agentos-linux-${{ matrix.platform }}
+          tags: agentos-linux-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           load: true
       - name: Extract linux artifacts
         id: extract
@@ -272,9 +292,11 @@ jobs:
           set -euo pipefail
           sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
           mkdir -p "$sidecar_out"
-          cid=$(docker create agentos-linux-${{ matrix.platform }})
+          image="agentos-linux-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          cid=""
+          trap 'if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null; fi; docker image rm "$image" >/dev/null || true' EXIT
+          cid=$(docker create --label rivet.ci.extraction=true "$image")
           docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
-          docker rm "$cid"
           test -f "$sidecar_out/agentos-sidecar"
           echo "sidecar_dir=$sidecar_out" >> "$GITHUB_OUTPUT"
       - name: Check glibc floor
@@ -299,14 +321,14 @@ jobs:
       matrix:
         include:
           - platform: darwin-x64
-            runner: depot-ubuntu-24.04-8
+            runner: ubuntu-latest
             target: x86_64-apple-darwin
             clang: x86_64-apple-darwin20.4
           - platform: darwin-arm64
-            runner: depot-ubuntu-24.04-8
+            runner: ubuntu-latest
             target: aarch64-apple-darwin
             clang: aarch64-apple-darwin20.4
-    runs-on: ${{ matrix.runner }}
+    runs-on: *incus-linux
     permissions:
       contents: read
       packages: read
@@ -314,7 +336,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh docker
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: ${{ !startsWith(runner.name, 'ci-0') }}
         with:
           name: agentos-${{ matrix.platform }}
       - name: Log in to ghcr.io
@@ -324,24 +350,29 @@ jobs:
       - name: Cross-compile via osxcross
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
+          builder: ${{ env.BUILDX_BUILDER }}
           context: .
           file: docker/build/darwin.Dockerfile
           build-args: |
+            CACHE_SCOPE=${{ env.CI_CACHE_SCOPE || 'hosted' }}
+            CARGO_BUILD_JOBS=${{ env.CARGO_BUILD_JOBS || '4' }}
             TARGET=${{ matrix.target }}
             CLANG=${{ matrix.clang }}
             BUILD_PROFILE=${{ needs.context.outputs.build_profile }}
             CACHE_PLATFORM=${{ matrix.platform }}
             RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
-          tags: agentos-darwin-${{ matrix.platform }}
+          tags: agentos-darwin-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           load: true
       - name: Extract darwin artifacts
         run: |
           set -euo pipefail
           sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
           mkdir -p "$sidecar_out"
-          cid=$(docker create agentos-darwin-${{ matrix.platform }})
+          image="agentos-darwin-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          cid=""
+          trap 'if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null; fi; docker image rm "$image" >/dev/null || true' EXIT
+          cid=$(docker create --label rivet.ci.extraction=true "$image")
           docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
-          docker rm "$cid"
           test -f "$sidecar_out/agentos-sidecar"
           case "${{ matrix.platform }}" in
             darwin-x64) expected_arch="x86_64" ;;
@@ -360,12 +391,15 @@ jobs:
   # the builds; a release publishes nothing, npm included, unless it passes.
   crates-rehearsal:
     name: Rehearse crates.io publish
-    runs-on: depot-ubuntu-24.04-8
+    runs-on: *incus-linux
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh raw
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -381,11 +415,14 @@ jobs:
     needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin, crates-rehearsal]
     name: Prepare npm tarballs
     if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && (needs.context.outputs.trigger != 'release' || needs.crates-rehearsal.result == 'success') }}
-    runs-on: ubuntu-latest
+    runs-on: *incus-linux
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Attach persistent Incus caches
+        if: startsWith(runner.name, 'ci-0')
+        run: bash scripts/ci/incus-cache.sh raw
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

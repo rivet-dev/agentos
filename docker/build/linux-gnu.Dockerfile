@@ -6,11 +6,14 @@
 FROM scratch AS agentos-v8-inputs
 COPY scripts/ci/v8/archives.json /archives.json
 
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS native-build
 
 ARG RUST_TOOLCHAIN=1.95.0
 ARG TARGET=x86_64-unknown-linux-gnu
 ARG BUILD_PROFILE=debug
+ARG CACHE_SCOPE=local
+ARG CARGO_BUILD_JOBS=4
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 ARG CACHE_PLATFORM=linux-x64-gnu
 ARG NODE_MAJOR=22
 ARG LINUX_GNU_LLVM_VERSION=22
@@ -74,13 +77,14 @@ RUN --mount=type=bind,from=agentos-v8-inputs,target=/opt/engine-inputs \
 
 COPY . .
 
-RUN --mount=type=cache,id=cargo-registry-agentos-${CACHE_PLATFORM},target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=cargo-git-agentos-${CACHE_PLATFORM},target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=cargo-target-agentos-${CACHE_PLATFORM},target=/build/target,sharing=locked \
-    --mount=type=cache,id=pnpm-store-agentos-${CACHE_PLATFORM},target=/root/.local/share/pnpm/store,sharing=locked \
-    --mount=type=cache,id=rusty-v8-agentos-${CACHE_PLATFORM},target=/root/.cargo/.rusty_v8,sharing=locked \
-    --mount=type=cache,id=sccache-agentos-${CACHE_PLATFORM},target=/root/.cache/sccache,sharing=locked \
+RUN --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-cargo-registry-agentos-${CACHE_PLATFORM},target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-cargo-git-agentos-${CACHE_PLATFORM},target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-cargo-target-agentos-${CACHE_PLATFORM},target=/build/target,sharing=locked \
+    --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-pnpm-store-agentos-${CACHE_PLATFORM},target=/root/.local/share/pnpm/store,sharing=locked \
+    --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-rusty-v8-agentos-${CACHE_PLATFORM},target=/root/.cargo/.rusty_v8,sharing=locked \
+    --mount=type=cache,id=${CACHE_SCOPE}-${CACHE_PLATFORM}-${BUILD_PROFILE}-sccache-agentos-${CACHE_PLATFORM},target=/root/.cache/sccache,sharing=locked \
     set -eux; \
+    pnpm config set store-dir /root/.local/share/pnpm/store; \
     pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-build-tools'; \
     . /sysroot/.env; \
     if ! command -v sccache >/dev/null 2>&1; then \

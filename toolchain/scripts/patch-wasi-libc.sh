@@ -281,7 +281,12 @@ fi
 
 # Clean previous build artifacts and sysroot for a reproducible build
 make -C "$WASI_LIBC_SRC_DIR" clean 2>/dev/null || true
-rm -rf "$SYSROOT_DIR"
+if [ -L "$SYSROOT_DIR" ]; then
+    # CI keeps this output in a persistent cache outside the checkout.
+    find "$SYSROOT_DIR/" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+else
+    rm -rf "$SYSROOT_DIR"
+fi
 
 # Build wasi-libc with wasi-sdk's tools, output to our sysroot directory.
 # Build the `libc` target (headers + static libraries) but NOT `finish`, which
