@@ -161,7 +161,7 @@ export function copyWasmCommands({
 	softwareRoot = SOFTWARE_ROOT,
 	requireCommands = false,
 	requiredPackageNames = [],
-	log = console.log,
+	log = console.error,
 	warn = console.warn,
 } = {}) {
 	const required = requireCommands

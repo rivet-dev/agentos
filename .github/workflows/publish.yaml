@@ -549,9 +549,9 @@ jobs:
           fi
 
   release-assets:
-    needs: [context, build-sidecar, build-sidecar-darwin]
+    needs: [context, build-sidecar, build-sidecar-darwin, publish-npm, publish-software-mirror]
     name: Release assets
-    if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.publish-npm.result == 'success' && needs.publish-software-mirror.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -635,9 +635,9 @@ jobs:
           fi
 
   publish-crates:
-    needs: [context, build-sidecar, release-assets, crates-rehearsal]
+    needs: [context, build-sidecar, release-assets, crates-rehearsal, publish-npm, publish-software-mirror]
     name: Publish crates.io
-    if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.crates-rehearsal.result == 'success' && needs.build-sidecar.result == 'success' && (needs.release-assets.result == 'success' || needs.release-assets.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.context.outputs.trigger == 'release' && needs.crates-rehearsal.result == 'success' && needs.build-sidecar.result == 'success' && (needs.release-assets.result == 'success' || needs.release-assets.result == 'skipped') && needs.publish-npm.result == 'success' && needs.publish-software-mirror.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
