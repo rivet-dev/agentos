@@ -9,6 +9,7 @@ import type {
 	ScheduleEntry,
 	ScheduleHandle,
 } from "../src/cron/schedule-driver.js";
+import { TimerScheduleDriver } from "../src/cron/timer-driver.js";
 import type { CronEvent } from "../src/cron/types.js";
 
 // ---------------------------------------------------------------------------
@@ -454,5 +455,157 @@ describe("CronManager", () => {
 
 		expect(manager.list()).toHaveLength(0);
 		expect(driver.disposed).toBe(true);
+	});
+});
+
+describe("CronManager with TimerScheduleDriver", () => {
+	let manager: CronManager;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+		manager = new CronManager({} as any, new TimerScheduleDriver());
+	});
+	afterEach(() => {
+		manager.dispose();
+		vi.useRealTimers();
+	});
+
+	it.each([
+		"allow",
+		"queue",
+		"skip",
+	] as const)("honors %s while a recurring callback is still running", async (overlap) => {
+		let finishFirst!: () => void;
+		const firstRun = new Promise<void>((resolve) => {
+			finishFirst = resolve;
+		});
+		const starts: number[] = [];
+		manager.schedule({
+			id: "refresh",
+			schedule: "* * * * *",
+			overlap,
+			action: {
+				type: "callback",
+				fn: () => {
+					starts.push(Date.now());
+					return starts.length === 1 ? firstRun : undefined;
+				},
+			},
+		});
+		await vi.advanceTimersByTimeAsync(60_000);
+		await vi.advanceTimersByTimeAsync(90_000);
+		const duringFirst = starts.length;
+		finishFirst();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(duringFirst).toBe(overlap === "allow" ? 2 : 1);
+		expect(starts.length).toBe(overlap === "skip" ? 1 : 2);
+		expect(starts.map((time) => new Date(time).toISOString())).toEqual(
+			overlap === "skip"
+				? ["2026-01-01T00:01:00.000Z"]
+				: [
+						"2026-01-01T00:01:00.000Z",
+						overlap === "allow"
+							? "2026-01-01T00:02:00.000Z"
+							: "2026-01-01T00:02:30.000Z",
+					],
+		);
+	});
+
+	it("keeps running true until every allowed execution completes", async () => {
+		let finishFirst!: () => void;
+		const firstRun = new Promise<void>((resolve) => {
+			finishFirst = resolve;
+		});
+		let calls = 0;
+		manager.schedule({
+			id: "refresh",
+			schedule: "* * * * *",
+			action: {
+				type: "callback",
+				fn: () => {
+					calls++;
+					return calls === 1 ? firstRun : undefined;
+				},
+			},
+		});
+		await vi.advanceTimersByTimeAsync(120_000);
+		expect(calls).toBe(2);
+		expect(manager.list()[0].running).toBe(true);
+		finishFirst();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(manager.list()[0].running).toBe(false);
+	});
+
+	it("coalesces missed queue ticks into one follow-up execution", async () => {
+		let finishFirst!: () => void;
+		const firstRun = new Promise<void>((resolve) => {
+			finishFirst = resolve;
+		});
+		const callback = vi.fn().mockReturnValueOnce(firstRun);
+		manager.schedule({
+			id: "refresh",
+			schedule: "* * * * *",
+			overlap: "queue",
+			action: { type: "callback", fn: callback },
+		});
+		await vi.advanceTimersByTimeAsync(270_000);
+		expect(callback).toHaveBeenCalledTimes(1);
+		finishFirst();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(callback).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(callback).toHaveBeenCalledTimes(3);
+	});
+
+	it.each([
+		"cancel",
+		"dispose",
+	] as const)("%s prevents pending ticks and queued work after completion", async (operation) => {
+		let finishFirst!: () => void;
+		const firstRun = new Promise<void>((resolve) => {
+			finishFirst = resolve;
+		});
+		const callback = vi.fn().mockReturnValueOnce(firstRun);
+		const job = manager.schedule({
+			id: "refresh",
+			schedule: "* * * * *",
+			overlap: "queue",
+			action: { type: "callback", fn: callback },
+		});
+		await vi.advanceTimersByTimeAsync(120_000);
+		if (operation === "cancel") job.cancel();
+		else manager.dispose();
+		finishFirst();
+		await vi.advanceTimersByTimeAsync(180_000);
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect(manager.list()).toEqual([]);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("does not run a replacement job when a cancelled queued execution finishes", async () => {
+		let finishFirst!: () => void;
+		const firstRun = new Promise<void>((resolve) => {
+			finishFirst = resolve;
+		});
+		const job = manager.schedule({
+			id: "refresh",
+			schedule: "* * * * *",
+			overlap: "queue",
+			action: { type: "callback", fn: () => firstRun },
+		});
+		await vi.advanceTimersByTimeAsync(120_000);
+		job.cancel();
+		const replacement = vi.fn();
+		manager.schedule({
+			id: "refresh",
+			schedule: "* * * * *",
+			action: { type: "callback", fn: replacement },
+		});
+		finishFirst();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(replacement).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(replacement).toHaveBeenCalledTimes(1);
 	});
 });

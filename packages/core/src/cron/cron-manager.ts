@@ -37,7 +37,7 @@ interface CronJobState {
 	lastRun?: Date;
 	nextRun?: Date;
 	runCount: number;
-	running: boolean;
+	activeRuns: number;
 	queued: boolean;
 }
 
@@ -85,7 +85,7 @@ export class CronManager {
 			lastRun: undefined,
 			nextRun: resolved.nextRun,
 			runCount: 0,
-			running: false,
+			activeRuns: 0,
 			queued: false,
 		};
 
@@ -111,7 +111,7 @@ export class CronManager {
 				lastRun: state.lastRun?.toISOString(),
 				nextRun: state.nextRun?.toISOString(),
 				runCount: state.runCount,
-				running: state.running,
+				running: state.activeRuns > 0,
 			});
 		}
 		return result;
@@ -144,15 +144,15 @@ export class CronManager {
 		if (!state) return;
 
 		// Overlap policy.
-		if (state.running && state.overlap === "skip") {
+		if (state.activeRuns > 0 && state.overlap === "skip") {
 			return;
 		}
-		if (state.running && state.overlap === "queue") {
+		if (state.activeRuns > 0 && state.overlap === "queue") {
 			state.queued = true;
 			return;
 		}
 
-		state.running = true;
+		state.activeRuns++;
 		state.lastRun = new Date();
 		state.runCount++;
 
@@ -179,11 +179,11 @@ export class CronManager {
 				error: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
-			state.running = false;
+			state.activeRuns--;
 			state.nextRun = computeNextTime(state.schedule);
 
 			// Process queued execution.
-			if (state.queued) {
+			if (state.queued && this.jobs.get(id) === state) {
 				state.queued = false;
 				void this.executeJob(id);
 			}
