@@ -68,15 +68,17 @@ export class TimerScheduleDriver implements ScheduleDriver {
 
 		const timer = longSetTimeout(async () => {
 			this.timers.delete(entry.id);
+			// Keep cron ticks independent of action duration. CronManager owns
+			// whether a tick overlaps, is skipped, or queues another execution.
+			if (isCron && this.entries.get(entry.id) === entry) {
+				this.scheduleNext(entry);
+			} else {
+				this.entries.delete(entry.id);
+			}
 			try {
 				await entry.callback();
 			} catch {
 				// The driver is fire-and-forget; error handling is the caller's responsibility.
-			}
-			if (isCron && this.entries.has(entry.id)) {
-				this.scheduleNext(entry);
-			} else {
-				this.entries.delete(entry.id);
 			}
 		}, delay);
 
